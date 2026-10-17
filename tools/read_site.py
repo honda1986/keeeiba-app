@@ -119,4 +119,6 @@ if __name__ == "__main__":
     if sys.argv[1] == "list":
         do_list(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ".")
     else:
-        do_read(sys.argv[2])
+        for u in re.split(r"[\s,]+", sys.argv[2].strip()):
+            if u:
+                do_read(u)
