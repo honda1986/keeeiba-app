@@ -749,12 +749,16 @@ def main():
     ap.add_argument("--history-only", action="store_true")
     ap.add_argument("--diag", action="store_true", help="取得の診断をログに出す(保存しない)")
     ap.add_argument("--backfill-date", help="過去の日 YYYYMMDD を再現する")
+    ap.add_argument("--repredict", action="store_true",
+                    help="再現の予想を今のロジックで作り直す(保存済みの馬柱を使う。取得しない)")
     a = ap.parse_args()
     if a.diag:
         diag(a.date or datetime.now(JST).strftime("%Y%m%d"))
         return
     now = datetime.now(JST)
-    if a.backfill_date:
+    if a.repredict:
+        repredict()
+    elif a.backfill_date:
         d = a.backfill_date
         if d >= now.strftime("%Y%m%d"):
             print("{} は今日以降なので再現しません".format(d))
@@ -775,6 +779,31 @@ def main():
         save(OUT + "/data.json", day)
         show(day)
     build_history()
+
+
+def repredict():
+    """「再現」の予想を、保存してある出馬表と馬柱から今のロジックで作り直す(取得はしない)。
+    当日の予想(live)は書き換えない。ロジックを変えたあとに過去の日の成績を見直すため"""
+    n = 0
+    for f in sorted(glob.glob(OUT + "/days/*.json")):
+        d = os.path.basename(f)[:8]
+        day = load_day(d)
+        today = datetime.strptime(d, "%Y%m%d").date()
+        changed = False
+        for rc in day["races"].values():
+            p = rc.get("pred")
+            if not rc.get("horses") or not rc.get("past_at") or (p and p.get("src") != "backfill"):
+                continue
+            rc["pred"] = L.predict(rc, today)
+            rc["pred"]["src"] = "backfill"
+            if rc.get("result"):
+                rc["settle"] = L.settle(rc["pred"], rc["result"])
+            n += 1
+            changed = True
+        if changed:
+            save_day(d, day)
+            show(day)
+    print("作り直した予想", n)
 
 
 def show(day):
