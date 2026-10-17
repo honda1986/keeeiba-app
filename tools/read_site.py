@@ -72,6 +72,10 @@ while cats:
     if not html:
         continue
     soup = BeautifulSoup(html, "html.parser")
+    print("  title:", soup.title.get_text(strip=True) if soup.title else None,
+          "| links", len(soup.find_all("a", href=True)))
+    for a in soup.find_all("a", href=True)[:400]:
+        print("   a:", a["href"][:140], "|", a.get_text(" ", strip=True)[:40])
     for a in soup.find_all("a", href=True):
         v = orig(urljoin(addr(u), a["href"]).split("#")[0])
         p = urlparse(v)
@@ -79,15 +83,14 @@ while cats:
             continue
         path = p.path
         if path.startswith(prefix) and v not in seen_cat:
-            cats.append(v)                        # ページ送り・下位カテゴリ
+            if len(seen_cat) + len(cats) < 80:
+                cats.append(v)                    # ページ送り・下位カテゴリ
             continue
         if re.search(r"/(category|tag|page|author|feed|wp-|comment)", path) or path in ("", "/"):
             continue
-        # 記事: 一覧の見出し・記事カードの中のリンク
-        if a.find_parent(["article", "h2", "h3"]) or "entry" in " ".join(
-                c for el in a.parents for c in (el.get("class") or [])):
-            if v not in arts:
-                arts.append(v)
+        # 記事の候補: 同じサイトの、一覧・タグ・固定ページ以外のリンクはすべて
+        if not re.search(r"/(about|contact|privacy|sitemap|profile)", path) and v not in arts:
+            arts.append(v)
 print("カテゴリのページ", len(seen_cat))
 for u in sorted(seen_cat):
     print("  CAT", u)

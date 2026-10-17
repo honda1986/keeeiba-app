@@ -180,7 +180,20 @@ ODDS_NAR = """<table><tr><th>人気</th></tr>
 ODDS_BEFORE = ODDS_JRA.replace("12.5", "---.-").replace("3.1", "---.-")
 
 
+RESULT_NAR = """<table class="RaceTable01 ResultMain"><tr><th>着<br>順</th><th>枠</th><th>馬<br>番</th><th>馬名</th>
+<th>人<br>気</th><th>単勝<br>オッズ</th></tr>
+<tr><td>1</td><td>4</td><td>5</td><td>A</td><td>3</td><td>6.2</td></tr>
+<tr><td>2</td><td>1</td><td>1</td><td>B</td><td>1</td><td>1.8</td></tr>
+<tr><td>3</td><td>6</td><td>8</td><td>C</td><td>7</td><td>25.0</td></tr>
+<tr><td>取消</td><td>2</td><td>2</td><td>D</td><td></td><td></td></tr></table>"""
+
+
 class Parse(unittest.TestCase):
+    def test_result_nar(self):
+        r = K.parse_result(RESULT_NAR)
+        self.assertEqual(r["order"], [5, 1, 8])
+        self.assertEqual((r["ninki"]["8"], r["odds"]["8"]), (7, 25.0))
+
     def test_odds(self):
         self.assertEqual(K.parse_odds_form(ODDS_JRA), {1: (12.5, None), 2: (3.1, None)})
         self.assertEqual(K.parse_odds_form(ODDS_NAR), {8: (2.0, 1), 4: (3.0, 2)})

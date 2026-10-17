@@ -328,25 +328,41 @@ PAY = {"Tansho": ("単勝", 1), "Umaren": ("馬連", 2), "Wide": ("ワイド", 2
 
 
 def parse_result(html):
+    """着順・払戻・人気。列は見出し(着順・馬番・人気・単勝)から探す(中央と地方で行の class が違う)"""
     soup = BeautifulSoup(html, "html.parser")
     rows, ninki, odds = [], {}, {}
-    for tr in soup.select("table.RaceTable01 tr.HorseList, #All_Result_Table tr.HorseList"):
+    table = soup.select_one("table.RaceTable01") or soup.select_one("#All_Result_Table")
+    col = {"rank": 0, "umaban": 2, "ninki": None, "odds": None}
+    if table:
+        head = table.find("tr")
+        ths = [L.nfkc(txt(th)).replace(" ", "") for th in head.find_all(["th", "td"])] if head else []   # 「着<br>順」
+        for i, t in enumerate(ths):
+            if t.startswith("着順"):
+                col["rank"] = i
+            elif t.startswith("馬番"):
+                col["umaban"] = i
+            elif t.startswith("人気"):
+                col["ninki"] = i
+            elif t.startswith("単勝") or t.startswith("オッズ"):
+                col["odds"] = i
+    for tr in (table.find_all("tr") if table else []):
         tds = tr.find_all("td")
-        if len(tds) < 3:
+        if len(tds) <= max(col["rank"], col["umaban"]):
             continue
-        rk, um = num(L.nfkc(txt(tds[0]))), num(txt(tds[2]))
-        if rk and um:
+        rk, um = num(L.nfkc(txt(tds[col["rank"]]))), num(L.nfkc(txt(tds[col["umaban"]])))
+        if not um:
+            continue
+        if rk:
             rows.append((rk, um))
-        if um:
-            # 人気と単勝オッズ(過去の日の再現で「人気」に使う)
-            for td in tds:
-                if "Odds" not in (td.get("class") or []):
-                    continue
+        # 人気と単勝オッズ(過去の日の再現で「人気」に使う)
+        for key, store, pat, typ in (("ninki", ninki, r"\d{1,2}", int), ("odds", odds, r"\d+\.\d", float)):
+            cells = [tds[col[key]]] if col[key] is not None and col[key] < len(tds) else \
+                [td for td in tds if "Odds" in (td.get("class") or [])]
+            for td in cells:
                 t = L.nfkc(txt(td))
-                if re.fullmatch(r"\d{1,2}", t):
-                    ninki[str(um)] = int(t)
-                elif re.fullmatch(r"\d+\.\d", t):
-                    odds[str(um)] = float(t)
+                if re.fullmatch(pat, t):
+                    store[str(um)] = typ(t)
+                    break
     order = [u for _, u in sorted(set(rows))]
     pay = {}
     for tr in soup.select("table.Payout_Detail_Table tr"):
@@ -704,6 +720,8 @@ def diag(d):
     yid = race_ids(y)
     print("==== 前日", y, len(yid), "レース")
     for rid in [x for x in yid if center_of(x) == "jra"][-1:] + [x for x in yid if center_of(x) == "nar"][-1:]:
+        pass
+    for rid in [x for x in yid if center_of(x) == "nar"][:1]:
         c = center_of(rid)
         print("==== 結果", rid)
         st, b = raw(SITE[c] + "/race/result.html", {"race_id": rid})
