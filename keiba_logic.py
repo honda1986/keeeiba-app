@@ -585,9 +585,14 @@ def settle(pred, result):
     for b in pred.get("bets", []):
         b["hit"] = []
         b["ret"] = 0
+        paid = pay.get(b["type"]) or {}
         for c in b["combos"]:
+            key = "-".join(str(x) for x in (c if b["type"] == "3連単" else sorted(c)))
             hit = False
-            if b["type"] == "3連複":
+            if paid:
+                # 払戻表があればそれで判定(同着で2組に払戻が出ることがある)
+                hit = key in paid
+            elif b["type"] == "3連複":
                 hit = set(c) == top3
             elif b["type"] == "3連単":
                 hit = list(c) == order[:3]
@@ -598,8 +603,7 @@ def settle(pred, result):
             elif b["type"] == "単勝":
                 hit = c[0] == order[0]
             if hit:
-                key = "-".join(str(x) for x in (c if b["type"] == "3連単" else sorted(c)))
-                yen = (pay.get(b["type"]) or {}).get(key)
+                yen = paid.get(key)
                 b["hit"].append(key)
                 if yen:
                     r = int(yen * b["unit"] / 100)

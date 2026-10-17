@@ -96,7 +96,8 @@ def race_ids(d):
     ids = set()
     t = get(SITE["jra"] + "/top/race_list_sub.html", {"kaisai_date": d}) or ""
     ids |= set(re.findall(r"race_id=(\d{12})", t))
-    t = get(SITE["nar"] + "/top/race_list.html", {"kaisai_date": d}) or ""
+    # 地方は race_list_sub.html にレースIDと開催ID(kaisai_id)が載る(race_list.html には無い)
+    t = get(SITE["nar"] + "/top/race_list_sub.html", {"kaisai_date": d}) or ""
     ids |= set(re.findall(r"race_id=(\d{12})", t))
     for kid in sorted(set(re.findall(r"kaisai_id=(\d{10})", t))):
         s = get(SITE["nar"] + "/top/race_list_sub.html",
@@ -240,6 +241,9 @@ def parse_past(html):
     soup = BeautifulSoup(html, "html.parser")
     out = {}
     for tr in soup.select("tr.HorseList"):
+        # 追い切りの行(OikiriDataHead*)にも馬番があるが、過去走は無い
+        if any(c.startswith("Oikiri") for c in tr.get("class") or []):
+            continue
         um = None
         for td in tr.find_all("td"):
             cl = td.get("class") or []
@@ -258,7 +262,7 @@ def parse_past(html):
                 r = parse_past_cell(td)
                 if r:
                     runs.append(r)
-        if um:
+        if um and (runs or um not in out):
             out[um] = runs
     return out
 
@@ -551,6 +555,7 @@ def diag(d):
     print(" ", len(ids), ids[:3], ids[-3:])
     jra = [x for x in ids if center_of(x) == "jra"]
     nar = [x for x in ids if center_of(x) == "nar"]
+    nar = [x for x in nar if venue_of(x) != "帯広"]
     for rid in (jra[:1] + nar[:1]):
         c = center_of(rid)
         print("==== 馬柱", rid)
@@ -565,8 +570,22 @@ def diag(d):
                      "race_id": rid, "type": "1", "action": "init", "compress": "0"}):
             st, b = raw(SITE[c] + api, prm)
             print("  {} {} {}B {}".format(prm["action"], st, len(b), decode(b)[:300].replace("\n", " ")))
-        st, b = raw(SITE[c] + "/odds/index.html", {"type": "b1", "race_id": rid})
-        print("  odds/index.html", st, len(b))
+        for path in ("/odds/index.html", "/race/shutuba.html"):
+            st, b = raw(SITE[c] + path, {"type": "b1", "race_id": rid})
+            t = decode(b)
+            print("  {} {} {}B".format(path, st, len(b)))
+            print("   api:", sorted(set(re.findall(r'[\w/.:-]*(?:api|odds_get|jsonp?)[\w/.:-]*\.(?:php|html|json)', t)))[:15])
+            for m in list(re.finditer(r"(api_get_[a-z_]+|odds_get_form|getOdds|OddsData)", t))[:4]:
+                print("   ctx:", t[max(0, m.start() - 160):m.end() + 160].replace("\n", " "))
+            soup = BeautifulSoup(t, "html.parser")
+            for el in soup.select("[id^=odds-], td.Popular, td.Odds, span.Odds")[:4]:
+                print("   cell:", el.name, el.get("id"), el.get("class"), txt(el)[:40])
+        for path in ("/odds/odds_get_form.html",):
+            st, b = raw(SITE[c] + path, {"type": "b1", "race_id": rid})
+            soup = BeautifulSoup(decode(b), "html.parser")
+            print("  {} {} {}B".format(path, st, len(b)))
+            for tr in soup.select("tr")[:3]:
+                print("   tr:", [(td.get("class"), txt(td)[:20]) for td in tr.find_all("td")][:8])
     # 前日(過去のレース)が取れるか
     y = (datetime.strptime(d, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
     yid = race_ids(y)
@@ -578,6 +597,9 @@ def diag(d):
         html = decode(b)
         print("  status", st, len(b))
         rows(html, "table.RaceTable01 tr.HorseList, #All_Result_Table tr.HorseList", 2)
+        tr0 = BeautifulSoup(html, "html.parser").select_one("table.RaceTable01 tr.HorseList")
+        if tr0:
+            print("   全列:", [(td.get("class"), txt(td)[:16]) for td in tr0.find_all("td")])
         soup = BeautifulSoup(html, "html.parser")
         for tr in soup.select("table.Payout_Detail_Table tr")[:9]:
             print("   pay", tr.get("class"), "|", txt(tr)[:90])
