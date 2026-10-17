@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""指定したカテゴリの記事を全部たどって本文をログに出す(一回だけ使う読み取り用。何も保存しない)。
-   python tools/read_site.py URL [最大記事数]"""
+"""記事を読むための一時ツール(何も保存しない。ログに出すだけ)
+   python tools/read_site.py list URL [題名の正規表現]  … カテゴリをたどって記事のURLを出す
+   python tools/read_site.py read URL                    … 1記事の本文を出す
+   直接読めない(403など)ときは Wayback Machine の最新のスナップショットを読む"""
 import re
-import socket
 import sys
 import time
 from urllib.parse import urljoin, urlparse
@@ -13,14 +14,12 @@ from bs4 import BeautifulSoup
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-      "Accept-Language": "ja,en-US;q=0.9,en;q=0.8", "Accept-Encoding": "gzip, deflate",
-      "Upgrade-Insecure-Requests": "1", "Referer": "https://www.google.com/"}
-start = sys.argv[1]
-limit = int(sys.argv[2]) if len(sys.argv) > 2 else 300
-# 直接読めないときは Wayback Machine の最新のスナップショットを読む
-VIA = "direct"
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "ja,en-US;q=0.9,en;q=0.8", "Accept-Encoding": "gzip, deflate"}
+S = requests.Session()
+S.headers.update(UA)
 ARCH = re.compile(r"^https?://web\.archive\.org/web/\d+[a-z_]*/(https?://.+)$")
+VIA = {"mode": "direct"}
 
 
 def orig(u):
@@ -29,28 +28,24 @@ def orig(u):
 
 
 def addr(u):
-    return u if VIA == "direct" else "https://web.archive.org/web/2/" + u
-host = urlparse(start).hostname
-for h in (host, host.replace("www.", "")):
-    try:
-        print("DNS", h, socket.gethostbyname(h))
-    except OSError as e:
-        print("DNS", h, "失敗", e)
-S = requests.Session()
-S.headers.update(UA)
+    return u if VIA["mode"] == "direct" else "https://web.archive.org/web/2/" + u
 
 
 def get(u):
     for i in range(3):
         try:
             r = S.get(addr(u), timeout=45)
-            time.sleep(0.7 if VIA == "direct" else 1.5)
+            time.sleep(1.0)
             print("GET", r.status_code, addr(u), len(r.content), flush=True)
             if r.status_code == 200:
-                r.encoding = r.apparent_encoding if r.encoding in (None, "ISO-8859-1") else r.encoding
+                if r.encoding in (None, "ISO-8859-1"):
+                    r.encoding = r.apparent_encoding
                 return r.text
             if r.status_code in (403, 404, 410):
-                print("  本文:", re.sub(r"\s+", " ", BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True))[:400])
+                if VIA["mode"] == "direct":
+                    VIA["mode"] = "archive"
+                    print("直接は読めないので Wayback Machine から読みます")
+                    continue
                 return None
         except requests.RequestException as e:
             print("ERR", u, type(e).__name__, e, flush=True)
@@ -58,62 +53,70 @@ def get(u):
     return None
 
 
-if not get(start):
-    VIA = "archive"
-    print("直接は読めないので Wayback Machine から読みます")
-prefix = urlparse(start).path.rstrip("/")
-cats, seen_cat, arts = [start], set(), []
-while cats:
-    u = cats.pop(0)
-    if u in seen_cat:
-        continue
-    seen_cat.add(u)
+def same_site(a, b):
+    return (urlparse(a).hostname or "").replace("www.", "") == (urlparse(b).hostname or "").replace("www.", "")
+
+
+def do_list(start, pat):
+    prefix = urlparse(start).path.rstrip("/")
+    todo, seen, arts = [start], set(), {}
+    while todo and len(seen) < 40:
+        u = todo.pop(0)
+        if u in seen:
+            continue
+        seen.add(u)
+        html = get(u)
+        if not html:
+            continue
+        soup = BeautifulSoup(html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            v = orig(urljoin(addr(u), a["href"]).split("#")[0])
+            if not same_site(v, start):
+                continue
+            path = urlparse(v).path
+            if path.startswith(prefix + "/page/") and v not in seen:
+                todo.append(v)
+            title = a.get_text(" ", strip=True)
+            if title and re.search(pat, title) and not re.search(r"/(category|tag|page)/", path):
+                arts.setdefault(v, title)
+    print("一覧のページ", sorted(seen))
+    print("記事", len(arts))
+    for v, t in arts.items():
+        print("ART", v, "|", t)
+
+
+def do_read(u):
     html = get(u)
     if not html:
-        continue
-    soup = BeautifulSoup(html, "html.parser")
-    print("  title:", soup.title.get_text(strip=True) if soup.title else None,
-          "| links", len(soup.find_all("a", href=True)))
-    for a in soup.find_all("a", href=True)[:400]:
-        print("   a:", a["href"][:140], "|", a.get_text(" ", strip=True)[:40])
-    for a in soup.find_all("a", href=True):
-        v = orig(urljoin(addr(u), a["href"]).split("#")[0])
-        p = urlparse(v)
-        if p.hostname not in (host, host.replace("www.", ""), "www." + host.replace("www.", "")):
-            continue
-        path = p.path
-        if path.startswith(prefix) and v not in seen_cat:
-            if len(seen_cat) + len(cats) < 80:
-                cats.append(v)                    # ページ送り・下位カテゴリ
-            continue
-        if re.search(r"/(category|tag|page|author|feed|wp-|comment)", path) or path in ("", "/"):
-            continue
-        # 記事の候補: 同じサイトの、一覧・タグ・固定ページ以外のリンクはすべて
-        if not re.search(r"/(about|contact|privacy|sitemap|profile)", path) and v not in arts:
-            arts.append(v)
-print("カテゴリのページ", len(seen_cat))
-for u in sorted(seen_cat):
-    print("  CAT", u)
-print("記事", len(arts))
-for u in arts:
-    print("  ART", u)
-for u in arts[:limit]:
-    html = get(u)
-    if not html:
-        continue
+        print("読めませんでした")
+        return
     soup = BeautifulSoup(html, "html.parser")
     for t in soup(["script", "style", "noscript", "iframe", "nav", "footer", "aside", "form"]):
         t.decompose()
-    title = soup.find("h1")
-    body = (soup.select_one(".entry-content") or soup.select_one(".post-content")
-            or soup.select_one("article") or soup.select_one("main") or soup.body)
-    print("\n##### 記事 {}\n##### {}".format(u, title.get_text(" ", strip=True) if title else ""))
+    h1 = soup.find("h1")
+    print("##### 記事", u)
+    print("##### 題名", h1.get_text(" ", strip=True) if h1 else "")
+    body = (soup.select_one(".entry-content") or soup.select_one(".post_content")
+            or soup.select_one(".post-content") or soup.select_one("article") or soup.select_one("main"))
     if not body:
-        continue
-    for el in body.find_all(["h2", "h3", "h4", "p", "li", "tr"]):
-        if el.find_parent(["li", "tr"]) and el.name not in ("li", "tr"):
+        print("本文が見つかりません")
+        return
+    for el in body.find_all(["h2", "h3", "h4", "p", "li", "tr", "figcaption"]):
+        if el.name in ("p", "h2", "h3", "h4") and el.find_parent(["li", "tr"]):
             continue
-        t = re.sub(r"\s+", " ", el.get_text(" ", strip=True))
+        if el.name == "li" and el.find_parent("li"):
+            continue
+        if el.name == "tr":
+            t = " | ".join(c.get_text(" ", strip=True) for c in el.find_all(["th", "td"]))
+        else:
+            t = re.sub(r"\s+", " ", el.get_text(" ", strip=True))
         if t:
-            print(("■ " if el.name in ("h2", "h3", "h4") else "") + t)
-print("\n##### おわり")
+            print({"h2": "## ", "h3": "### ", "h4": "#### ", "tr": "| ", "li": "- "}.get(el.name, "") + t)
+    print("##### おわり")
+
+
+if __name__ == "__main__":
+    if sys.argv[1] == "list":
+        do_list(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ".")
+    else:
+        do_read(sys.argv[2])

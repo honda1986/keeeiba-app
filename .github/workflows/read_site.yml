@@ -5,13 +5,17 @@ name: サイトを読む(一時)
 on:
   workflow_dispatch:
     inputs:
-      url:
-        description: 'カテゴリのURL'
+      mode:
+        description: 'list(記事のURLを出す) か read(1記事を読む)'
         required: true
-      limit:
-        description: '最大記事数'
+        default: 'list'
+      url:
+        description: 'URL'
+        required: true
+      filter:
+        description: 'list のとき、題名の正規表現'
         required: false
-        default: '300'
+        default: '.'
 
 permissions:
   contents: read
@@ -26,4 +30,4 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install requests beautifulsoup4
-      - run: python tools/read_site.py "${{ github.event.inputs.url }}" "${{ github.event.inputs.limit }}"
+      - run: python tools/read_site.py "${{ github.event.inputs.mode }}" "${{ github.event.inputs.url }}" "${{ github.event.inputs.filter }}"
