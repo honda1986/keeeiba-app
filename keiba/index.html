@@ -151,6 +151,8 @@ dialog.sheet .close{display:block;width:100%;margin-top:10px;padding:9px;border-
 .tbl tr.link{cursor:pointer}
 .tbl tr.link:hover td,.tbl tr.link:focus-visible td{background:var(--surface2)}
 .legendnote{font-size:12px;color:var(--muted);margin:6px 2px 0}
+.cbox>summary{font-size:12.5px}
+.cbox .tag{margin-left:2px}
 </style>
 </head>
 <body>
@@ -221,6 +223,10 @@ async function boot() {
     if (!state.days.includes(state.day.date)) state.days.push(state.day.date);
   }
   state.days.sort();
+  const latest = state.days[state.days.length - 1];
+  if (state.day && latest && latest > state.day.date) {
+    try { state.day = await loadDay(latest); } catch (e) { /* data.json のまま */ }
+  }
   renderRace(); renderMoney(); renderRule();
 }
 
@@ -354,6 +360,7 @@ function card(r) {
       <div class="meta">${esc(p.reason)}${p.pace ? " · 展開: " + esc(p.pace.note) : ""}</div></div></div>
     <div class="axis">${ax("◎", p.honmei, hv)}${ax("○", p.taikou, tv)}</div>
     ${p.notes && p.notes.length ? `<div class="note">${p.notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
+    ${courseBox(p.course)}
     <div class="bets">${bets}
       <div class="total"><span>${p.points}点</span><span>${yen(p.stake)}</span></div></div>
     ${res && res.order ? `<div class="res">結果 <b class="num">${res.order.slice(0,3).join("-")}</b>
@@ -363,10 +370,25 @@ function card(r) {
   </article>`;
 }
 
+// コース傾向(中央。titanic-online.com の2021〜2025年の集計)
+function courseBox(c) {
+  if (!c) return "";
+  const t = c.text || {};
+  const tag = (v, good) => v ? `<span class="tag ${good ? "p" : "o"}">${esc(v)}</span>` : "";
+  const fav = c.fav_top3 != null ? `1・2番人気の3着内率 ${Math.round(c.fav_top3 * 100)}%` : "";
+  const rows = [["脚質", t["脚質傾向"]], ["枠", t["枠順傾向"]], ["ペース", t["ペース傾向"]],
+                ["向く馬", t["向いている馬"]], ["向かない馬", t["不向きな馬"]], ["最初のコーナーまで", t["最初のコーナーまで"]]]
+    .filter(([, v]) => v);
+  return `<details class="more cbox"><summary>コース傾向 ${esc(c.name)} ${tag(c.lean, true)}${tag(c.waku, true)}${tag(c.kata, c.kata === "堅い")}</summary>
+    <div class="note" style="padding-top:2px">${rows.map(([k, v]) => `<div><b>${esc(k)}</b> ${esc(v)}</div>`).join("")}
+    ${fav ? `<div>${esc(fav)}(${c.races}レース)</div>` : ""}
+    <div class="muted">${c.exact ? "" : "この距離の記事が無いので、この場の芝/ダート全体の傾向。"}出典: titanic-online.com 競馬場の特徴(2021〜2025年)</div></div></details>`;
+}
+
 function skipRow(r) {
   return `<details class="skipd more" style="border-top:0;border-bottom:1px solid var(--line)"><summary class="skip">
     <b>${head(r)}</b><span class="r">${esc(r.pred.reason)}</span></summary>
-    <div class="note" style="padding-top:4px">${meta(r)}</div>${r.pred.horses.length ? table(r) + `<button class="oddsb">人気・オッズを見る(最後に)</button>` : ""}</details>`;
+    <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${r.pred.horses.length ? table(r) + `<button class="oddsb">人気・オッズを見る(最後に)</button>` : ""}</details>`;
 }
 
 function table(r) {
@@ -569,8 +591,19 @@ function renderRule() {
       <li><b>距離</b>延長は減点し軸にしない。短縮も小さく減点。距離実績を見る</li>
       <li><b>馬場</b>重・不良では道悪の成績を別に見る</li>
       <li><b>展開</b>逃げ馬3頭以上はハイ(前が不利・差し有利)、1頭以下はスロー(前残り)</li>
-      <li><b>枠</b>脚質とセット。中央は短距離の外枠先行・多頭数の内枠差しを減点。地方は1枠を減点</li>
+      <li><b>枠</b>脚質とセット。中央はコースの枠順成績(下のコース傾向)を使い、記事に無い距離だけ
+        短距離の外枠先行・多頭数の内枠差しを減点。地方は1枠を減点</li>
       <li><b>オッズ</b>評価が出た後に人気と見比べるだけ(過剰人気? / 妙味)</li>
+    </ul>
+    <div class="sec">コース傾向(中央10場・78コース)</div>
+    <ul class="rules">
+      <li><b>出典</b>titanic-online.com「競馬場の特徴」の各記事(2021〜2025年の集計)。地方の記事は無いので地方は使わない</li>
+      <li><b>脚質</b>そのコースの逃げ・先行・中団・後方の3着内率を、芝/ダートの全コース平均と比べる。
+        得なら加点(最大+3)、損なら減点(最大-4)。大きな損は「弱点」として◎○の重なりにも数える</li>
+      <li><b>枠</b>そのコースの枠番別の3着内率を平均と比べて±2.5まで(この場合は一般の枠の決まりを使わない)</li>
+      <li><b>堅さ</b>1・2番人気の3着内率が平均より高い「堅い」コースは2強の基準を0.5下げ、
+        「荒れやすい」コースは0.5上げて穴馬を2頭まで拾う</li>
+      <li><b>少ない出走</b>出走が少ないコースは平均に寄せて控えめに効かせる。記事に無い距離は、その場の芝/ダート全体を半分の重みで使う</li>
     </ul>
     <p class="muted" style="font-size:12px;margin:12px 0">閾値は目安。「収支・分析」で条件別の回収率を見て、儲かる条件にレースを絞っていく。</p>`;
 }

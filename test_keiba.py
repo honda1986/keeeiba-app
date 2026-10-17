@@ -112,6 +112,43 @@ class Logic(unittest.TestCase):
             self.assertTrue(p["ana"])
             self.assertIn(p["ana"][0], p["aite"])
 
+    def test_course_style(self):
+        # 函館ダ1700は前が残る(先行はダート平均の1.18倍、後方は半分ほど)
+        hs = [strong(1, first=3), strong(2, first=12)] + [middle(u) for u in range(3, 13)]
+        p = L.predict(race(hs, venue="函館", surface="ダ", dist=1700, direction="右", cls=2), TODAY)
+        self.assertEqual(p["course"]["name"], "函館ダ1700")
+        h = {x["umaban"]: x for x in p["horses"]}
+        self.assertTrue(any("前が残りやすい" in m["t"] for m in h[1]["plus"]))
+        self.assertTrue(any("差しが届きにくい" in m["t"] for m in h[2]["minus"]))
+        self.assertIn("コース脚質", h[2]["weak"])
+
+    def test_course_waku(self):
+        # 新潟芝1000(千直)は外枠有利・内枠不利
+        hs = [horse(u, [run(3, margin=0.3, dist=1000, venue="新潟", first=5)] * 3, waku=(u + 1) // 2)
+              for u in range(1, 17)]
+        p = L.predict(race(hs, venue="新潟", dist=1000, direction="直", cls=2), TODAY)
+        h = {x["umaban"]: x for x in p["horses"]}
+        self.assertTrue(any("8枠有利" in m["t"] for m in h[16]["plus"]))
+        self.assertTrue(any("1枠不利" in m["t"] for m in h[1]["minus"]))
+
+    def test_course_only_jra(self):
+        hs = [strong(1), strong(2)] + [middle(u) for u in range(3, 11)]
+        p = L.predict(race(hs, center="nar", venue="大井", direction="右", cls=3.0), TODAY)
+        self.assertNotIn("course", p)
+
+    def test_course_fallback(self):
+        # 東京芝2300は記事に無い → 東京芝の場平均(脚質だけ半分の重み、枠は使わない)
+        cs = L.course_of({"center": "jra", "venue": "東京", "surface": "芝", "dist": 2300})
+        self.assertFalse(cs["exact"])
+        self.assertEqual(cs["waku_idx"], {})
+
+    def test_course_kata(self):
+        hs = [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in range(3, 13)]
+        p = L.predict(race(hs), TODAY)                       # 東京芝1600は堅い
+        self.assertTrue(any("堅いコース" in n for n in p["notes"]))
+        p = L.predict(race(hs, venue="京都", dist=1400, direction="右"), TODAY)  # 京都芝1400は荒れやすい
+        self.assertTrue(any("荒れやすいコース" in n for n in p["notes"]))
+
     def test_settle(self):
         pred = {"honmei": 1, "taikou": 2, "stake": 0, "bets": L.make_bets(1, 2, [3, 4], "A", 2)}
         pred["stake"] = sum(len(b["combos"]) * b["unit"] for b in pred["bets"])

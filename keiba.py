@@ -744,6 +744,7 @@ def diag(d):
 
 
 def main():
+    global WAIT
     ap = argparse.ArgumentParser()
     ap.add_argument("--date")
     ap.add_argument("--history-only", action="store_true")
@@ -765,10 +766,13 @@ def main():
         elif load(day_path(d), {}).get("complete"):
             print("{} は済み".format(d))
         else:
-            global WAIT
             WAIT = 0.6                 # まとめて取るので間隔を空ける
             day = run_day(d, now, backfill=True)
             show(day)
+    elif a.date and a.date < now.strftime("%Y%m%d"):
+        # 過去の日を指定されたら再現として扱う(当日用の data.json は書き換えない)
+        WAIT = 0.6
+        show(run_day(a.date, now, backfill=True))
     elif not a.history_only:
         d = a.date or now.strftime("%Y%m%d")
         # 前日の夜(地方のナイター)の結果が欠けていれば先に埋める
@@ -785,8 +789,11 @@ def repredict():
     """「再現」の予想を、保存してある出馬表と馬柱から今のロジックで作り直す(取得はしない)。
     当日の予想(live)は書き換えない。ロジックを変えたあとに過去の日の成績を見直すため"""
     n = 0
+    today_s = datetime.now(JST).strftime("%Y%m%d")
     for f in sorted(glob.glob(OUT + "/days/*.json")):
         d = os.path.basename(f)[:8]
+        if d >= today_s:              # 当日はふつうの更新に任せる
+            continue
         day = load_day(d)
         today = datetime.strptime(d, "%Y%m%d").date()
         changed = False

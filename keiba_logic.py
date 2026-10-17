@@ -17,6 +17,9 @@ keiba_logic.py -- 競馬の「買うレースを選ぶ」予想ロジック(取�
 ■ 数字はすべて目安。history(収支)で条件別の回収率を見て、閾値を締めていく(規則 30)。
 """
 
+import json
+import math
+import os
 import re
 import unicodedata
 from datetime import date
@@ -44,6 +47,98 @@ HEAVY = ("重", "不")
 NAR_CLS = {"A1": 4.5, "A2": 4.0, "A3": 3.75, "A4": 3.6, "B1": 3.5, "B2": 3.0, "B3": 2.75,
            "B4": 2.5, "C1": 2.25, "C2": 1.75, "C3": 1.25, "C4": 1.0}          # 道悪とみなす馬場
 
+# ---------------------------------------------------------------- コース傾向(中央)
+# keiba_course.json … titanic-online.com「競馬場の特徴」の2021〜2025年の集計(10場78コース)。
+# 脚質の数字は「そのレースでの位置取り」なので、どのコースでも逃げ・先行の成績が良く出る。
+# そのまま使わず、同じ芝/ダートの全コース平均と比べた「このコースではどれだけ得か」を使う。
+COURSE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba_course.json")
+STYLE_MAP = {"逃げ": "逃げ", "先行": "先行", "差し": "中団", "追込": "後方"}
+COURSE_STYLES = ("逃げ", "先行", "中団", "後方")
+
+
+def _shrink(top3, n, base, k):
+    """3着内率を平均へ寄せてから平均との比にする(出走が少ないコースは1に近づく)"""
+    return ((top3 + k * base) / (n + k)) / base if base else 1.0
+
+
+def _course_index(c, g, gf, exact):
+    style = {s: round(_shrink(c["style"][s][2], c["style"][s][0], g[s], 100), 3)
+             for s in COURSE_STYLES if s in c["style"]}
+    tn = sum(v[0] for v in c["waku"].values())
+    tt = sum(v[2] for v in c["waku"].values())
+    avg = tt / tn if tn else 0
+    waku = {int(w): round(_shrink(v[2], v[0], avg, 150), 3) for w, v in c["waku"].items()} if exact and avg else {}
+    n12 = sum(c["ninki"].get(k, [0, 0, 0])[0] for k in ("1", "2"))
+    t12 = sum(c["ninki"].get(k, [0, 0, 0])[2] for k in ("1", "2"))
+    return {"name": "{}{}{}".format(c["venue"], "芝" if c["surface"] == "芝" else "ダ",
+                                     c["dist"] if exact else "(場平均)"),
+            "exact": exact, "text": c.get("text", {}) if exact else {}, "style_idx": style, "waku_idx": waku,
+            "kata": round(_shrink(t12, n12, gf, 100), 3), "races": c["ninki"].get("1", [0])[0],
+            "fav_top3": round(t12 / n12, 3) if n12 else None, "url": c.get("url")}
+
+
+def load_courses(path=COURSE_FILE):
+    """(場, 芝/ダ, 距離) -> 傾向。距離が無いときのために (場, 芝/ダ, None) に場の合計も入れる"""
+    try:
+        raw = json.load(open(path, encoding="utf-8"))["courses"]
+    except (OSError, ValueError, KeyError):
+        return {}
+    out = {}
+    for surf in ("芝", "ダ"):
+        cs = [c for c in raw if c["surface"] == surf]
+        if not cs:
+            continue
+        g = {}
+        for st in COURSE_STYLES:
+            n = sum(c["style"].get(st, [0, 0, 0])[0] for c in cs)
+            g[st] = sum(c["style"].get(st, [0, 0, 0])[2] for c in cs) / n if n else 0
+        n12 = sum(c["ninki"][k][0] for c in cs for k in ("1", "2") if k in c["ninki"])
+        gf = sum(c["ninki"][k][2] for c in cs for k in ("1", "2") if k in c["ninki"]) / n12 if n12 else 0
+        agg = {}
+        for c in cs:
+            out[(c["venue"], surf, c["dist"])] = _course_index(c, g, gf, True)
+            a = agg.setdefault(c["venue"], {"venue": c["venue"], "surface": surf, "dist": None,
+                                            "style": {}, "ninki": {}, "waku": {}})
+            for part in ("style", "ninki"):
+                for k, v in c[part].items():
+                    x = a[part].setdefault(k, [0, 0, 0])
+                    for i in range(3):
+                        x[i] += v[i]
+        for v, a in agg.items():
+            out[(v, surf, None)] = _course_index(a, g, gf, False)
+    return out
+
+
+COURSES = load_courses()
+
+
+def course_of(race):
+    """中央のレースのコース傾向(無ければ None)"""
+    if race.get("center") != "jra" or race.get("surface") not in ("芝", "ダ"):
+        return None
+    return (COURSES.get((race.get("venue"), race["surface"], race.get("dist")))
+            or COURSES.get((race.get("venue"), race["surface"], None)))
+
+
+def course_summary(cs):
+    """アプリに出す要約"""
+    si = cs["style_idx"]
+    front = (si.get("逃げ", 1) + si.get("先行", 1)) / 2
+    back = (si.get("中団", 1) + si.get("後方", 1)) / 2
+    lean = "前有利" if front - back >= 0.12 else ("差し有利" if back - front >= 0.12 else "脚質の偏り小")
+    wi = cs["waku_idx"]
+    if wi:
+        inner = (wi.get(1, 1) + wi.get(2, 1)) / 2
+        outer = (wi.get(7, 1) + wi.get(8, 1)) / 2
+        wlean = "内枠有利" if inner - outer >= 0.08 else ("外枠有利" if outer - inner >= 0.08 else "枠の差小")
+    else:
+        wlean = None
+    kata = "堅い" if cs["kata"] >= 1.05 else ("荒れやすい" if cs["kata"] <= 0.95 else "標準")
+    return {"name": cs["name"], "exact": cs["exact"], "lean": lean, "waku": wlean, "kata": kata,
+            "kata_idx": cs["kata"], "fav_top3": cs["fav_top3"], "races": cs["races"],
+            "style_idx": si, "text": cs["text"], "url": cs["url"]}
+
+
 # ---------------------------------------------------------------- 閾値(目安)
 TH = {
     "min_runners": 7,        # これ未満の頭数は配当が付かないので見送り
@@ -57,6 +152,9 @@ TH = {
     "aite_max": 5,           # 3連複の相手(3頭目候補)の最大数
     "tan3_aite_max": 4,      # 3連単の3着候補の最大数
     "ana_ninki": 6,          # この人気以下を穴とみなす
+    "kata_adj": 0.5,         # 堅いコースは2強の基準をこれだけ下げ、荒れやすいコースは上げる
+    "course_style_k": 5.0,   # コースの脚質傾向の効き(比の対数 × これ)
+    "course_waku_k": 5.0,    # コースの枠順傾向の効き
 }
 UNIT = 100                   # 1点あたりの金額(円)
 
@@ -336,8 +434,8 @@ def pace_of(evs):
     return {"pace": "平均", "nige": nige, "senko": senko, "note": "平均ペース"}
 
 
-def apply_race_context(ev, h, race, pace, n):
-    """展開・枠(脚質とセット)の加減点"""
+def apply_race_context(ev, h, race, pace, n, cs=None):
+    """展開・枠(脚質とセット)・コース傾向の加減点"""
     st = ev.get("style")
     p = pace["pace"]
 
@@ -367,9 +465,29 @@ def apply_race_context(ev, h, race, pace, n):
     elif st == "逃げ" and pace["nige"] == 2:
         minus("逃げ馬2頭で競り合い", 2, "前崩れ")
 
+    # 規則 14・17: コースの脚質傾向(中央。全コース平均と比べてこのコースで得か損か)
+    key = STYLE_MAP.get(st)
+    idx = cs["style_idx"].get(key) if cs and key else None
+    if idx:
+        v = max(-4.0, min(3.0, TH["course_style_k"] * math.log(idx))) * (1.0 if cs["exact"] else 0.5)
+        front = key in ("逃げ", "先行")
+        if v >= 0.5:
+            plus("コース傾向: " + ("前が残りやすい" if front else "差しが届きやすい"), v)
+        elif v <= -0.5:
+            minus("コース傾向: " + ("前が残りにくい" if front else "差しが届きにくい"), -v,
+                  "コース脚質")
+
     # 規則 19: 枠は脚質とセットで(地方は1枠が基本不利)
     um, wk = h.get("umaban") or 0, h.get("waku") or 0
-    if race["center"] == "nar":
+    wi = cs["waku_idx"].get(wk) if cs and cs["exact"] and wk else None
+    if wi:
+        # 中央でコースの枠順成績があるときはそれを使う(下の一般則は使わない)
+        v = max(-2.5, min(2.5, TH["course_waku_k"] * math.log(wi)))
+        if v >= 0.5:
+            plus("コース傾向: {}枠有利".format(wk), v)
+        elif v <= -0.5:
+            minus("コース傾向: {}枠不利".format(wk), -v, "枠")
+    elif race["center"] == "nar":
         if wk == 1:
             minus("地方の1枠", 2, "枠")
         elif st in ("逃げ", "先行") and n >= 10 and um >= n - 1:
@@ -439,8 +557,11 @@ def predict(race, today=None):
     evs = [evaluate_horse(h, race, today) for h in horses]
     pace = pace_of(evs)
     out["pace"] = pace
+    cs = course_of(race)
+    if cs:
+        out["course"] = course_summary(cs)
     for e, h in zip(evs, horses):
-        apply_race_context(e, h, race, pace, n)
+        apply_race_context(e, h, race, pace, n, cs)
         finalize(e)
     # 能力で消すのは「3番手以下の集団」から大きく離れた馬だけ(2強が抜けていても3着は要る)
     srt = sorted((e["score"] for e in evs), reverse=True)
@@ -488,12 +609,23 @@ def predict(race, today=None):
     rb[tai["umaban"]]["mark"] = "○"
 
     # 規則 2・3: 2強だけ買う(1強・混戦は見送り)
+    # コースの堅さで基準を少し動かす(上位人気が崩れにくいコースは2強を信じやすい)
+    adj = 0.0
+    if cs and cs["exact"]:
+        if cs["kata"] >= 1.05:
+            adj = -TH["kata_adj"]
+            out["notes"].append("{}は堅いコース(1・2番人気の3着内率{:.0%})。2強の基準を{}下げた".format(
+                cs["name"], cs["fav_top3"], TH["kata_adj"]))
+        elif cs["kata"] <= 0.95:
+            adj = TH["kata_adj"]
+            out["notes"].append("{}は荒れやすいコース(1・2番人気の3着内率{:.0%})。2強の基準を{}上げ、穴を2頭まで拾う".format(
+                cs["name"], cs["fav_top3"], TH["kata_adj"]))
     if ovl:
         out["reason"] = "◎○の弱点が重なる({})".format("・".join(ovl))
         verdict = "見送り"
-    elif gap >= TH["gap_a"]:
+    elif gap >= TH["gap_a"] + adj:
         verdict, out["reason"] = "A", "2強(3番手と{:.1f}差)".format(gap)
-    elif gap >= TH["gap_b"]:
+    elif gap >= TH["gap_b"] + adj:
         verdict, out["reason"] = "B", "2強(3番手と{:.1f}差)".format(gap)
     elif gap12 >= TH["one_strong"]:
         verdict, out["reason"] = "見送り", "1強(◎だけが抜けている)"
@@ -514,11 +646,10 @@ def predict(race, today=None):
         nk = ninki.get(e["umaban"])
         if nk and nk >= TH["ana_ninki"] and e["n_heavy"] <= 1:
             ana.append(e["umaban"])
-    ana = ana[:1]
-    if ana and ana[0] not in aite:
-        if len(aite) >= TH["aite_max"]:
-            aite = aite[:-1]
-        aite.append(ana[0])
+    ana = ana[:2 if cs and cs["exact"] and cs["kata"] <= 0.95 else 1]
+    if ana:
+        # 穴は必ず相手に入れる(あふれた分は評価の低い相手から外す)
+        aite = [x for x in aite if x not in ana][:TH["aite_max"] - len(ana)] + ana
     for i, u in enumerate(aite):
         rb[u]["mark"] = "☆" if u in ana else ("▲" if i == 0 else "△")
     out["aite"], out["ana"] = aite, ana

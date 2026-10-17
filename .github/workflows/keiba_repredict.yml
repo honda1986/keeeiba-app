@@ -1,0 +1,39 @@
+name: 再現の予想を作り直す
+
+# 「再現」の予想を、保存してある出馬表と馬柱から今のロジックで作り直す(netkeiba からは取らない)。
+# ロジックや閾値を変えたあとに、過去の日の成績を見直すためにまわす。当日の予想は書き換えない。
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: keiba-backfill       # 「過去の日を再現」と同時に走らない(終わるのを待つ)
+
+permissions:
+  contents: write
+
+jobs:
+  repredict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests beautifulsoup4
+      - run: python -m unittest test_keiba
+      - name: 作り直して保存
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for k in 1 2 3; do
+            git fetch -q origin main && git reset -q --hard origin/main
+            python keiba.py --repredict
+            git add keiba/days keiba/past keiba/history.json
+            if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+            git commit -q -m "keiba: 再現の予想を作り直す"
+            git push -q origin HEAD:main && exit 0
+            sleep 10
+          done
+          exit 1
