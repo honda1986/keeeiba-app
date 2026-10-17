@@ -1,0 +1,29 @@
+name: サイトを読む(一時)
+
+# 指定したカテゴリの記事を全部たどって本文をログに出す。何も保存しない。
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'カテゴリのURL'
+        required: true
+      limit:
+        description: '最大記事数'
+        required: false
+        default: '300'
+
+permissions:
+  contents: read
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests beautifulsoup4
+      - run: python tools/read_site.py "${{ github.event.inputs.url }}" "${{ github.event.inputs.limit }}"
