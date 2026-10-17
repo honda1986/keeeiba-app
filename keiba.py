@@ -517,11 +517,88 @@ def build_history():
     return hist
 
 
+# ---------------------------------------------------------------- 診断(取得がおかしいとき)
+def diag(d):
+    """netkeiba の応答の形をログに出す。何も保存しない。"""
+    def raw(url, params=None):
+        try:
+            r = SESS.get(url, params=params, timeout=30)
+            time.sleep(WAIT)
+            return r.status_code, r.content
+        except requests.RequestException as e:
+            return type(e).__name__, b""
+
+    def rows(html, sel="tr.HorseList", k=4):
+        soup = BeautifulSoup(html, "html.parser")
+        trs = soup.select(sel)
+        print("   {} 行 / table {}".format(len(trs), [(" ".join(t.get("class") or []), len(t.select("tr")))
+                                                    for t in soup.select("table")][:6]))
+        for tr in trs[:k] + trs[-1:]:
+            print("   tr.class={}".format(tr.get("class")))
+            for td in tr.find_all("td")[:7]:
+                print("     td.class={} | {}".format(td.get("class"), txt(td)[:70]))
+
+    print("==== 地方の一覧", d)
+    for path, prm in (("/top/race_list.html", {"kaisai_date": d}),
+                      ("/top/race_list_sub.html", {"kaisai_date": d})):
+        st, b = raw(SITE["nar"] + path, prm)
+        t = decode(b)
+        print(" {} {} {}B race_id={} kaisai_id={}".format(path, st, len(b),
+              len(set(re.findall(r"race_id=(\d{12})", t))), sorted(set(re.findall(r"kaisai_id=(\d+)", t)))[:8]))
+        print("  links:", sorted(set(re.findall(r'href="([^"]*race[^"]*)"', t)))[:12])
+    print("==== 中央の一覧", d)
+    ids = race_ids(d)
+    print(" ", len(ids), ids[:3], ids[-3:])
+    jra = [x for x in ids if center_of(x) == "jra"]
+    nar = [x for x in ids if center_of(x) == "nar"]
+    for rid in (jra[:1] + nar[:1]):
+        c = center_of(rid)
+        print("==== 馬柱", rid)
+        st, b = raw(SITE[c] + "/race/shutuba_past.html", {"race_id": rid})
+        print("  status", st, len(b))
+        rows(decode(b))
+        print("==== オッズ", rid)
+        api = "/api/api_get_jra_odds.php" if c == "jra" else "/api/api_get_nar_odds.php"
+        for prm in ({"pid": api.split("/")[-1][:-4], "input": "UTF-8", "output": "json",
+                     "race_id": rid, "type": "1", "action": "update"},
+                    {"pid": api.split("/")[-1][:-4], "input": "UTF-8", "output": "json",
+                     "race_id": rid, "type": "1", "action": "init", "compress": "0"}):
+            st, b = raw(SITE[c] + api, prm)
+            print("  {} {} {}B {}".format(prm["action"], st, len(b), decode(b)[:300].replace("\n", " ")))
+        st, b = raw(SITE[c] + "/odds/index.html", {"type": "b1", "race_id": rid})
+        print("  odds/index.html", st, len(b))
+    # 前日(過去のレース)が取れるか
+    y = (datetime.strptime(d, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+    yid = race_ids(y)
+    print("==== 前日", y, len(yid), "レース")
+    for rid in [x for x in yid if center_of(x) == "jra"][-1:] + [x for x in yid if center_of(x) == "nar"][-1:]:
+        c = center_of(rid)
+        print("==== 結果", rid)
+        st, b = raw(SITE[c] + "/race/result.html", {"race_id": rid})
+        html = decode(b)
+        print("  status", st, len(b))
+        rows(html, "table.RaceTable01 tr.HorseList, #All_Result_Table tr.HorseList", 2)
+        soup = BeautifulSoup(html, "html.parser")
+        for tr in soup.select("table.Payout_Detail_Table tr")[:9]:
+            print("   pay", tr.get("class"), "|", txt(tr)[:90])
+        print("  parse_result:", json.dumps(parse_result(html), ensure_ascii=False)[:400])
+        st, b = raw(SITE[c] + "/race/shutuba.html", {"race_id": rid})
+        card = parse_card(decode(b), rid)
+        print("  過去レースの出馬表:", st, len(card["horses"]), "頭", card.get("start"), card.get("baba"))
+        st, b = raw(SITE[c] + "/race/shutuba_past.html", {"race_id": rid})
+        past = parse_past(decode(b))
+        print("  過去レースの馬柱:", st, len(past), "頭", {u: [r["date"] for r in v[:2]] for u, v in list(past.items())[:4]})
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date")
     ap.add_argument("--history-only", action="store_true")
+    ap.add_argument("--diag", action="store_true", help="取得の診断をログに出す(保存しない)")
     a = ap.parse_args()
+    if a.diag:
+        diag(a.date or datetime.now(JST).strftime("%Y%m%d"))
+        return
     now = datetime.now(JST)
     if not a.history_only:
         d = a.date or now.strftime("%Y%m%d")

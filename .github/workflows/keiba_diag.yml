@@ -1,0 +1,26 @@
+name: 取得の診断
+
+# netkeiba の応答の形をログに出すだけ(何も保存しない)。取得がおかしいときに手動で回す。
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '対象日 YYYYMMDD(空で本日)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests beautifulsoup4
+      - run: python keiba.py --diag ${{ github.event.inputs.date && format('--date {0}', github.event.inputs.date) || '' }}
