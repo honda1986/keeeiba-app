@@ -124,6 +124,33 @@ details>summary::-webkit-details-marker{display:none}
 .flow{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px}
 .flow div{padding:4px 0}
 .flow div+div::before{content:"↓ ";color:var(--muted)}
+.datenav .d{width:auto;flex:1;font-weight:700}
+.datenav .d small{font-weight:600;color:var(--muted);margin-left:4px}
+.srcnote{font-size:12px;color:var(--ink2);background:var(--accent-bg);border:1px solid var(--accent-line);border-radius:10px;padding:8px 12px;margin-bottom:10px}
+.card.flash{outline:2px solid var(--pos);outline-offset:2px}
+.cal{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px}
+.calh{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.calh b{flex:1;text-align:center}
+.calh button{width:32px;height:32px;border-radius:8px;border:1px solid var(--line)}
+.calh button:disabled{opacity:.35;cursor:default}
+.calg{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
+.calg .w{font-size:10px;color:var(--muted);text-align:center}
+.calg .c{min-height:44px;border-radius:8px;padding:3px 1px;font-size:10.5px;text-align:center;background:var(--surface2);color:var(--muted);line-height:1.25;border:1px solid transparent;overflow:hidden}
+.calg .c.e{background:none}
+.calg button.c{color:var(--ink);border-color:var(--line)}
+.calg .c b{display:block;font-size:12px}
+.calg .c.hi{background:var(--good-bg)} .calg .c.hi span{color:var(--good);font-weight:700}
+.calg .c.lo{background:var(--neg-bg)} .calg .c.lo span{color:var(--neg);font-weight:700}
+.calg .c.on{outline:2px solid var(--ink);outline-offset:-1px}
+dialog.sheet{margin:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);padding:12px;width:min(420px,calc(100vw - 32px))}
+dialog.sheet::backdrop{background:rgba(0,0,0,.45)}
+dialog.sheet .close{display:block;width:100%;margin-top:10px;padding:9px;border-radius:10px;border:1px solid var(--line);font-weight:700}
+.chart{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 8px 4px}
+.chart svg{display:block;width:100%;height:190px;touch-action:pan-y}
+.chart .tip{position:absolute;top:0;left:0;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12px;line-height:1.4;padding:5px 8px;border-radius:8px;white-space:nowrap;display:none}
+.tbl tr.link{cursor:pointer}
+.tbl tr.link:hover td,.tbl tr.link:focus-visible td{background:var(--surface2)}
+.legendnote{font-size:12px;color:var(--muted);margin:6px 2px 0}
 </style>
 </head>
 <body>
@@ -137,6 +164,8 @@ details>summary::-webkit-details-marker{display:none}
   <main id="v-money" hidden></main>
   <main id="v-rule" hidden></main>
 </div>
+<dialog id="caldlg" class="sheet" aria-label="日付を選ぶ"><div id="calbox"></div>
+  <button class="close" id="calclose">閉じる</button></dialog>
 <nav class="tabbar"><div class="in" role="tablist">
   <button role="tab" data-v="race" aria-selected="true">レース</button>
   <button role="tab" data-v="money" aria-selected="false">収支・分析</button>
@@ -150,8 +179,14 @@ const yen = v => (v < 0 ? "-" : "") + "¥" + Math.abs(Math.round(v)).toLocaleStr
 const pct = (a, b) => b ? (a / b * 100).toFixed(1) + "%" : "-";
 const fmtD = d => d ? `${d.slice(0,4)}/${+d.slice(4,6)}/${+d.slice(6,8)}(${"日月火水木金土"[new Date(+d.slice(0,4), +d.slice(4,6)-1, +d.slice(6,8)).getDay()]})` : "";
 const BABA = {"良":"良","稍":"稍重","重":"重","不":"不良"};
-const state = {day: null, hist: null, days: [], filter: "buy", center: "all"};
+const yenK = v => { const a = Math.abs(v), sg = v > 0 ? "+" : v < 0 ? "-" : "±";
+  return sg + (a >= 10000 ? (a / 10000).toFixed(a >= 100000 ? 0 : 1) + "万" : a.toLocaleString()); };
+const state = {day: null, hist: null, days: [], filter: "buy", center: "all", cache: {},
+               period: "30", src: "all", calMonth: null, moneyMonth: null};
 const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+const toDate = d => new Date(+d.slice(0,4), +d.slice(4,6) - 1, +d.slice(6,8));
+const dstr = t => `${t.getFullYear()}${String(t.getMonth()+1).padStart(2,"0")}${String(t.getDate()).padStart(2,"0")}`;
+const SRC = {live: "当日の予想", backfill: "再現"};
 
 // 明暗
 const th = store.get("keiba-theme"); if (th) document.documentElement.dataset.theme = th;
@@ -161,33 +196,89 @@ $("#themeb").onclick = () => {
   document.documentElement.dataset.theme = dark ? "light" : "dark";
   store.set("keiba-theme", document.documentElement.dataset.theme);
 };
-document.querySelectorAll(".tabbar button").forEach(b => b.onclick = () => {
-  document.querySelectorAll(".tabbar button").forEach(x => x.setAttribute("aria-selected", x === b));
-  ["race","money","rule"].forEach(v => $("#v-" + v).hidden = v !== b.dataset.v);
-  scrollTo(0, 0);
-});
+function showTab(v) {
+  document.querySelectorAll(".tabbar button").forEach(x => x.setAttribute("aria-selected", x.dataset.v === v));
+  ["race","money","rule"].forEach(k => $("#v-" + k).hidden = k !== v);
+}
+document.querySelectorAll(".tabbar button").forEach(b => b.onclick = () => { showTab(b.dataset.v); scrollTo(0, 0); });
 
 async function getJSON(u) {
   const r = await fetch(u + (u.includes("?") ? "&" : "?") + "t=" + Date.now());
   if (!r.ok) throw new Error(r.status);
   return r.json();
 }
+async function loadDay(d) {
+  if (!state.cache[d]) state.cache[d] = await getJSON(`days/${d}.json`);
+  return state.cache[d];
+}
 
 async function boot() {
   try { state.hist = await getJSON("history.json"); } catch (e) { state.hist = null; }
-  state.days = (state.hist?.days || []).map(d => d.date);
+  state.days = (state.hist?.days || []).filter(d => d.races).map(d => d.date);
   try { state.day = await getJSON("data.json"); } catch (e) { state.day = null; }
-  if (state.day && !state.days.includes(state.day.date)) state.days.push(state.day.date);
+  if (state.day) {
+    state.cache[state.day.date] = state.day;
+    if (!state.days.includes(state.day.date)) state.days.push(state.day.date);
+  }
   state.days.sort();
   renderRace(); renderMoney(); renderRule();
 }
 
-async function goDay(step) {
-  const i = state.days.indexOf(state.day?.date) + step;
-  if (i < 0 || i >= state.days.length) return;
-  try { state.day = await getJSON(`days/${state.days[i]}.json`); } catch (e) { return; }
-  renderRace();
+// 日付を移る。rid があればそのレースまでスクロール
+async function openDay(d, rid) {
+  try { state.day = await loadDay(d); } catch (e) { return; }
+  if (rid) { state.center = "all"; }
+  renderRace(); showTab("race");
+  const el = rid && document.getElementById("r-" + rid);
+  if (el) {
+    el.scrollIntoView({block: "start"});
+    el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1600);
+  } else scrollTo(0, 0);
 }
+function goDay(step) {
+  const i = state.days.indexOf(state.day?.date) + step;
+  if (i >= 0 && i < state.days.length) openDay(state.days[i]);
+}
+
+// 月のカレンダー。stat(d) -> {races, buy, settled, pl} か null
+function calendar(month, stat, selected, ids) {
+  const y = +month.slice(0,4), m = +month.slice(4,6) - 1;
+  const first = new Date(y, m, 1), last = new Date(y, m + 1, 0).getDate();
+  const months = [...new Set(state.days.map(d => d.slice(0,6)))].sort();
+  const mi = months.indexOf(month);
+  let cells = "日月火水木金土".split("").map(w => `<div class="w">${w}</div>`).join("");
+  for (let i = 0; i < first.getDay(); i++) cells += `<div class="c e"></div>`;
+  for (let dd = 1; dd <= last; dd++) {
+    const d = month + String(dd).padStart(2, "0"), x = stat(d);
+    if (!x || !state.days.includes(d)) { cells += `<div class="c"><b>${dd}</b></div>`; continue; }
+    const cls = x.settled ? (x.pl > 0 ? "hi" : x.pl < 0 ? "lo" : "") : "";
+    const sub = x.settled ? `<span>${yenK(x.pl)}</span>` : x.buy ? `買${x.buy}` : "見送";
+    cells += `<button class="c ${cls} ${d === selected ? "on" : ""}" data-day="${d}"
+      aria-label="${fmtD(d)} ${x.settled ? "収支 " + yen(x.pl) : x.buy ? "買い " + x.buy + "レース" : "見送り"}"><b>${dd}</b>${sub}</button>`;
+  }
+  return `<div class="cal"><div class="calh">
+      <button data-cm="${months[mi - 1] || ""}" aria-label="前の月" ${mi <= 0 ? "disabled" : ""}>◀</button>
+      <b>${y}年${m + 1}月</b>
+      <button data-cm="${months[mi + 1] || ""}" aria-label="次の月" ${mi < 0 || mi >= months.length - 1 ? "disabled" : ""}>▶</button>
+    </div><div class="calg" id="${ids}">${cells}</div></div>`;
+}
+function dayStat(d) {
+  const x = (state.hist?.days || []).find(r => r.date === d);
+  if (!x) return state.day && state.day.date === d ? {races: 1, buy: 0, settled: 0, pl: 0} : null;
+  return {races: x.races, buy: x.buy, settled: x.settled, pl: x.ret - x.stake};
+}
+function openCalendar() {
+  const dlg = $("#caldlg");
+  state.calMonth = state.calMonth || (state.day?.date || state.days[state.days.length - 1] || dstr(new Date())).slice(0, 6);
+  const draw = () => {
+    $("#calbox").innerHTML = calendar(state.calMonth, dayStat, state.day?.date, "calg1");
+    $("#calbox").querySelectorAll("[data-cm]").forEach(b => b.onclick = () => { if (b.dataset.cm) { state.calMonth = b.dataset.cm; draw(); } });
+    $("#calbox").querySelectorAll("[data-day]").forEach(b => b.onclick = () => { dlg.close(); openDay(b.dataset.day); });
+  };
+  draw();
+  dlg.showModal();
+}
+$("#calclose").onclick = () => $("#caldlg").close();
 
 function races() {
   return Object.values(state.day?.races || {}).filter(r => r.pred && r.horses)
@@ -197,7 +288,7 @@ function races() {
 function renderRace() {
   const el = $("#v-race");
   const d = state.day;
-  $("#stamp").innerHTML = d?.updated ? `更新 ${esc(d.updated.slice(11,16))}` : "";
+  $("#stamp").innerHTML = d?.updated ? `更新 ${esc(d.updated.slice(5,10).replace("-","/"))} ${esc(d.updated.slice(11,16))}` : "";
   if (!d) { el.innerHTML = `<div class="empty">まだデータがありません。<br>GitHub Actions の「競馬の予想」が回ると表示されます。</div>`; return; }
   const all = races();
   const rs = all.filter(r => state.center === "all" || r.center === state.center);
@@ -205,13 +296,16 @@ function renderRace() {
   const nA = buy.filter(r => r.pred.verdict === "A").length;
   const set = rs.filter(r => r.settle && r.pred.verdict !== "見送り");
   const st = set.reduce((a, r) => a + r.settle.stake, 0), rt = set.reduce((a, r) => a + r.settle.ret, 0);
+  const nback = all.filter(r => r.pred.src === "backfill").length;
   const i = state.days.indexOf(d.date);
   el.innerHTML = `
     <div class="datenav">
       <button id="prev" aria-label="前の日" ${i <= 0 ? "disabled" : ""}>◀</button>
-      <div class="d">${fmtD(d.date)}</div>
-      <button id="next" aria-label="次の日" ${i >= state.days.length - 1 ? "disabled" : ""}>▶</button>
+      <button class="d" id="pick" aria-haspopup="dialog">${fmtD(d.date)}<small>📅</small></button>
+      <button id="next" aria-label="次の日" ${i < 0 || i >= state.days.length - 1 ? "disabled" : ""}>▶</button>
     </div>
+    ${nback ? `<div class="srcnote">${nback === all.length ? "この日" : nback + "レース"}は<b>後から再現した予想</b>です。
+      その日の出馬表と、そのレースより前の過去走だけで予想しています(人気は確定人気)。</div>` : ""}
     <div class="sum">
       <div class="tile"><div class="k">全レース</div><div class="v num">${rs.length}</div></div>
       <div class="tile"><div class="k">買う (A ${nA})</div><div class="v num">${buy.length}</div></div>
@@ -227,6 +321,7 @@ function renderRace() {
       <div class="card">${rs.filter(r => r.pred.verdict === "見送り").map(skipRow).join("")}</div>` : ""}`;
   $("#prev").onclick = () => goDay(-1);
   $("#next").onclick = () => goDay(1);
+  $("#pick").onclick = () => { state.calMonth = d.date.slice(0, 6); openCalendar(); };
   el.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { state.filter = b.dataset.f; renderRace(); });
   el.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { state.center = b.dataset.c; renderRace(); });
   el.querySelectorAll(".oddsb").forEach(b => b.onclick = () => {
@@ -253,9 +348,9 @@ function card(r) {
       <span class="ty">${esc(b.type)}</span>
       <span class="cb">${b.combos.map(c => c.join(b.type === "3連単" ? "→" : "-")).join("  ")}<span class="role">${esc(b.kind)} … ${esc(b.role)}</span></span>
       <span class="pt">${b.combos.length}点×${b.unit}円${b.ret ? `<br><b class="good">${yen(b.ret)}</b>` : ""}</span></div>`).join("");
-  return `<article class="card ${p.verdict === "A" ? "buyA" : ""}">
+  return `<article class="card ${p.verdict === "A" ? "buyA" : ""}" id="r-${esc(r.id)}">
     <div class="ch"><div class="badge ${p.verdict}">${p.verdict}</div>
-      <div class="t"><b>${head(r)}</b><div class="meta">${meta(r)}</div>
+      <div class="t"><b>${head(r)}</b>${p.src === "backfill" ? ` <span class="tag o">再現</span>` : ""}<div class="meta">${meta(r)}</div>
       <div class="meta">${esc(p.reason)}${p.pace ? " · 展開: " + esc(p.pace.note) : ""}</div></div></div>
     <div class="axis">${ax("◎", p.honmei, hv)}${ax("○", p.taikou, tv)}</div>
     ${p.notes && p.notes.length ? `<div class="note">${p.notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
@@ -293,42 +388,166 @@ function table(r) {
     <th style="text-align:right">評価</th><th class="odds" style="text-align:right">人気</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+// ---------------------------------------------------------------- 収支・分析
+const GROUPS = [["中央/地方","center"],["判定","verdict"],["芝/ダート","surface"],["距離","dist"],["頭数","field"],
+                ["馬場","baba"],["2強の差","gap"],["展開","pace"],["競馬場","venue"]];
+const PERIODS = [["7","7日"],["30","30日"],["month","今月"],["all","全期間"]];
+
+function periodRange() {
+  const ds = (state.hist?.days || []).map(d => d.date).sort();
+  if (!ds.length) return ["", ""];
+  const last = ds[ds.length - 1];
+  if (state.period === "all") return [ds[0], last];
+  if (state.period === "month") return [last.slice(0, 6) + "01", last];
+  const t = toDate(last); t.setDate(t.getDate() - (+state.period - 1));
+  return [dstr(t), last];
+}
+const srcOk = s => state.src === "all" || s === state.src;
+
+function cumChart(pts) {
+  // pts: [{date, pl, cum}] 日付順。1系列なので凡例は付けない(見出しが系列名)
+  if (pts.length < 2) return "";
+  const W = 600, H = 190, L = 52, R = 10, T = 10, B = 24;
+  const lo = Math.min(0, ...pts.map(p => p.cum)), hi = Math.max(0, ...pts.map(p => p.cum));
+  const span = hi - lo || 1;
+  const x = i => L + (W - L - R) * i / (pts.length - 1);
+  const y = v => T + (H - T - B) * (hi - v) / span;
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.cum).toFixed(1)}`).join("");
+  const ticks = [...new Set([hi, 0, lo])];
+  return `<div class="chart" id="cum">
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="累積収支の推移(下の日別の表と同じ数字)">
+      ${ticks.map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1" ${v === 0 ? 'stroke-dasharray="4 3" stroke="var(--line2)"' : ""} vector-effect="non-scaling-stroke"/>
+        <text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${yenK(v)}</text>`).join("")}
+      <text x="${L}" y="${H - 6}" font-size="11" fill="var(--muted)">${+pts[0].date.slice(4,6)}/${+pts[0].date.slice(6)}</text>
+      <text x="${W - R}" y="${H - 6}" font-size="11" fill="var(--muted)" text-anchor="end">${+pts[pts.length-1].date.slice(4,6)}/${+pts[pts.length-1].date.slice(6)}</text>
+      <path d="${line}" fill="none" stroke="var(--pos)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      <line id="cx" y1="${T}" y2="${H - B}" stroke="var(--muted)" stroke-width="1" vector-effect="non-scaling-stroke" visibility="hidden"/>
+      <rect x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent" id="hit"/>
+    </svg>
+    <div class="dot" id="cdot" style="position:absolute;width:10px;height:10px;border-radius:50%;background:var(--pos);box-shadow:0 0 0 2px var(--surface);display:none;transform:translate(-50%,-50%);pointer-events:none"></div>
+    <div class="tip" id="ctip"></div></div>`;
+}
+function wireChart(pts) {
+  const box = $("#cum"); if (!box) return;
+  const svg = box.querySelector("svg"), tip = $("#ctip"), dot = $("#cdot"), cx = $("#cx");
+  const W = 600, L = 52, R = 10, T = 10, B = 24, H = 190;
+  const lo = Math.min(0, ...pts.map(p => p.cum)), hi = Math.max(0, ...pts.map(p => p.cum)), span = hi - lo || 1;
+  const show = ev => {
+    const rc = svg.getBoundingClientRect();
+    const vx = (ev.clientX - rc.left) / rc.width * W;
+    const i = Math.max(0, Math.min(pts.length - 1, Math.round((vx - L) / (W - L - R) * (pts.length - 1))));
+    const p = pts[i], px = L + (W - L - R) * i / (pts.length - 1), py = T + (H - T - B) * (hi - p.cum) / span;
+    cx.setAttribute("x1", px); cx.setAttribute("x2", px); cx.setAttribute("visibility", "visible");
+    const sx = px / W * rc.width + (rc.left - box.getBoundingClientRect().left), sy = py / H * rc.height + (rc.top - box.getBoundingClientRect().top);
+    dot.style.display = "block"; dot.style.left = sx + "px"; dot.style.top = sy + "px";
+    tip.innerHTML = `${fmtD(p.date)}<br>その日 ${yen(p.pl)} / 累積 <b>${yen(p.cum)}</b>`;
+    tip.style.display = "block";
+    const tw = tip.offsetWidth, bw = box.clientWidth;
+    tip.style.left = Math.max(4, Math.min(bw - tw - 4, sx - tw / 2)) + "px";
+    tip.style.top = Math.max(4, sy - tip.offsetHeight - 12) + "px";
+  };
+  const hide = () => { tip.style.display = "none"; dot.style.display = "none"; cx.setAttribute("visibility", "hidden"); };
+  svg.addEventListener("pointermove", show);
+  svg.addEventListener("pointerdown", show);
+  svg.addEventListener("pointerleave", hide);
+}
+
 function renderMoney() {
   const el = $("#v-money"), h = state.hist;
   if (!h || !h.days || !h.days.length) { el.innerHTML = `<div class="empty">まだ成績がありません。</div>`; return; }
-  const ds = h.days.filter(d => d.settled);
-  const S = ds.reduce((a, d) => a + d.stake, 0), R = ds.reduce((a, d) => a + d.ret, 0);
-  const n = ds.reduce((a, d) => a + d.settled, 0), hit = ds.reduce((a, d) => a + d.hit, 0);
+  const [from, to] = periodRange();
+  const inP = d => d >= from && d <= to;
+  const rs = (h.races || []).filter(r => inP(r.date) && srcOk(r.src));
+  const days = h.days.filter(d => inP(d.date));
+  const S = rs.reduce((a, r) => a + r.stake, 0), R = rs.reduce((a, r) => a + r.ret, 0), hit = rs.filter(r => r.hit).length;
+  const agg = (list, key) => {
+    const o = {};
+    for (const r of list) { const k = key(r), x = o[k] = o[k] || {n: 0, hit: 0, stake: 0, ret: 0};
+      x.n++; x.hit += r.hit ? 1 : 0; x.stake += r.stake; x.ret += r.ret; }
+    return Object.entries(o).sort((a, b) => b[1].n - a[1].n);
+  };
   const grow = (rows, label) => `<table class="tbl"><thead><tr><th>${label}</th><th>R</th><th>的中</th><th>投資</th><th>回収率</th></tr></thead><tbody>
     ${rows.map(([k, x]) => `<tr><td>${esc(k)}</td><td>${x.n}</td><td>${pct(x.hit, x.n)}</td><td>${yen(x.stake)}</td>
       <td class="${x.ret >= x.stake ? "good" : "neg"}"><b>${pct(x.ret, x.stake)}</b></td></tr>`).join("")}</tbody></table>`;
-  const groups = Object.entries(h.groups || {}).map(([g, o]) => `<div class="sec">${esc(g)}別</div>`
-    + grow(Object.entries(o).sort((a, b) => b[1].n - a[1].n), g)).join("");
-  const mk = ["◎","○","▲","△","☆","無","×"].filter(k => h.marks?.[k]).map(k => {
-    const m = h.marks[k]; return `<tr><td>${k === "無" ? "無印" : k}</td><td>${m.n}</td><td>${pct(m.win, m.n)}</td><td><b>${pct(m.top3, m.n)}</b></td></tr>`;
-  }).join("");
-  const base = h.base_top3 || [0, 0];
-  const tg = (h.tags || []).filter(t => t.n >= 5).sort((a, b) => a.top3 / a.n - b.top3 / b.n).slice(0, 20).map(t =>
-    `<tr><td>${esc(t.tag)}</td><td>${t.n}</td><td class="${t.top3 / t.n < base[1] / Math.max(base[0], 1) ? "neg" : "good"}"><b>${pct(t.top3, t.n)}</b></td></tr>`).join("");
+  // 券種別
+  const bt = {};
+  for (const r of rs) for (const [k, v] of Object.entries(r.bets || {})) {
+    const x = bt[k] = bt[k] || {n: 0, hit: 0, stake: 0, ret: 0}; x.n++; x.stake += v[0]; x.ret += v[1]; x.hit += v[2] ? 1 : 0; }
+  // 日ごと(累積グラフ・カレンダー・日別の表)
+  const byDay = {};
+  for (const r of rs) { const x = byDay[r.date] = byDay[r.date] || {n: 0, hit: 0, stake: 0, ret: 0}; x.n++; x.hit += r.hit ? 1 : 0; x.stake += r.stake; x.ret += r.ret; }
+  let cum = 0;
+  const pts = Object.keys(byDay).sort().map(d => { const pl = byDay[d].ret - byDay[d].stake; cum += pl; return {date: d, pl, cum}; });
+  // 印・負けパターン
+  const marks = {}, tags = {}, base = [0, 0];
+  for (const d of days) for (const [sname, sx] of Object.entries(d.stats || {})) {
+    if (!srcOk(sname)) continue;
+    for (const [k, v] of Object.entries(sx.marks)) { const m = marks[k] = marks[k] || [0, 0, 0]; m[0] += v[0]; m[1] += v[1]; m[2] += v[2]; }
+    for (const [k, v] of Object.entries(sx.tags)) { const t = tags[k] = tags[k] || [0, 0]; t[0] += v[0]; t[1] += v[1]; }
+    base[0] += sx.base[0]; base[1] += sx.base[1];
+  }
+  const mk = ["◎","○","▲","△","☆","無","×"].filter(k => marks[k]).map(k => { const m = marks[k];
+    return `<tr><td>${k === "無" ? "無印" : k}</td><td>${m[0]}</td><td>${pct(m[1], m[0])}</td><td><b>${pct(m[2], m[0])}</b></td></tr>`; }).join("");
+  const br = base[1] / Math.max(base[0], 1);
+  const tg = Object.entries(tags).filter(([, v]) => v[0] >= 5).sort((a, b) => a[1][1] / a[1][0] - b[1][1] / b[1][0]).slice(0, 20)
+    .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v[0]}</td><td class="${v[1] / v[0] < br ? "neg" : "good"}"><b>${pct(v[1], v[0])}</b></td></tr>`).join("");
+  state.moneyMonth = state.moneyMonth && state.moneyMonth >= from.slice(0, 6) && state.moneyMonth <= to.slice(0, 6) ? state.moneyMonth : to.slice(0, 6);
+  const calStat = d => { const x = h.days.find(r => r.date === d); if (!x) return null; const b = byDay[d];
+    return {races: x.races, buy: x.buy, settled: b ? b.n : 0, pl: b ? b.ret - b.stake : 0}; };
+  const srcs = [...new Set((h.races || []).map(r => r.src))];
+
   el.innerHTML = `
-    <div class="sum" style="margin-top:10px">
+    <div class="chips" role="group" aria-label="期間" style="margin-top:12px">
+      ${PERIODS.map(([k, t]) => `<button class="chip" data-p="${k}" aria-pressed="${state.period === k}">${t}</button>`).join("")}
+    </div>
+    ${srcs.length > 1 ? `<div class="chips" role="group" aria-label="予想の出どころ">
+      ${[["all","すべて"],["live","当日の予想"],["backfill","再現"]].map(([k, t]) => `<button class="chip" data-s="${k}" aria-pressed="${state.src === k}">${t}</button>`).join("")}
+    </div>` : ""}
+    <p class="muted" style="font-size:12px;margin-bottom:8px">${fmtD(from)} 〜 ${fmtD(to)}${state.src !== "all" ? " · " + SRC[state.src] + "のみ" : ""}</p>
+    <div class="sum">
       <div class="tile"><div class="k">回収率</div><div class="v num ${R >= S ? "good" : "neg"}">${pct(R, S)}</div></div>
       <div class="tile"><div class="k">収支</div><div class="v num ${R >= S ? "good" : "neg"}">${yen(R - S)}</div></div>
-      <div class="tile"><div class="k">的中 ${hit}/${n}R</div><div class="v num">${pct(hit, n)}</div></div>
+      <div class="tile"><div class="k">的中 ${hit}/${rs.length}R</div><div class="v num">${pct(hit, rs.length)}</div></div>
     </div>
-    <p class="muted" style="font-size:12px">1点${h.unit}円で記録した買い目を、実際の払戻で計算。的中率より回収率で見る。</p>
-    <div class="sec">券種別(役割ごと)</div>
-    ${grow(Object.entries(h.by_type || {}), "券種")}
-    ${groups}
+    <p class="muted" style="font-size:12px">1点${h.unit}円で記録した買い目を、実際の払戻で計算。的中率より回収率で見る。
+      「再現」は過去の日を後から予想したもの(その日の馬柱で予想、人気は確定人気)。</p>
+    ${pts.length >= 2 ? `<div class="sec">累積収支</div>${cumChart(pts)}<p class="legendnote">指でなぞると日ごとの数字が出ます。</p>` : ""}
+    <div class="sec">カレンダー</div>
+    <div id="mcal">${calendar(state.moneyMonth, calStat, null, "calg2")}</div>
+    <p class="legendnote">日付を押すとその日の予想を開きます。数字はその日の収支(+ 黒字 / - 赤字)。</p>
+    ${rs.length ? `<div class="sec">券種別(役割ごと)</div>${grow(Object.entries(bt), "券種")}
+    ${GROUPS.map(([t, k]) => `<div class="sec">${esc(t)}別</div>` + grow(agg(rs, r => r[k] ?? "?"), t)).join("")}` : `<div class="empty">この期間に買ったレースの結果はまだありません。</div>`}
     <div class="sec">印の成績(見送りレースも含む)</div>
-    <table class="tbl"><thead><tr><th>印</th><th>頭数</th><th>勝率</th><th>3着内</th></tr></thead><tbody>${mk}</tbody></table>
-    <p class="muted" style="font-size:12px;margin-top:6px">× (消し) の3着内率が低いほど「来ない馬」を正しく消せている。</p>
+    <table class="tbl"><thead><tr><th>印</th><th>頭数</th><th>勝率</th><th>3着内</th></tr></thead><tbody>${mk || `<tr><td colspan="4" class="muted">結果が出ると表示されます</td></tr>`}</tbody></table>
+    <p class="legendnote">× (消し) の3着内率が低いほど「来ない馬」を正しく消せている。</p>
     <div class="sec">負けパターン(減点理由ごとの3着内率)</div>
     <table class="tbl"><thead><tr><th>理由</th><th>頭数</th><th>3着内 (全体 ${pct(base[1], base[0])})</th></tr></thead><tbody>${tg || `<tr><td colspan="3" class="muted">5頭以上たまると出ます</td></tr>`}</tbody></table>
-    <div class="sec">日別</div>
-    <table class="tbl"><thead><tr><th>日付</th><th>全R</th><th>買い</th><th>投資</th><th>収支</th></tr></thead><tbody>
-      ${h.days.slice().reverse().slice(0, 60).map(d => `<tr><td>${fmtD(d.date)}</td><td>${d.races}</td><td>${d.buy}</td><td>${yen(d.stake)}</td>
-        <td class="${d.ret >= d.stake ? "good" : "neg"}">${d.settled ? yen(d.ret - d.stake) : "-"}</td></tr>`).join("")}</tbody></table>`;
+    ${pts.length ? `<div class="sec">日別</div>
+    <table class="tbl"><thead><tr><th>日付</th><th>R</th><th>的中</th><th>投資</th><th>収支</th></tr></thead><tbody>
+      ${pts.slice().reverse().map(p => { const x = byDay[p.date];
+        return `<tr class="link" tabindex="0" data-day="${p.date}"><td>${fmtD(p.date)}</td><td>${x.n}</td><td>${x.hit}</td><td>${yen(x.stake)}</td>
+        <td class="${p.pl >= 0 ? "good" : "neg"}"><b>${yen(p.pl)}</b></td></tr>`; }).join("")}</tbody></table>
+    <div class="sec">買ったレース(新しい順)</div>
+    <table class="tbl"><thead><tr><th>レース</th><th>判定</th><th>◎○</th><th>収支</th></tr></thead><tbody>
+      ${rs.slice().reverse().slice(0, 150).map(r => `<tr class="link" tabindex="0" data-day="${r.date}" data-rid="${esc(r.id)}">
+        <td>${+r.date.slice(4,6)}/${+r.date.slice(6)} ${esc(r.venue)}${r.rno}R${r.src === "backfill" ? ` <span class="tag o">再現</span>` : ""}</td>
+        <td>${esc(r.verdict)}</td><td class="num">${r.hr ?? "-"}着 ${r.tr ?? "-"}着</td>
+        <td class="${r.ret - r.stake >= 0 ? "good" : "neg"}"><b>${yen(r.ret - r.stake)}</b></td></tr>`).join("")}</tbody></table>` : ""}`;
+
+  el.querySelectorAll("[data-p]").forEach(b => b.onclick = () => { state.period = b.dataset.p; renderMoney(); });
+  el.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { state.src = b.dataset.s; renderMoney(); });
+  const wireCal = () => {
+    $("#mcal").querySelectorAll("[data-cm]").forEach(b => b.onclick = () => {
+      if (!b.dataset.cm) return; state.moneyMonth = b.dataset.cm;
+      $("#mcal").innerHTML = calendar(state.moneyMonth, calStat, null, "calg2"); wireCal(); });
+    $("#mcal").querySelectorAll("[data-day]").forEach(b => b.onclick = () => openDay(b.dataset.day));
+  };
+  wireCal();
+  el.querySelectorAll("tr.link").forEach(tr => {
+    const go = () => openDay(tr.dataset.day, tr.dataset.rid);
+    tr.onclick = go; tr.onkeydown = e => { if (e.key === "Enter") go(); };
+  });
+  wireChart(pts);
 }
 
 function renderRule() {

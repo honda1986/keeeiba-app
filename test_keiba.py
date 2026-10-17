@@ -124,6 +124,15 @@ class Logic(unittest.TestCase):
         self.assertEqual(s["ret"], 1500 + 6000 + 1200 + 600 + 600)
         self.assertEqual(s["honmei_rank"], 2)
 
+    def test_settle_dead_heat(self):
+        # 2着同着: 馬連 5-7 と 5-10 の両方に払戻
+        pred = {"honmei": 5, "taikou": 10, "bets": [
+            {"type": "馬連", "role": "", "kind": "", "combos": [[5, 10]], "unit": 100}], "stake": 100}
+        res = {"order": [5, 7, 10], "payout": {"馬連": {"5-7": 3200, "5-10": 2020}}}
+        s = L.settle(pred, res)
+        self.assertTrue(s["hit"])
+        self.assertEqual(s["ret"], 2020)
+
     def test_class_level(self):
         self.assertEqual(L.class_level("毎日王冠(GⅡ)"), 7)
         self.assertEqual(L.class_level("3歳以上2勝クラス"), 3)
@@ -144,7 +153,7 @@ PAST_HTML = """<table class="Shutuba_Past5_Table"><tr class="HorseList">
 <td class="Rest">休養</td></tr></table>"""
 
 RESULT_HTML = """<table class="RaceTable01"><tr class="HorseList"><td><div class="Rank">1</div></td>
-<td>2</td><td>3</td></tr><tr class="HorseList"><td>2</td><td>1</td><td>1</td></tr>
+<td>2</td><td>3</td><td class="Odds Txt_C">8</td><td class="Odds Txt_R">15.8</td></tr><tr class="HorseList"><td>2</td><td>1</td><td>1</td></tr>
 <tr class="HorseList"><td>3</td><td>5</td><td>9</td></tr></table>
 <table class="Payout_Detail_Table"><tr class="Umaren"><th>馬連</th>
 <td class="Result"><ul><li><span>1</span></li><li><span>3</span></li></ul></td>
@@ -156,7 +165,32 @@ RESULT_HTML = """<table class="RaceTable01"><tr class="HorseList"><td><div class
 <td class="Payout"><span>12,340円</span></td></tr></table>"""
 
 
+ODDS_JRA = """<table><tr><th>枠</th></tr>
+<tr><td class="Waku1 W31">1</td><td class="W31">1</td><td class="Mark_User"></td><td class="Horse_Select"></td>
+<td class="Horse_Name">シーラーステート</td><td class="Odds Popular">12.5</td></tr>
+<tr><td class="Waku1 W31">1</td><td class="W31">2</td><td class="Mark_User"></td><td class="Horse_Select"></td>
+<td class="Horse_Name">ブルーリボン</td><td class="Odds Popular">3.1</td></tr></table>"""
+
+ODDS_NAR = """<table><tr><th>人気</th></tr>
+<tr><td class="Ninki">1</td><td class="Waku7">8</td><td class="Mark_User"></td>
+<td class="Horse_Name">エイシンシームレス</td><td class="Odds">2.0</td></tr>
+<tr><td class="Ninki">2</td><td class="Waku4">4</td><td class="Mark_User"></td>
+<td class="Horse_Name">スティールシャトル</td><td class="Odds">3.0</td></tr></table>"""
+
+ODDS_BEFORE = ODDS_JRA.replace("12.5", "---.-").replace("3.1", "---.-")
+
+
 class Parse(unittest.TestCase):
+    def test_odds(self):
+        self.assertEqual(K.parse_odds_form(ODDS_JRA), {1: (12.5, None), 2: (3.1, None)})
+        self.assertEqual(K.parse_odds_form(ODDS_NAR), {8: (2.0, 1), 4: (3.0, 2)})
+        self.assertEqual(K.parse_odds_form(ODDS_BEFORE), {})
+
+    def test_past_skips_training_rows(self):
+        oikiri = PAST_HTML.replace("</table>", """<tr class="OikiriDataHead3 HorseList">
+<td class="Waku2">2</td><td class="Umaban">3</td><td class="Horse_Info">前走</td></tr></table>""")
+        self.assertEqual(len(K.parse_past(oikiri)[3]), 1)
+
     def test_past(self):
         p = K.parse_past(PAST_HTML)
         self.assertIn(3, p)
@@ -174,6 +208,7 @@ class Parse(unittest.TestCase):
         self.assertEqual(r["payout"]["馬連"], {"1-3": 1230})
         self.assertEqual(r["payout"]["ワイド"], {"1-3": 400, "3-9": 900, "1-9": 700})
         self.assertEqual(r["payout"]["3連単"], {"3-1-9": 12340})
+        self.assertEqual((r["ninki"]["3"], r["odds"]["3"]), (8, 15.8))
 
     def test_center(self):
         self.assertEqual(K.center_of("202605040811"), "jra")

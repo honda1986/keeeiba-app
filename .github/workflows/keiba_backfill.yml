@@ -1,0 +1,71 @@
+name: 過去の日を再現
+
+# 過去の日のレースを、その日の出馬表と「そのレースより前の過去走」だけで予想し、結果・払戻と照合する。
+# 新しい日から順に1日ずつ保存するので、途中で止まっても続きからやり直せる(済んだ日は飛ばす)。
+# 予想には「再現」と印が付き、当日の予想とは分けて集計できる。人気は確定人気を使う。
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: '何日分さかのぼるか'
+        required: false
+        default: '30'
+      end:
+        description: 'いちばん新しい日 YYYYMMDD(空で昨日)'
+        required: false
+        default: ''
+
+concurrency:
+  group: keiba-backfill
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 依存インストール
+        run: pip install requests beautifulsoup4
+      - name: テスト
+        run: python -m unittest test_keiba
+      - name: 1日ずつ再現して保存
+        env:
+          DAYS: ${{ github.event.inputs.days }}
+          END: ${{ github.event.inputs.end }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          DAYS="${DAYS:-30}"
+          END="${END:-$(TZ=Asia/Tokyo date -d yesterday +%Y%m%d)}"
+          START=$(date +%s)
+          LIMIT=$((330 * 60))     # ジョブの上限(350分)の前に切り上げる
+          for i in $(seq 0 $((DAYS - 1))); do
+            D=$(date -d "$END -$i day" +%Y%m%d)
+            if [ $(( $(date +%s) - START )) -gt $LIMIT ]; then
+              echo "時間切れ。$D から先は、もう一度まわすと続きから再現します"
+              break
+            fi
+            echo "===== $D ====="
+            python keiba.py --backfill-date "$D" || { echo "$D は失敗。次の日へ"; continue; }
+            git add keiba/days keiba/past keiba/history.json
+            if git diff --cached --quiet; then
+              continue
+            fi
+            git commit -q -m "keiba: $D を再現"
+            for k in 1 2 3; do
+              # 当日の更新とぶつかったら取り込み直す(history.json は次の日の集計で作り直される)
+              if git pull --rebase -X theirs -q; then
+                git push -q && break
+              else
+                git rebase --abort 2>/dev/null || true
+              fi
+              sleep 5
+            done
+          done

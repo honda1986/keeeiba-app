@@ -50,7 +50,7 @@ jobs:
             ARG="--date ${{ github.event.inputs.date }}"
           fi
           python keiba.py $ARG
-          git add keiba/data.json keiba/days keiba/history.json
+          git add keiba/data.json keiba/days keiba/past keiba/history.json
           if git diff --cached --quiet; then
             echo "変更なし"
             exit 0
@@ -58,7 +58,7 @@ jobs:
           git commit -m "keiba: 更新" -q
           for i in 1 2 3; do
             # 同時に更新されていたら取り込み直す
-            if git pull --rebase --autostash -q; then
+            if git pull --rebase --autostash -X theirs -q; then
               git push -q && exit 0
             else
               git rebase --abort 2>/dev/null || true

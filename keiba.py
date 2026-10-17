@@ -12,16 +12,20 @@ keiba.py -- 中央・地方の当日の全レースから「買うレース」�
 ■ 出力
   keiba/data.json           … いまの日(アプリが読む。days/ の最新と同じ中身)
   keiba/days/YYYYMMDD.json  … 日別の予想と結果
+  keiba/past/YYYYMMDD.json.gz … 馬柱(過去5走)。アプリは読まない。予想の作り直し用
   keiba/history.json        … 収支・条件別の回収率・負けパターン(規則 30)
 
 使い方:
   python keiba.py                 # 本日(JST)。前日の結果が欠けていれば埋める
   python keiba.py --date 20261018
   python keiba.py --history-only  # days/ から history.json だけ作り直す
+  python keiba.py --backfill-date 20261001
+                                  # 過去の日を再現する(その日の馬柱で予想し、結果と照合)
 """
 
 import argparse
 import glob
+import gzip
 import json
 import os
 import re
@@ -43,6 +47,7 @@ WAIT = 0.4                 # 1リクエストごとの間隔(秒)
 CARD_REFRESH = 50          # 出馬表(馬場・取消)を取り直す間隔(分)
 ODDS_REFRESH = 20          # オッズを取り直す間隔(分)
 RESULT_AFTER = 8           # 発走から何分後に結果を見に行くか
+PAST_VER = 2               # 馬柱の読み方を直したら上げる(発走前のレースは取り直す)
 
 SESS = requests.Session()
 SESS.headers.update(UA)
@@ -106,7 +111,7 @@ def race_ids(d):
     # 地方のIDは日付(MMDD)を含む。別の日が混ざらないようにする
     out = []
     for rid in ids:
-        if not venue_of(rid):
+        if not venue_of(rid) or venue_of(rid) == "帯広":     # ばんえいは対象外
             continue
         if center_of(rid) == "nar" and (rid[:4] != d[:4] or rid[6:10] != d[4:8]):
             continue
@@ -267,22 +272,52 @@ def parse_past(html):
     return out
 
 
-def fetch_odds(rid):
-    """馬番 -> (単勝オッズ, 人気)"""
-    c = center_of(rid)
-    api = "/api/api_get_jra_odds.php" if c == "jra" else "/api/api_get_nar_odds.php"
-    j = get(SITE[c] + api, {"pid": api.split("/")[-1][:-4], "input": "UTF-8", "output": "json",
-                            "race_id": rid, "type": "1", "action": "update"}, as_json=True)
+def parse_odds_form(html):
+    """odds_get_form.html(単勝)。馬番は「馬名の前にある最後の数字の列」(中央は 枠・馬番、地方は 人気・馬番)"""
     out = {}
-    try:
-        odds = j["data"]["odds"]["1"]
-        for k, v in odds.items():
-            o, nk = num(v[0], float), num(v[2])
-            if o:
-                out[int(k)] = (o, nk)
-    except (TypeError, KeyError, IndexError, AttributeError):
-        pass
-    if out and not any(nk for _, nk in out.values()):
+    soup = BeautifulSoup(html, "html.parser")
+    for tr in soup.select("tr"):
+        tds = tr.find_all("td")
+        um = nk = o = None
+        for td in tds:
+            cl = td.get("class") or []
+            t = L.nfkc(txt(td))
+            if "Horse_Name" in cl:
+                break
+            if "Ninki" in cl:
+                nk = num(t)
+            elif re.fullmatch(r"\d{1,2}", t):
+                um = int(t)
+        for td in tds:
+            cl = td.get("class") or []
+            t = L.nfkc(txt(td))
+            if "Odds" in cl and re.fullmatch(r"\d+\.\d", t):
+                o = float(t)
+            elif "Ninki" in cl or "Popular_Ninki" in cl:
+                nk = num(t) or nk
+        if um and o:
+            out[um] = (o, nk)
+    return out
+
+
+def fetch_odds(rid):
+    """馬番 -> (単勝オッズ, 人気)。発売前は空"""
+    c = center_of(rid)
+    html = get(SITE[c] + "/odds/odds_get_form.html", {"type": "b1", "race_id": rid})
+    out = parse_odds_form(html) if html else {}
+    if not out and c == "jra":
+        j = get(SITE[c] + "/api/api_get_jra_odds.html",
+                {"pid": "api_get_jra_odds", "input": "UTF-8", "output": "json",
+                 "race_id": rid, "type": "1", "action": "init", "compress": "0"}, as_json=True)
+        try:
+            for k, v in j["data"]["odds"]["1"].items():
+                o, nk = num(v[0], float), num(v[2])
+                if o:
+                    out[int(k)] = (o, nk)
+        except (TypeError, KeyError, IndexError, AttributeError):
+            pass
+    # 人気が無ければオッズの低い順
+    if out and not all(nk for _, nk in out.values()):
         ranked = sorted(out, key=lambda u: out[u][0])
         out = {u: (out[u][0], i + 1) for i, u in enumerate(ranked)}
     return out
@@ -294,7 +329,7 @@ PAY = {"Tansho": ("単勝", 1), "Umaren": ("馬連", 2), "Wide": ("ワイド", 2
 
 def parse_result(html):
     soup = BeautifulSoup(html, "html.parser")
-    rows = []
+    rows, ninki, odds = [], {}, {}
     for tr in soup.select("table.RaceTable01 tr.HorseList, #All_Result_Table tr.HorseList"):
         tds = tr.find_all("td")
         if len(tds) < 3:
@@ -302,6 +337,16 @@ def parse_result(html):
         rk, um = num(L.nfkc(txt(tds[0]))), num(txt(tds[2]))
         if rk and um:
             rows.append((rk, um))
+        if um:
+            # 人気と単勝オッズ(過去の日の再現で「人気」に使う)
+            for td in tds:
+                if "Odds" not in (td.get("class") or []):
+                    continue
+                t = L.nfkc(txt(td))
+                if re.fullmatch(r"\d{1,2}", t):
+                    ninki[str(um)] = int(t)
+                elif re.fullmatch(r"\d+\.\d", t):
+                    odds[str(um)] = float(t)
     order = [u for _, u in sorted(set(rows))]
     pay = {}
     for tr in soup.select("table.Payout_Detail_Table tr"):
@@ -321,7 +366,7 @@ def parse_result(html):
             c = c if typ == "3連単" else sorted(c)
             d["-".join(str(x) for x in c)] = y
         pay[typ] = d
-    return {"order": order, "payout": pay}
+    return {"order": order, "payout": pay, "ninki": ninki, "odds": odds}
 
 
 # ---------------------------------------------------------------- 1日分
@@ -340,6 +385,54 @@ def save(path, obj):
     os.replace(tmp, path)
 
 
+def day_path(d):
+    return "{}/days/{}.json".format(OUT, d)
+
+
+def past_path(d):
+    return "{}/past/{}.json.gz".format(OUT, d)
+
+
+def load_day(d):
+    """日別ファイルに馬柱(別ファイル)を戻す"""
+    day = load(day_path(d), {"date": d, "races": {}})
+    try:
+        with gzip.open(past_path(d), "rt", encoding="utf-8") as f:
+            past = json.load(f)
+    except Exception:
+        past = {}
+    for rid, rc in day["races"].items():
+        pm = past.get(rid) or {}
+        for h in rc.get("horses") or []:
+            if "past" not in h and str(h["umaban"]) in pm:
+                h["past"] = pm[str(h["umaban"])]
+    return day
+
+
+def save_day(d, day):
+    """馬柱は別ファイル(gz)へ。アプリが読む日別ファイルは軽くしておく"""
+    past, slim = {}, dict(day, races={})
+    for rid, rc in day["races"].items():
+        r2 = dict(rc)
+        if "horses" in rc:
+            r2["horses"] = []
+            for h in rc["horses"]:
+                h2 = dict(h)
+                runs = h2.pop("past", None)
+                if runs is not None:
+                    past.setdefault(rid, {})[str(h["umaban"])] = runs
+                r2["horses"].append(h2)
+        slim["races"][rid] = r2
+    save(day_path(d), slim)
+    if past:
+        os.makedirs(os.path.dirname(past_path(d)), exist_ok=True)
+        tmp = past_path(d) + ".tmp"
+        with gzip.GzipFile(tmp, "wb", mtime=0) as f:      # 中身が同じなら同じバイト列(差分を出さない)
+            f.write(json.dumps(past, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode())
+        os.replace(tmp, past_path(d))
+    return slim
+
+
 def start_dt(d, hhmm):
     if not hhmm:
         return None
@@ -352,11 +445,14 @@ def minutes_since(iso, now):
     return (now - datetime.fromisoformat(iso)).total_seconds() / 60
 
 
-def run_day(d, now, fetch_cards=True):
-    path = "{}/days/{}.json".format(OUT, d)
-    day = load(path, {"date": d, "races": {}})
+def run_day(d, now, backfill=False):
+    """1日分を進める。
+    ふつう(当日) … 発走前は出馬表・馬柱・オッズを取って予想を作り直し、発走後は固定して結果を照合
+    backfill(過去の日) … 予想の無いレースは、その日の出馬表と馬柱(そのレースより前の走)で予想を作る。
+                         人気は結果ページの確定人気。記録には「再現」と印を付けて当日の予想と分ける"""
+    day = load_day(d)
     races = day["races"]
-    if fetch_cards and (not races or minutes_since(day.get("list_at"), now) > 180):
+    if not races or minutes_since(day.get("list_at"), now) > (10 ** 8 if backfill else 180):
         ids = race_ids(d)
         print("{} レース一覧 {}件".format(d, len(ids)))
         if ids:
@@ -364,14 +460,19 @@ def run_day(d, now, fetch_cards=True):
         for rid in ids:
             races.setdefault(rid, {"id": rid})
     today = datetime.strptime(d, "%Y%m%d").date()
+    iso_d = today.isoformat()
     for rid in sorted(races):
         rc = races[rid]
+        if venue_of(rid) == "帯広":
+            continue
         st = start_dt(d, rc.get("start"))
         started = st is not None and now >= st
+        site = SITE[center_of(rid)]
+        need_pred = not started or (backfill and not rc.get("pred"))
         # 出馬表(馬場・取消は朝から変わるので発走前は取り直す)
-        if fetch_cards and not started and (not rc.get("horses") or
-                                            minutes_since(rc.get("card_at"), now) > CARD_REFRESH):
-            html = get(SITE[center_of(rid)] + "/race/shutuba.html", {"race_id": rid})
+        if need_pred and (not rc.get("horses") or
+                          (not started and minutes_since(rc.get("card_at"), now) > CARD_REFRESH)):
+            html = get(site + "/race/shutuba.html", {"race_id": rid})
             if html:
                 new = parse_card(html, rid)
                 if new["horses"]:
@@ -383,41 +484,63 @@ def run_day(d, now, fetch_cards=True):
                                 h[k] = old[k]
                     rc.update(new)
                     rc["card_at"] = now.isoformat(timespec="seconds")
+                    st = start_dt(d, rc.get("start"))
+                    started = st is not None and now >= st
         if not rc.get("horses"):
             continue
-        # 馬柱(過去5走)は1回だけ
-        if fetch_cards and not rc.get("past_at") and not started:
-            html = get(SITE[center_of(rid)] + "/race/shutuba_past.html", {"race_id": rid})
+        # 馬柱(過去5走)は1回だけ。そのレースより前の走だけを使う
+        if need_pred and rc.get("past_ver") != PAST_VER:
+            html = get(site + "/race/shutuba_past.html", {"race_id": rid})
             if html:
                 past = parse_past(html)
                 for h in rc["horses"]:
-                    h["past"] = past.get(h["umaban"], [])
+                    h["past"] = [r for r in past.get(h["umaban"], []) if (r.get("date") or "") < iso_d]
                 if past:
                     rc["past_at"] = now.isoformat(timespec="seconds")
+                    rc["past_ver"] = PAST_VER
         # オッズ(人気)。予想には使わず、最後に照らすだけ
-        if fetch_cards and not started and minutes_since(rc.get("odds_at"), now) > ODDS_REFRESH:
+        if not started and not backfill and minutes_since(rc.get("odds_at"), now) > ODDS_REFRESH:
             od = fetch_odds(rid)
             if od:
                 for h in rc["horses"]:
                     if h["umaban"] in od:
                         h["odds"], h["ninki"] = od[h["umaban"]]
                 rc["odds_at"] = now.isoformat(timespec="seconds")
-        # 予想。発走後は固定
-        if not started or not rc.get("pred"):
-            if rc.get("past_at") or not started:
-                rc["pred"] = L.predict(rc, today)
-                rc["pred_at"] = now.isoformat(timespec="seconds")
         # 結果
         if st and now >= st + timedelta(minutes=RESULT_AFTER) and not rc.get("result"):
-            html = get(SITE[center_of(rid)] + "/race/result.html", {"race_id": rid})
+            html = get(site + "/race/result.html", {"race_id": rid})
             res = parse_result(html) if html else None
             if res and len(res["order"]) >= 3:
                 rc["result"] = res
+        # 予想。当日は発走後に固定。過去の日は予想が無いときだけ作る(人気は確定人気)
+        if not started and not backfill and rc.get("past_at"):
+            rc["pred"] = L.predict(rc, today)
+            rc["pred"]["src"] = "live"
+            rc["pred_at"] = now.isoformat(timespec="seconds")
+        elif backfill and not rc.get("pred") and rc.get("past_at"):
+            res = rc.get("result") or {}
+            for h in rc["horses"]:
+                u = str(h["umaban"])
+                if not h.get("ninki") and u in (res.get("ninki") or {}):
+                    h["ninki"] = res["ninki"][u]
+                    h["odds"] = (res.get("odds") or {}).get(u)
+            rc["pred"] = L.predict(rc, today)
+            rc["pred"]["src"] = "backfill"
+            rc["pred_at"] = now.isoformat(timespec="seconds")
         if rc.get("result") and rc.get("pred"):
             rc["settle"] = L.settle(rc["pred"], rc["result"])
+    if backfill:
+        # 結果が取れないレース(中止・取得失敗)は2回試したらあきらめる
+        todo = []
+        for r in races.values():
+            if venue_of(r["id"]) == "帯広" or r.get("result"):
+                continue
+            r["tries"] = r.get("tries", 0) + 1
+            if r["tries"] < 2:
+                todo.append(r["id"])
+        day["complete"] = bool(races) and not todo
     day["updated"] = now.isoformat(timespec="seconds")
-    save(path, day)
-    return day
+    return save_day(d, day)
 
 
 # ---------------------------------------------------------------- 収支と分析(規則 30)
@@ -435,50 +558,47 @@ def gap_band(g):
     return "差6〜" if g >= 6 else ("差4.5〜6" if g >= 4.5 else "差3.5〜4.5")
 
 
+def bet_key(b):
+    return b["type"] + ("(◎飛び保険)" if "飛" in b["role"] else "")
+
+
 def build_history():
-    files = sorted(glob.glob(OUT + "/days/*.json"))
-    days, bets_list = [], []
-    groups = {}
-    by_type = {}
-    marks = {}
-    tags = {}
-    base = [0, 0]
-
-    def add(g, key, s):
-        x = groups.setdefault(g, {}).setdefault(key, {"n": 0, "hit": 0, "stake": 0, "ret": 0})
-        x["n"] += 1
-        x["hit"] += 1 if s["hit"] else 0
-        x["stake"] += s["stake"]
-        x["ret"] += s["ret"]
-
-    for f in files:
+    """日別ファイルから、期間で絞れる形の成績を作る。
+    days  … 日ごとの合計と、印・負けパターンの集計(アプリが期間で足し合わせる)
+    races … 買ったレース1件ずつ(条件・券種ごとの投資と払戻)"""
+    days, races = [], []
+    for f in sorted(glob.glob(OUT + "/days/*.json")):
         day = load(f, None)
         if not day:
             continue
         d = day["date"]
-        row = {"date": d, "races": 0, "buy": 0, "settled": 0, "stake": 0, "ret": 0, "hit": 0}
+        # stats は予想の出どころ(live=当日 / backfill=再現)ごとに分ける
+        row = {"date": d, "races": 0, "buy": 0, "settled": 0, "stake": 0, "ret": 0, "hit": 0,
+               "src": [], "stats": {}}
         for rid, rc in sorted(day.get("races", {}).items()):
             p = rc.get("pred")
             if not p:
                 continue
             row["races"] += 1
-            res = rc.get("result")
-            order = (res or {}).get("order") or []
-            # 印と消しの成績(全レース。見送りも含めて精度を見る)
+            src = p.get("src", "live")
+            if src not in row["src"]:
+                row["src"].append(src)
+            order = (rc.get("result") or {}).get("order") or []
+            # 印と消しの成績(見送りも含めて精度を見る)
             if len(order) >= 3:
+                sx = row["stats"].setdefault(src, {"marks": {}, "tags": {}, "base": [0, 0]})
                 for h in p.get("horses", []):
                     rk = L.rank_of(order, h["umaban"])
                     if rk is None:
                         continue
-                    mk = h.get("mark") or "無"
-                    m = marks.setdefault(mk, {"n": 0, "win": 0, "top3": 0})
-                    m["n"] += 1
-                    m["win"] += rk == 1
-                    m["top3"] += rk <= 3
-                    base[0] += 1
-                    base[1] += rk <= 3
+                    m = sx["marks"].setdefault(h.get("mark") or "無", [0, 0, 0])
+                    m[0] += 1
+                    m[1] += rk == 1
+                    m[2] += rk <= 3
+                    sx["base"][0] += 1
+                    sx["base"][1] += rk <= 3
                     for t in {re.sub(r"\(.*?\)", "", x["t"]) for x in h["minus"] if x["p"] <= -2}:
-                        tg = tags.setdefault(t, [0, 0])
+                        tg = sx["tags"].setdefault(t, [0, 0])
                         tg[0] += 1
                         tg[1] += rk <= 3
             if p.get("verdict") == "見送り":
@@ -491,32 +611,25 @@ def build_history():
             row["stake"] += s["stake"]
             row["ret"] += s["ret"]
             row["hit"] += 1 if s["hit"] else 0
-            add("中央/地方", "中央" if rc["center"] == "jra" else "地方", s)
-            add("判定", p["verdict"], s)
-            add("芝/ダート", {"芝": "芝", "ダ": "ダート"}.get(rc.get("surface"), "?"), s)
-            add("距離", dist_band(rc.get("dist")), s)
-            add("頭数", field_band(rc.get("n")), s)
-            add("馬場", "道悪" if (rc.get("baba") or "良") in L.HEAVY else "良・稍", s)
-            add("2強の差", gap_band(p.get("gap") or 0), s)
-            add("展開", (p.get("pace") or {}).get("pace", "?"), s)
-            add("競馬場", rc.get("venue") or "?", s)
+            bt = {}
             for b in p.get("bets", []):
-                k = b["type"] + ("(◎飛び保険)" if "保険" in b["role"] and "飛" in b["role"] else "")
-                x = by_type.setdefault(k, {"n": 0, "hit": 0, "stake": 0, "ret": 0})
-                x["n"] += 1
-                x["hit"] += 1 if b.get("hit") else 0
-                x["stake"] += len(b["combos"]) * b["unit"]
-                x["ret"] += b.get("ret", 0)
-            bets_list.append({"date": d, "id": rid, "venue": rc.get("venue"), "rno": rc.get("rno"),
-                              "verdict": p["verdict"], "stake": s["stake"], "ret": s["ret"],
-                              "hit": s["hit"], "hr": s.get("honmei_rank"),
-                              "tr": s.get("taikou_rank")})
+                x = bt.setdefault(bet_key(b), [0, 0, 0])
+                x[0] += len(b["combos"]) * b["unit"]
+                x[1] += b.get("ret", 0)
+                x[2] += 1 if b.get("hit") else 0
+            races.append({
+                "date": d, "id": rid, "venue": rc.get("venue"), "rno": rc.get("rno"),
+                "center": "中央" if rc.get("center") == "jra" else "地方", "src": src,
+                "verdict": p["verdict"],
+                "surface": {"芝": "芝", "ダ": "ダート"}.get(rc.get("surface"), "?"),
+                "dist": dist_band(rc.get("dist")), "field": field_band(rc.get("n")),
+                "baba": "道悪" if (rc.get("baba") or "良") in L.HEAVY else "良・稍",
+                "gap": gap_band(p.get("gap") or 0), "pace": (p.get("pace") or {}).get("pace", "?"),
+                "stake": s["stake"], "ret": s["ret"], "hit": s["hit"],
+                "hr": s.get("honmei_rank"), "tr": s.get("taikou_rank"), "bets": bt})
         days.append(row)
-    tag_rows = [{"tag": t, "n": v[0], "top3": v[1]} for t, v in tags.items() if v[0] >= 1]
-    tag_rows.sort(key=lambda x: -x["n"])
     hist = {"updated": datetime.now(JST).isoformat(timespec="seconds"), "unit": L.UNIT,
-            "days": days, "groups": groups, "by_type": by_type, "marks": marks,
-            "tags": tag_rows, "base_top3": base, "bets": bets_list[-400:]}
+            "days": days, "races": races}
     save(OUT + "/history.json", hist)
     return hist
 
@@ -617,23 +730,41 @@ def main():
     ap.add_argument("--date")
     ap.add_argument("--history-only", action="store_true")
     ap.add_argument("--diag", action="store_true", help="取得の診断をログに出す(保存しない)")
+    ap.add_argument("--backfill-date", help="過去の日 YYYYMMDD を再現する")
     a = ap.parse_args()
     if a.diag:
         diag(a.date or datetime.now(JST).strftime("%Y%m%d"))
         return
     now = datetime.now(JST)
-    if not a.history_only:
+    if a.backfill_date:
+        d = a.backfill_date
+        if d >= now.strftime("%Y%m%d"):
+            print("{} は今日以降なので再現しません".format(d))
+        elif load(day_path(d), {}).get("complete"):
+            print("{} は済み".format(d))
+        else:
+            global WAIT
+            WAIT = 0.6                 # まとめて取るので間隔を空ける
+            day = run_day(d, now, backfill=True)
+            show(day)
+    elif not a.history_only:
         d = a.date or now.strftime("%Y%m%d")
         # 前日の夜(地方のナイター)の結果が欠けていれば先に埋める
         y = (datetime.strptime(d, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-        if os.path.exists("{}/days/{}.json".format(OUT, y)):
-            run_day(y, now, fetch_cards=False)
+        if os.path.exists(day_path(y)) and not load(day_path(y), {}).get("complete"):
+            run_day(y, now, backfill=True)
         day = run_day(d, now)
         save(OUT + "/data.json", day)
-        n = len(day["races"])
-        buy = sum(1 for r in day["races"].values() if (r.get("pred") or {}).get("verdict") in ("A", "B"))
-        print("{} 全{}レース / 買い {}レース".format(d, n, buy))
+        show(day)
     build_history()
+
+
+def show(day):
+    rs = day["races"].values()
+    buy = sum(1 for r in rs if (r.get("pred") or {}).get("verdict") in ("A", "B"))
+    st = sum((r.get("settle") or {}).get("stake", 0) for r in rs)
+    rt = sum((r.get("settle") or {}).get("ret", 0) for r in rs)
+    print("{} 全{}レース / 買い {}レース / 投資 {} 払戻 {}".format(day["date"], len(day["races"]), buy, st, rt))
 
 
 if __name__ == "__main__":
