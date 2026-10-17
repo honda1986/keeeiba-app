@@ -12,9 +12,24 @@ import requests
 from bs4 import BeautifulSoup
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36", "Accept-Language": "ja"}
+                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "Accept-Language": "ja,en-US;q=0.9,en;q=0.8", "Accept-Encoding": "gzip, deflate",
+      "Upgrade-Insecure-Requests": "1", "Referer": "https://www.google.com/"}
 start = sys.argv[1]
 limit = int(sys.argv[2]) if len(sys.argv) > 2 else 300
+# 直接読めないときは Wayback Machine の最新のスナップショットを読む
+VIA = "direct"
+ARCH = re.compile(r"^https?://web\.archive\.org/web/\d+[a-z_]*/(https?://.+)$")
+
+
+def orig(u):
+    m = ARCH.match(u)
+    return m.group(1) if m else u
+
+
+def addr(u):
+    return u if VIA == "direct" else "https://web.archive.org/web/2/" + u
 host = urlparse(start).hostname
 for h in (host, host.replace("www.", "")):
     try:
@@ -28,13 +43,14 @@ S.headers.update(UA)
 def get(u):
     for i in range(3):
         try:
-            r = S.get(u, timeout=30)
-            time.sleep(0.7)
-            print("GET", r.status_code, u, len(r.content), flush=True)
+            r = S.get(addr(u), timeout=45)
+            time.sleep(0.7 if VIA == "direct" else 1.5)
+            print("GET", r.status_code, addr(u), len(r.content), flush=True)
             if r.status_code == 200:
                 r.encoding = r.apparent_encoding if r.encoding in (None, "ISO-8859-1") else r.encoding
                 return r.text
             if r.status_code in (403, 404, 410):
+                print("  本文:", re.sub(r"\s+", " ", BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True))[:400])
                 return None
         except requests.RequestException as e:
             print("ERR", u, type(e).__name__, e, flush=True)
@@ -42,6 +58,9 @@ def get(u):
     return None
 
 
+if not get(start):
+    VIA = "archive"
+    print("直接は読めないので Wayback Machine から読みます")
 prefix = urlparse(start).path.rstrip("/")
 cats, seen_cat, arts = [start], set(), []
 while cats:
@@ -54,7 +73,7 @@ while cats:
         continue
     soup = BeautifulSoup(html, "html.parser")
     for a in soup.find_all("a", href=True):
-        v = urljoin(u, a["href"]).split("#")[0]
+        v = orig(urljoin(addr(u), a["href"]).split("#")[0])
         p = urlparse(v)
         if p.hostname not in (host, host.replace("www.", ""), "www." + host.replace("www.", "")):
             continue
