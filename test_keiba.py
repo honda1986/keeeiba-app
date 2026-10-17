@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""keiba_logic / keiba のパースの確認。  python -m unittest test_keiba"""
+
+import unittest
+
+import keiba as K
+import keiba_logic as L
+
+
+def run(rank, n=14, margin=None, dist=1600, surface="芝", baba="良", venue="東京",
+        first=6, date="2026-09-20", kinryo=57.0, name="2勝クラス"):
+    return {"date": date, "venue": venue, "rank": rank, "n": n, "margin": margin,
+            "dist": dist, "surface": surface, "baba": baba, "pass": [first, first],
+            "kinryo": kinryo, "race_name": name, "cls": L.class_level(name)}
+
+
+def horse(u, runs, waku=None, kinryo=57.0, ninki=None):
+    return {"umaban": u, "waku": waku or (u + 1) // 2, "name": "馬{}".format(u),
+            "kinryo": kinryo, "past": runs, "ninki": ninki}
+
+
+def race(horses, **kw):
+    r = {"id": "202605040811", "center": "jra", "venue": "東京", "rno": 11,
+         "surface": "芝", "dist": 1600, "direction": "左", "baba": "良",
+         "cls": 3, "horses": horses}
+    r.update(kw)
+    return r
+
+
+def strong(u, first=6, **kw):
+    return horse(u, [run(1, margin=-0.4, first=first), run(1, margin=-0.3, first=first),
+                     run(2, margin=0.1, first=first)], **kw)
+
+
+def middle(u, first=8, m=0.9, **kw):
+    return horse(u, [run(5, margin=m, first=first), run(6, margin=m + 0.2, first=first),
+                     run(4, margin=m - 0.1, first=first)], **kw)
+
+
+TODAY = "2026-10-18"
+
+
+class Logic(unittest.TestCase):
+    def test_two_strong_is_bought(self):
+        hs = [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in range(3, 13)]
+        p = L.predict(race(hs), TODAY)
+        self.assertIn(p["verdict"], ("A", "B"), p["reason"])
+        self.assertEqual({p["honmei"], p["taikou"]}, {1, 2})
+        types = [b["type"] for b in p["bets"]]
+        for t in ("3連複", "3連単", "馬連", "ワイド"):
+            self.assertIn(t, types)
+        # 3連複は ◎○ が全部の組に入る
+        for c in p["bets"][0]["combos"]:
+            self.assertTrue({1, 2} <= set(c))
+        # 3連単は ◎→○ と ○→◎ の両方
+        t3 = next(b for b in p["bets"] if b["type"] == "3連単")["combos"]
+        self.assertTrue(any(c[:2] == [p["honmei"], p["taikou"]] for c in t3))
+        self.assertTrue(any(c[:2] == [p["taikou"], p["honmei"]] for c in t3))
+        self.assertLessEqual(p["points"], 20)
+
+    def test_muddle_is_skipped(self):
+        hs = [middle(u, m=0.5 + u * 0.02) for u in range(1, 13)]
+        p = L.predict(race(hs), TODAY)
+        self.assertEqual(p["verdict"], "見送り")
+        self.assertEqual(p["bets"], [])
+
+    def test_one_strong_is_skipped(self):
+        hs = [strong(1, first=2)] + [middle(u, m=0.9 + u * 0.01) for u in range(2, 13)]
+        p = L.predict(race(hs), TODAY)
+        self.assertEqual(p["verdict"], "見送り")
+
+    def test_extension_is_not_axis(self):
+        ext = horse(1, [run(1, margin=-0.6, dist=1200), run(1, margin=-0.5, dist=1200),
+                        run(1, margin=-0.5, dist=1200)])
+        hs = [ext, strong(2, first=2), strong(3, first=9)] + [middle(u) for u in range(4, 13)]
+        p = L.predict(race(hs), TODAY)
+        self.assertNotIn(1, (p.get("honmei"), p.get("taikou")))
+        h1 = next(h for h in p["horses"] if h["umaban"] == 1)
+        self.assertIn("距離延長", h1["axis_ng"])
+
+    def test_same_weakness_changes_taikou(self):
+        # ◎も次点も逃げ馬 → ○は脚質の違う馬に替える
+        hs = [strong(1, first=1), strong(2, first=1), strong(3, first=9)] + \
+             [middle(u) for u in range(4, 13)]
+        p = L.predict(race(hs), TODAY)
+        styles = {h["umaban"]: h["style"] for h in p["horses"]}
+        self.assertFalse(styles[p["honmei"]] == styles[p["taikou"]] == "逃げ")
+
+    def test_nar_waku1_penalty(self):
+        hs = [strong(1, first=6, waku=1)] + [middle(u) for u in range(2, 11)]
+        p = L.predict(race(hs, center="nar", venue="大井", direction="右", cls=3.0), TODAY)
+        h1 = next(h for h in p["horses"] if h["umaban"] == 1)
+        self.assertTrue(any("1枠" in m["t"] for m in h1["minus"]))
+
+    def test_stacked_losses_are_cut(self):
+        bad = horse(5, [run(9, margin=1.5, date="2026-03-01", dist=1200, baba="重"),
+                        run(10, margin=1.8, dist=1200), run(9, margin=1.6, dist=1200)],
+                    kinryo=60.0)
+        hs = [strong(1, first=2), strong(2, first=9), bad] + \
+             [middle(u) for u in (3, 4, 6, 7, 8, 9, 10)]
+        p = L.predict(race(hs, baba="重"), TODAY)
+        h5 = next(h for h in p["horses"] if h["umaban"] == 5)
+        self.assertTrue(h5["cut"])
+        self.assertEqual(h5["mark"], "×")
+
+    def test_ana_in_third(self):
+        hs = [strong(1, first=2, ninki=1), strong(2, first=9, ninki=2)] + \
+             [middle(u, m=0.8 + u * 0.03, ninki=u) for u in range(3, 13)]
+        p = L.predict(race(hs), TODAY)
+        if p["verdict"] != "見送り":
+            self.assertTrue(p["ana"])
+            self.assertIn(p["ana"][0], p["aite"])
+
+    def test_settle(self):
+        pred = {"honmei": 1, "taikou": 2, "stake": 0, "bets": L.make_bets(1, 2, [3, 4], "A", 2)}
+        pred["stake"] = sum(len(b["combos"]) * b["unit"] for b in pred["bets"])
+        res = {"order": [2, 1, 4, 3],
+               "payout": {"3連複": {"1-2-4": 1500}, "3連単": {"2-1-4": 6000},
+                          "馬連": {"1-2": 400}, "ワイド": {"1-2": 200, "1-4": 500, "2-4": 600}}}
+        s = L.settle(pred, res)
+        self.assertTrue(s["hit"])
+        # 3連複1500 + 3連単6000 + 馬連400*3 + ワイド200*3 + 保険ワイド(2-4)600
+        self.assertEqual(s["ret"], 1500 + 6000 + 1200 + 600 + 600)
+        self.assertEqual(s["honmei_rank"], 2)
+
+    def test_class_level(self):
+        self.assertEqual(L.class_level("毎日王冠(GⅡ)"), 7)
+        self.assertEqual(L.class_level("3歳以上2勝クラス"), 3)
+        self.assertEqual(L.class_level("3歳未勝利"), 1)
+        self.assertEqual(L.class_level("C2五六", "nar"), 1.75)
+        self.assertEqual(L.class_level("東京大賞典(GI)", "nar"), 8)
+
+
+PAST_HTML = """<table class="Shutuba_Past5_Table"><tr class="HorseList">
+<td class="Waku2 Txt_C">2</td><td class="Waku Txt_C">3</td><td>x</td>
+<td class="Past Ranking_1"><div class="Data_Item">
+ <div class="Data01"><span>2026.09.20 中山</span><span class="Num">1</span></div>
+ <div class="Data02"><a>セントライト記念(GII)</a></div>
+ <div class="Data05">芝2200 2:11.8 良</div>
+ <div class="Data03">15頭 7番 2人 ルメール 57.0</div>
+ <div class="Data06">3-3-2-2 (34.2) 486(+4)</div>
+ <div class="Data07">ライバル(-0.2)</div></div></td>
+<td class="Rest">休養</td></tr></table>"""
+
+RESULT_HTML = """<table class="RaceTable01"><tr class="HorseList"><td><div class="Rank">1</div></td>
+<td>2</td><td>3</td></tr><tr class="HorseList"><td>2</td><td>1</td><td>1</td></tr>
+<tr class="HorseList"><td>3</td><td>5</td><td>9</td></tr></table>
+<table class="Payout_Detail_Table"><tr class="Umaren"><th>馬連</th>
+<td class="Result"><ul><li><span>1</span></li><li><span>3</span></li></ul></td>
+<td class="Payout"><span>1,230円</span></td></tr>
+<tr class="Wide"><th>ワイド</th><td class="Result"><ul><li><span>1</span></li><li><span>3</span></li></ul>
+<ul><li><span>3</span></li><li><span>9</span></li></ul><ul><li><span>1</span></li><li><span>9</span></li></ul></td>
+<td class="Payout"><span>400円<br>900円<br>700円</span></td></tr>
+<tr class="Tan3"><th>3連単</th><td class="Result"><ul><li><span>3</span></li><li><span>1</span></li><li><span>9</span></li></ul></td>
+<td class="Payout"><span>12,340円</span></td></tr></table>"""
+
+
+class Parse(unittest.TestCase):
+    def test_past(self):
+        p = K.parse_past(PAST_HTML)
+        self.assertIn(3, p)
+        r = p[3][0]
+        self.assertEqual((r["date"], r["venue"], r["rank"]), ("2026-09-20", "中山", 1))
+        self.assertEqual((r["surface"], r["dist"], r["baba"]), ("芝", 2200, "良"))
+        self.assertEqual((r["n"], r["umaban"], r["ninki"], r["kinryo"]), (15, 7, 2, 57.0))
+        self.assertEqual(r["pass"], [3, 3, 2, 2])
+        self.assertEqual(r["margin"], -0.2)
+        self.assertEqual(r["cls"], 7)
+
+    def test_result(self):
+        r = K.parse_result(RESULT_HTML)
+        self.assertEqual(r["order"], [3, 1, 9])
+        self.assertEqual(r["payout"]["馬連"], {"1-3": 1230})
+        self.assertEqual(r["payout"]["ワイド"], {"1-3": 400, "3-9": 900, "1-9": 700})
+        self.assertEqual(r["payout"]["3連単"], {"3-1-9": 12340})
+
+    def test_center(self):
+        self.assertEqual(K.center_of("202605040811"), "jra")
+        self.assertEqual(K.venue_of("202644101801"), "大井")
+
+
+if __name__ == "__main__":
+    unittest.main()

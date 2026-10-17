@@ -1,0 +1,68 @@
+name: 競馬の予想
+
+# 中央・地方の当日の全レースから「買うレース(2強)」を選び、買い目と結果・収支を更新する。
+# 朝に出馬表と馬柱、日中は馬場・取消・オッズを取り直し、発走後に結果を照合する。
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '対象日 YYYYMMDD(空で本日)'
+        required: false
+        default: ''
+  schedule:
+    # JST 8:05 / 10:05 / 12:05 / 14:05 / 16:05 / 18:05 / 20:05 / 21:50
+    - cron: '5 23 * * *'
+    - cron: '5 1 * * *'
+    - cron: '5 3 * * *'
+    - cron: '5 5 * * *'
+    - cron: '5 7 * * *'
+    - cron: '5 9 * * *'
+    - cron: '5 11 * * *'
+    - cron: '50 12 * * *'
+
+concurrency:
+  group: keiba
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 依存インストール
+        run: pip install requests beautifulsoup4
+      - name: テスト
+        run: python -m unittest test_keiba
+      - name: 予想と結果を更新して保存
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          ARG=""
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            ARG="--date ${{ github.event.inputs.date }}"
+          fi
+          python keiba.py $ARG
+          git add keiba/data.json keiba/days keiba/history.json
+          if git diff --cached --quiet; then
+            echo "変更なし"
+            exit 0
+          fi
+          git commit -m "keiba: 更新" -q
+          for i in 1 2 3; do
+            # 同時に更新されていたら取り込み直す
+            if git pull --rebase --autostash -q; then
+              git push -q && exit 0
+            else
+              git rebase --abort 2>/dev/null || true
+            fi
+            sleep 5
+          done
+          exit 1
