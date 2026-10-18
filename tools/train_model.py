@@ -224,14 +224,13 @@ def main():
             return None
         return pred["honmei"], pred["taikou"], [x for x in pred.get("aite", []) if x not in (pred["honmei"], pred["taikou"])]
 
-    def ranked(rs):
-        return sorted(rs, key=lambda r: -pr[(r["rid"], r["u"])])
-
-    def by_model(t2, gap, axis_ok=True):
+    def by_model(t2, gap, axis_ok=True, pr=pr):
         """アプリと同じ選び方: ◎○=軸にできる馬(延長などでない)の確率上位2頭、
         相手=残りの確率上位2頭。○の確率が t2 以上で、残りの1番手との差が gap 以上なら買う"""
         def f(rid, rs, p):
-            o = ranked(rs)
+            if (rs[0]["rid"], rs[0]["u"]) not in pr:
+                return None
+            o = sorted(rs, key=lambda r: -pr[(r["rid"], r["u"])])
             ok = [r for r in o if not (axis_ok and r["f"].get("rule_axis_ng"))]
             if len(o) < 5 or len(ok) < 2:
                 return None
@@ -289,6 +288,17 @@ def main():
     print("\n■ 効いている特徴量(上位15)")
     print("  " + " / ".join("{} {:.0f}".format(k, v) for v, k in imp))
 
+    wf_check, select_from = None, "valid"
+    if not a.walkforward:
+        # 月ごとの確率で選んだ基準があれば、それを引き継ぐ(1回の分け方で選ぶより偏りが少ない)
+        try:
+            old_meta = json.load(open(M.META_FILE, encoding="utf-8"))
+            if old_meta.get("select_from") == "walkforward":
+                t2, gap = old_meta["select"]["t2"], old_meta["select"]["gap"]
+                wf_check, select_from = old_meta.get("check_wf"), "walkforward"
+                print("  → 月ごとの確率で選んだ基準を引き継ぐ: t2={:.2f} gap={:.2f}".format(t2, gap))
+        except (OSError, ValueError, KeyError):
+            pass
     if a.walkforward:
         wf = {}
         months = sorted({d[:6] for d in dates})
@@ -310,6 +320,29 @@ def main():
             json.dump({"note": "月ごとに、その月より前のレースだけで学んだモデルの3着以内の確率",
                        "made": datetime.now().strftime("%Y-%m-%d"), "probs": wf}, f, separators=(",", ":"))
         print("保存", os.path.join(K.OUT, "model_wf.json.gz"), len(wf), "レース")
+        # 買うレースの基準を、月ごとの確率(先を知らない)の2月〜調整期間の終わりで選び直し、試験期間で確かめる
+        pw = {(rid, int(u)): v for rid, d in wf.items() for u, v in d.items()}
+        rs_sel = [x for x, d in zip(rows, dates) if d < TEST_FROM and (x["rid"], x["u"]) in pw]
+        rs_chk = [x for x, d in zip(rows, dates) if d >= TEST_FROM and (x["rid"], x["u"]) in pw]
+        print("\n■ 月ごとの確率で、買うレースの基準を選び直す(2月〜{}で選び、{}〜で確かめる)".format(TEST_FROM[:6], TEST_FROM[:6]))
+        g2 = []
+        for t2w in (0.0, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75):
+            for gw in (0.0, 0.05, 0.10, 0.15, 0.20):
+                r = evaluate(rs_sel, None, races_by_id, by_model(t2w, gw, True, pw), "")
+                if r["races"] >= 600:
+                    g2.append((r["roi"], t2w, gw, r))
+        g2.sort(key=lambda g: -g[0])
+        for roi, t2w, gw, r in g2[:6]:
+            print("  t2={:.2f} gap={:.2f} → {}R 的中{:.0%} 回収率{:.0%}".format(t2w, gw, r["races"], r["hit"], r["roi"]))
+        _, t2, gap, _ = max((g for g in g2 if g[0] >= g2[0][0] - 0.01), key=lambda g: g[3]["races"])
+        wf_check = {"選ぶ": evaluate(rs_sel, None, races_by_id, by_model(t2, gap, True, pw), "モデル"),
+                    "確かめ": evaluate(rs_chk, None, races_by_id, by_model(t2, gap, True, pw), "モデル"),
+                    "確かめ 市場": evaluate(rs_chk, None, races_by_id, by_market(by_model(t2, gap, True, pw)),
+                                        "市場 同じレースで1・2番人気")}
+        select_from = "walkforward"
+        print("  → 使う基準: t2={:.2f} gap={:.2f}".format(t2, gap))
+        for k, r in wf_check.items():
+            print("   {:<8} {:>5}R 的中{:>4.0%} 回収率{:>4.0%}".format(k, r["races"], r["hit"], r["roi"]))
 
     if a.save:
         allm = np.ones(len(rows), dtype=bool)
@@ -326,6 +359,8 @@ def main():
                 "data": "{}〜{} {}レース".format(races[0][0], races[-1][0], len(races)),
                 "iterations": int(best_iter * 1.15),
                 "select": {"t2": t2, "gap": gap, "axis_ok": axis_ok},
+                "select_from": select_from,
+                "check_wf": wf_check,
                 "check": {k: v for k, v in out.items()},
                 "note": "選ぶ基準は調整期間(7〜8月)で決め、試験期間(9月〜)は学習にも基準にも使っていない。"
                         "保存したモデルは全期間で学び直したもの"}
