@@ -617,21 +617,23 @@ def build_history():
         if not day:
             continue
         d = day["date"]
-        # stats は予想の出どころ(live=当日 / backfill=再現)ごとに分ける
+        # stats は「出どころ(live=当日 / backfill=再現)|中央/地方」ごとに分ける(アプリで絞り込む)
         row = {"date": d, "races": 0, "buy": 0, "settled": 0, "stake": 0, "ret": 0, "hit": 0,
-               "src": [], "stats": {}}
+               "src": [], "stats": {}, "races_c": {}, "buy_c": {}}
         for rid, rc in sorted(day.get("races", {}).items()):
             p = rc.get("pred")
             if not p:
                 continue
             row["races"] += 1
+            center = "中央" if rc.get("center") == "jra" else "地方"
+            row["races_c"][center] = row["races_c"].get(center, 0) + 1
             src = p.get("src", "live")
             if src not in row["src"]:
                 row["src"].append(src)
             order = (rc.get("result") or {}).get("order") or []
             # 印と消しの成績(見送りも含めて精度を見る)
             if len(order) >= 3:
-                sx = row["stats"].setdefault(src, {"marks": {}, "tags": {}, "base": [0, 0]})
+                sx = row["stats"].setdefault(src + "|" + center, {"marks": {}, "tags": {}, "base": [0, 0]})
                 for h in p.get("horses", []):
                     rk = L.rank_of(order, h["umaban"])
                     if rk is None:
@@ -649,6 +651,7 @@ def build_history():
             if p.get("verdict") == "見送り":
                 continue
             row["buy"] += 1
+            row["buy_c"][center] = row["buy_c"].get(center, 0) + 1
             s = rc.get("settle")
             if not s:
                 continue
@@ -664,7 +667,7 @@ def build_history():
                 x[2] += 1 if b.get("hit") else 0
             races.append({
                 "date": d, "id": rid, "venue": rc.get("venue"), "rno": rc.get("rno"),
-                "center": "中央" if rc.get("center") == "jra" else "地方", "src": src,
+                "center": center, "src": src,
                 "verdict": p["verdict"],
                 "surface": {"芝": "芝", "ダ": "ダート"}.get(rc.get("surface"), "?"),
                 "dist": dist_band(rc.get("dist")), "field": field_band(rc.get("n")),

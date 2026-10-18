@@ -62,7 +62,9 @@ button:focus-visible,summary:focus-visible{outline:2px solid var(--pos);outline-
 .sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
 .tile{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;box-shadow:var(--shadow)}
 .tile .k{font-size:11px;color:var(--muted);font-weight:600}
-.tile .v{font-size:20px;font-weight:800}
+.tile .v{font-size:20px;font-weight:800;white-space:nowrap}
+.tile .v.long{font-size:16px}
+.tbl.nw td,.tbl.nw th{white-space:nowrap}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 12px}
 .chip{padding:5px 12px;border-radius:999px;border:1px solid var(--line2);font-size:13px;font-weight:600;color:var(--ink2);background:var(--surface)}
 .chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
@@ -184,7 +186,7 @@ const BABA = {"良":"良","稍":"稍重","重":"重","不":"不良"};
 const yenK = v => { const a = Math.abs(v), sg = v > 0 ? "+" : v < 0 ? "-" : "±";
   return sg + (a >= 10000 ? (a / 10000).toFixed(a >= 100000 ? 0 : 1) + "万" : a.toLocaleString()); };
 const state = {day: null, hist: null, days: [], filter: "buy", center: "all", cache: {},
-               period: "30", src: "all", calMonth: null, moneyMonth: null};
+               period: "30", src: "all", mcenter: "all", calMonth: null, moneyMonth: null};
 const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 const toDate = d => new Date(+d.slice(0,4), +d.slice(4,6) - 1, +d.slice(6,8));
 const dstr = t => `${t.getFullYear()}${String(t.getMonth()+1).padStart(2,"0")}${String(t.getDate()).padStart(2,"0")}`;
@@ -411,7 +413,7 @@ function table(r) {
 }
 
 // ---------------------------------------------------------------- 収支・分析
-const GROUPS = [["中央/地方","center"],["判定","verdict"],["芝/ダート","surface"],["距離","dist"],["頭数","field"],
+const GROUPS = [["判定","verdict"],["芝/ダート","surface"],["距離","dist"],["頭数","field"],
                 ["馬場","baba"],["2強の差","gap"],["展開","pace"],["競馬場","venue"]];
 const PERIODS = [["7","7日"],["30","30日"],["month","今月"],["year","今年"],["all","全期間"]];
 
@@ -426,6 +428,7 @@ function periodRange() {
   return [dstr(t), last];
 }
 const srcOk = s => state.src === "all" || s === state.src;
+const centerOk = c => state.mcenter === "all" || c === state.mcenter;
 
 function cumChart(pts) {
   // pts: [{date, pl, cum}] 日付順。1系列なので凡例は付けない(見出しが系列名)
@@ -480,7 +483,8 @@ function renderMoney() {
   if (!h || !h.days || !h.days.length) { el.innerHTML = `<div class="empty">まだ成績がありません。</div>`; return; }
   const [from, to] = periodRange();
   const inP = d => d >= from && d <= to;
-  const rs = (h.races || []).filter(r => inP(r.date) && srcOk(r.src));
+  const all = (h.races || []).filter(r => inP(r.date) && srcOk(r.src));
+  const rs = all.filter(r => centerOk(r.center));
   const days = h.days.filter(d => inP(d.date));
   const S = rs.reduce((a, r) => a + r.stake, 0), R = rs.reduce((a, r) => a + r.ret, 0), hit = rs.filter(r => r.hit).length;
   const agg = (list, key) => {
@@ -503,8 +507,9 @@ function renderMoney() {
   const pts = Object.keys(byDay).sort().map(d => { const pl = byDay[d].ret - byDay[d].stake; cum += pl; return {date: d, pl, cum}; });
   // 印・負けパターン
   const marks = {}, tags = {}, base = [0, 0];
-  for (const d of days) for (const [sname, sx] of Object.entries(d.stats || {})) {
-    if (!srcOk(sname)) continue;
+  for (const d of days) for (const [key, sx] of Object.entries(d.stats || {})) {
+    const [sname, cname] = key.split("|");          // 「出どころ|中央/地方」
+    if (!srcOk(sname) || (state.mcenter !== "all" && cname !== state.mcenter)) continue;
     for (const [k, v] of Object.entries(sx.marks)) { const m = marks[k] = marks[k] || [0, 0, 0]; m[0] += v[0]; m[1] += v[1]; m[2] += v[2]; }
     for (const [k, v] of Object.entries(sx.tags)) { const t = tags[k] = tags[k] || [0, 0]; t[0] += v[0]; t[1] += v[1]; }
     base[0] += sx.base[0]; base[1] += sx.base[1];
@@ -516,7 +521,16 @@ function renderMoney() {
     .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v[0]}</td><td class="${v[1] / v[0] < br ? "neg" : "good"}"><b>${pct(v[1], v[0])}</b></td></tr>`).join("");
   state.moneyMonth = state.moneyMonth && state.moneyMonth >= from.slice(0, 6) && state.moneyMonth <= to.slice(0, 6) ? state.moneyMonth : to.slice(0, 6);
   const calStat = d => { const x = h.days.find(r => r.date === d); if (!x) return null; const b = byDay[d];
-    return {races: x.races, buy: x.buy, settled: b ? b.n : 0, pl: b ? b.ret - b.stake : 0}; };
+    const mc = state.mcenter;
+    const races = mc === "all" ? x.races : (x.races_c || {})[mc] || 0;
+    if (!races) return null;
+    return {races, buy: mc === "all" ? x.buy : (x.buy_c || {})[mc] || 0, settled: b ? b.n : 0, pl: b ? b.ret - b.stake : 0}; };
+  // 中央・地方の内訳(「すべて」のとき上に出す)
+  const split = agg(all, r => r.center).sort((a, b) => a[0] < b[0] ? -1 : 1);
+  const splitTbl = `<table class="tbl nw"><thead><tr><th></th><th>R</th><th>的中</th><th>収支</th><th>回収率</th></tr></thead><tbody>
+    ${split.map(([k, x]) => `<tr class="link" tabindex="0" data-mc="${esc(k)}"><td><b>${esc(k)}</b></td><td>${x.n}</td><td>${pct(x.hit, x.n)}</td>
+      <td class="${x.ret >= x.stake ? "good" : "neg"}">${yen(x.ret - x.stake)}</td>
+      <td class="${x.ret >= x.stake ? "good" : "neg"}"><b>${pct(x.ret, x.stake)}</b></td></tr>`).join("")}</tbody></table>`;
   const srcs = [...new Set((h.races || []).map(r => r.src))];
 
   el.innerHTML = `
@@ -526,12 +540,17 @@ function renderMoney() {
     ${srcs.length > 1 ? `<div class="chips" role="group" aria-label="予想の出どころ">
       ${[["all","すべて"],["live","当日の予想"],["backfill","再現"]].map(([k, t]) => `<button class="chip" data-s="${k}" aria-pressed="${state.src === k}">${t}</button>`).join("")}
     </div>` : ""}
-    <p class="muted" style="font-size:12px;margin-bottom:8px">${fmtD(from)} 〜 ${fmtD(to)}${state.src !== "all" ? " · " + SRC[state.src] + "のみ" : ""}</p>
+    <div class="chips" role="group" aria-label="中央・地方">
+      ${[["all","中央+地方"],["中央","中央"],["地方","地方"]].map(([k, t]) => `<button class="chip" data-mc="${k}" aria-pressed="${state.mcenter === k}">${t}</button>`).join("")}
+    </div>
+    <p class="muted" style="font-size:12px;margin-bottom:8px">${fmtD(from)} 〜 ${fmtD(to)}${state.mcenter !== "all" ? " · " + state.mcenter + "のみ" : ""}${state.src !== "all" ? " · " + SRC[state.src] + "のみ" : ""}</p>
     <div class="sum">
       <div class="tile"><div class="k">回収率</div><div class="v num ${R >= S ? "good" : "neg"}">${pct(R, S)}</div></div>
-      <div class="tile"><div class="k">収支</div><div class="v num ${R >= S ? "good" : "neg"}">${yen(R - S)}</div></div>
+      <div class="tile"><div class="k">収支</div><div class="v num ${R >= S ? "good" : "neg"} ${yen(R - S).length > 9 ? "long" : ""}">${yen(R - S)}</div></div>
       <div class="tile"><div class="k">的中 ${hit}/${rs.length}R</div><div class="v num">${pct(hit, rs.length)}</div></div>
     </div>
+    ${state.mcenter === "all" && split.length > 1 ? `<div class="sec" style="margin-top:4px">中央・地方の内訳</div>${splitTbl}
+      <p class="legendnote">行を押すとその分だけの収支に切り替わります。</p>` : ""}
     <p class="muted" style="font-size:12px">1点${h.unit}円で記録した買い目を、実際の払戻で計算。的中率より回収率で見る。
       「再現」は過去の日を後から予想したもの(その日の馬柱で予想、人気は確定人気)。</p>
     ${pts.length >= 2 ? `<div class="sec">累積収支</div>${cumChart(pts)}<p class="legendnote">指でなぞると日ごとの数字が出ます。</p>` : ""}
@@ -559,6 +578,10 @@ function renderMoney() {
 
   el.querySelectorAll("[data-p]").forEach(b => b.onclick = () => { state.period = b.dataset.p; renderMoney(); });
   el.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { state.src = b.dataset.s; renderMoney(); });
+  el.querySelectorAll("[data-mc]").forEach(b => {
+    const go = () => { state.mcenter = b.dataset.mc; renderMoney(); };
+    b.onclick = go; b.onkeydown = e => { if (e.key === "Enter") go(); };
+  });
   const wireCal = () => {
     $("#mcal").querySelectorAll("[data-cm]").forEach(b => b.onclick = () => {
       if (!b.dataset.cm) return; state.moneyMonth = b.dataset.cm;
@@ -566,7 +589,7 @@ function renderMoney() {
     $("#mcal").querySelectorAll("[data-day]").forEach(b => b.onclick = () => openDay(b.dataset.day));
   };
   wireCal();
-  el.querySelectorAll("tr.link").forEach(tr => {
+  el.querySelectorAll("tr.link[data-day]").forEach(tr => {
     const go = () => openDay(tr.dataset.day, tr.dataset.rid);
     tr.onclick = go; tr.onkeydown = e => { if (e.key === "Enter") go(); };
   });
