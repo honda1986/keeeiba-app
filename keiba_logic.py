@@ -153,7 +153,7 @@ TH = {
     "tan3_aite_max": 4,      # 3連単の3着候補の最大数
     "ana_ninki": 6,          # この人気以下を穴とみなす
     "kata_adj": 0.5,         # 堅いコースは2強の基準をこれだけ下げ、荒れやすいコースは上げる
-    "bet_mode": "wide",      # wide=ワイドだけ / full=3連複・3連単・馬連・ワイド(はじめの買い方)
+    "bet_mode": "wide1",     # wide1=ワイド◎-○の1点 / wide=ワイド◎-○×5+相手4点 / full=3連複・3連単・馬連・ワイド
     "course_style_k": 5.0,   # コースの脚質傾向の効き(比の対数 × これ)
     "course_waku_k": 5.0,    # コースの枠順傾向の効き
 }
@@ -681,7 +681,7 @@ def predict(race, today=None, use_model=True, probs=None):
         out["notes"].append("◎は同型の多い人気の逃げ馬。過信禁物")
 
     if verdict != "見送り":
-        out["bets"] = (make_bets_wide(hon["umaban"], tai["umaban"], aite) if TH["bet_mode"] == "wide"
+        out["bets"] = (make_bets_wide(hon["umaban"], tai["umaban"], aite) if TH["bet_mode"].startswith("wide")
                        else make_bets(hon["umaban"], tai["umaban"], aite, verdict, gap12))
         out["points"] = sum(len(b["combos"]) for b in out["bets"])
         out["stake"] = sum(len(b["combos"]) * b["unit"] for b in out["bets"])
@@ -711,7 +711,7 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
     ◎○ … 軸にできる馬(規則 15 延長などでない)のうち、3着以内の確率の上位2頭
     相手 … 残りの確率上位2頭
     買う … ○の確率が t2 以上で、残りの1番手との差が gap 以上(7〜8月で決め、9月〜で確かめた基準)
-    買い方 … ワイドだけ(◎-○を5点分、◎-相手・○-相手を1点ずつ)"""
+    買い方 … ワイド(TH["bet_mode"]。wide1 は◎-○の1点)"""
     sel = model_select()
     for r in res:
         r["p3"] = round(float(probs.get(r["umaban"], 0.0)), 3)
@@ -770,7 +770,9 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
 
 
 def make_bets_wide(h, t, aite):
-    """ワイドだけ(2026年1〜10月の再現で、ほかの券種より損が小さかった買い方)"""
+    """ワイドだけ。wide1 は◎-○の1点(2026年の再現で回収率がいちばん高かった買い方)"""
+    if TH["bet_mode"] == "wide1":
+        return [{"type": "ワイド", "role": "◎○が両方3着内", "kind": "◎-○", "combos": [sorted([h, t])], "unit": UNIT}]
     a = [x for x in aite if x not in (h, t)][:2]
     bets = [{"type": "ワイド", "role": "◎○が両方3着内", "kind": "◎-○", "combos": [sorted([h, t])], "unit": UNIT * 5}]
     if a:

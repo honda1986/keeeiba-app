@@ -603,7 +603,7 @@ async function modelBox() {
   const row = r => `<tr><td>${esc(r.label)}</td><td>${r.races}</td><td>${Math.round(r.hit * 100)}%</td>
     <td class="${r.roi >= 1 ? "good" : "neg"}"><b>${Math.round(r.roi * 100)}%</b></td></tr>`;
   const tbl = (name, rs) => `<div class="legendnote" style="margin-top:8px"><b>${esc(name)}</b></div>
-    <table class="tbl"><thead><tr><th>選び方(買い方はワイドだけ)</th><th>R</th><th>的中</th><th>回収率</th></tr></thead>
+    <table class="tbl"><thead><tr><th>選び方(買い方はワイド◎-○の1点)</th><th>R</th><th>的中</th><th>回収率</th></tr></thead>
     <tbody>${rs.map(row).join("")}</tbody></table>`;
   const el = document.getElementById("modelbox");
   if (!el) return;
@@ -614,7 +614,7 @@ async function modelBox() {
         騎手・厩舎のそれまでの3着内率、コース傾向、30か条の評価(能力・加減点・軸不可・消し)。そのレースのオッズは使わない(規則20)</li>
       <li><b>◎○</b>軸にできる馬(延長などでない。規則15)のうち確率の上位2頭。相手は残りの上位2頭</li>
       <li><b>買うレース</b>○の確率が${Math.round(m.select.t2 * 100)}%以上(${Math.round((m.select.t2 + 0.05) * 100)}%以上はA)。足りなければ見送り(1強・混戦)</li>
-      <li><b>買い方</b>ワイドだけ。◎-○を5点分、◎-相手・○-相手を1点ずつ(1レース900円)</li>
+      <li><b>買い方</b>ワイド◎-○の1点だけ(1レース100円)。2026年の再現で、相手まで買うより回収率が高かった</li>
     </ul>
     ${m.check && m.check["調整"] ? tbl("調整期間(7〜8月。基準を決めた期間)", m.check["調整"]) : ""}
     ${m.check && m.check["試験"] ? tbl("試験期間(9月〜。学習にも基準にも使っていない)", m.check["試験"]) : ""}
@@ -629,7 +629,7 @@ function renderRule() {
       <div>「来ない」馬の負け要因(距離・展開・枠・斤量・休み明け・クラス差・馬場)を探して消す</div>
       <div>30か条の評価も材料にした確率モデルで、軸にできる馬の上位2頭を◎○にする(延長の馬は軸にしない)</div>
       <div>○の確率が基準に届くレースだけ買う(2強)。1強・混戦は見送り</div>
-      <div>買い方はワイドだけ: ◎-○を厚く、◎-相手・○-相手で◎飛びにも備える</div></div>
+      <div>買い方はワイド◎-○の1点だけ(◎○が両方3着内で的中)</div></div>
     <div class="sec">3着以内の確率モデル(◎○と買うレースを決める)</div>
     <div id="modelbox"><p class="muted" style="font-size:13px">モデルの情報を読み込み中…</p></div>
     <div class="sec">印</div>

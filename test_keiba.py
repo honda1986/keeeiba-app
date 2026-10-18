@@ -44,11 +44,11 @@ TODAY = "2026-10-18"
 class Logic(unittest.TestCase):
     def test_two_strong_is_bought(self):
         hs = [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in range(3, 13)]
-        L.TH["bet_mode"] = "full"
+        mode, L.TH["bet_mode"] = L.TH["bet_mode"], "full"
         try:
             p = L.predict(race(hs), TODAY, use_model=False)
         finally:
-            L.TH["bet_mode"] = "wide"
+            L.TH["bet_mode"] = mode
         self.assertIn(p["verdict"], ("A", "B"), p["reason"])
         self.assertEqual({p["honmei"], p["taikou"]}, {1, 2})
         types = [b["type"] for b in p["bets"]]
@@ -67,9 +67,15 @@ class Logic(unittest.TestCase):
         hs = [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in range(3, 13)]
         p = L.predict(race(hs), TODAY, use_model=False)
         self.assertEqual({b["type"] for b in p["bets"]}, {"ワイド"})
-        main = p["bets"][0]
-        self.assertEqual((main["combos"], main["unit"]), ([sorted([p["honmei"], p["taikou"]])], 500))
-        self.assertEqual(p["stake"], 900)
+        # ワイド1点: ◎-○を100円だけ
+        self.assertEqual([(b["combos"], b["unit"]) for b in p["bets"]], [([sorted([p["honmei"], p["taikou"]])], 100)])
+        self.assertEqual(p["stake"], 100)
+        mode, L.TH["bet_mode"] = L.TH["bet_mode"], "wide"
+        try:
+            p = L.predict(race(hs), TODAY, use_model=False)
+        finally:
+            L.TH["bet_mode"] = mode
+        self.assertEqual((p["bets"][0]["unit"], p["stake"]), (500, 900))
 
     def test_model_mode(self):
         # 確率を外から渡す: ◎○は軸にできる馬の上位2頭、買うのは○が基準以上のとき
