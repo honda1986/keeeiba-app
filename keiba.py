@@ -39,6 +39,8 @@ import requests
 from bs4 import BeautifulSoup
 
 import keiba_logic as L
+import keiba_model as KM
+import keiba_speed as SP
 
 JST = timezone(timedelta(hours=9))
 OUT = "keiba"
@@ -494,6 +496,7 @@ def minutes_since(iso, now):
 
 
 _WF = {}
+_WF_LOCK = threading.Lock()
 
 
 def past_probs(rid, d):
@@ -501,17 +504,17 @@ def past_probs(rid, d):
     1) その月より前だけで学んだモデル(keiba/model_wf.json.gz)があればそれ
     2) 今のモデルが学んだ期間より後の日なら今のモデル(None を返すと predict が使う)
     3) どちらでもなければ手作りの評価(False)"""
-    if "wf" not in _WF:
-        try:
-            with gzip.open(os.path.join(OUT, "model_wf.json.gz"), "rt", encoding="utf-8") as f:
-                _WF["wf"] = json.load(f)["probs"]
-        except (OSError, ValueError, KeyError):
-            _WF["wf"] = {}
-        try:
-            import keiba_model as KM
-            _WF["end"] = json.load(open(KM.META_FILE, encoding="utf-8")).get("data_end", "")
-        except (OSError, ValueError):
-            _WF["end"] = ""
+    with _WF_LOCK:                      # 並列に呼ばれるので、読み終わるまで他を待たせる
+        if "end" not in _WF:
+            try:
+                with gzip.open(os.path.join(OUT, "model_wf.json.gz"), "rt", encoding="utf-8") as f:
+                    _WF["wf"] = json.load(f)["probs"]
+            except (OSError, ValueError, KeyError):
+                _WF["wf"] = {}
+            try:
+                _WF["end"] = json.load(open(KM.META_FILE, encoding="utf-8")).get("data_end", "")
+            except (OSError, ValueError):
+                _WF["end"] = ""
     pw = _WF["wf"].get(rid)
     if pw:
         return {int(u): v for u, v in pw.items()}
@@ -622,7 +625,14 @@ def run_day(d, now, backfill=False):
             res = parse_result(html) if html else None
             if res and len(res["order"]) >= 3:
                 rc["result"] = res
-        # 予想。当日は発走後に固定。過去の日は予想が無いときだけ作る(人気は確定人気)
+
+    def two(rid):
+        """予想。当日は発走後に固定。過去の日は予想が無いときだけ作る(人気は確定人気)"""
+        rc = races[rid]
+        if venue_of(rid) == "帯広" or not rc.get("horses"):
+            return
+        st = start_dt(d, rc.get("start"))
+        started = st is not None and now >= st
         if not started and not backfill and rc.get("past_at"):
             rc["pred"] = L.predict(rc, today)
             rc["pred"]["src"] = "live"
@@ -641,6 +651,10 @@ def run_day(d, now, backfill=False):
             rc["settle"] = L.settle(rc["pred"], rc["result"])
 
     pmap(one, sorted(races))
+    # 馬場差の表に無い日(前回の学習より後の日)を、この日の全レースの馬柱から足してから予想する
+    SP.extend(SP.load(), [r for rc in races.values() for h in rc.get("horses") or [] for r in h.get("past") or []],
+              KM.center_of)
+    pmap(two, sorted(races))
     if backfill:
         # 結果が取れないレース(中止・取得失敗)は2回試したらあきらめる
         todo = []

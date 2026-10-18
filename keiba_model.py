@@ -25,6 +25,7 @@ import os
 import re
 
 import keiba_logic as L
+import keiba_speed as SP
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_FILE = os.path.join(HERE, "keiba_model.txt")
@@ -36,7 +37,7 @@ STYLE_ID = {"逃げ": 0, "先行": 1, "差し": 2, "追込": 3}
 # 同じレースの中で順位・最大との差を取る特徴量
 REL = ["sc_mean", "sc_best2", "sc_last", "margin_min", "margin_mean", "rank_ratio_mean",
        "pop_mean", "pop_min", "rule_score", "rule_ability", "l3f_dev_best", "top3_rate",
-       "jockey_top3", "trainer_top3"]
+       "jockey_top3", "trainer_top3", "spd_best", "spd_best_surf", "spd_mean3", "spd_last", "l3fig_best"]
 JT_K = 30          # 騎手・厩舎の3着内率は、乗った数が少ないうちは全体の平均へ寄せる
 
 
@@ -66,8 +67,33 @@ def jt_rate(stats, name):
     return (t + JT_K * base) / (n + JT_K), n
 
 
-def horse_feats(h, race, today, cs, n, l3f_norm, jt=None):
-    """1頭分(他馬との比較は race_rows で足す)。jt は騎手・厩舎の成績(そのレースより前の日まで)"""
+def center_of(venue):
+    vi = L.venue_info(venue)[1]
+    return vi[0] if vi else None
+
+
+def speed_feats(f, past, race, sp):
+    """馬場差で補正した走破タイム・上がり3Fの指数(keiba_speed)"""
+    fig = [SP.figure(r, sp, "t") for r in past]
+    lfg = [SP.figure(r, sp, "l") for r in past]
+    v = [x for x in fig if x is not None]
+    f["spd_best"] = max(v) if v else None
+    f["spd_last"] = fig[0] if fig else None
+    f["spd_mean3"] = sum(v[:3]) / len(v[:3]) if v else None
+    surf = [x for x, r in zip(fig, past) if x is not None and r.get("surface") == race.get("surface")]
+    f["spd_best_surf"] = max(surf) if surf else None
+    dist = race.get("dist") or 0
+    near = [x for x, r in zip(fig, past) if x is not None and r.get("surface") == race.get("surface")
+            and abs((r.get("dist") or 0) - dist) <= 200]
+    f["spd_best_dist"] = max(near) if near else None
+    lv = [x for x in lfg if x is not None]
+    f["l3fig_best"] = max(lv) if lv else None
+    f["l3fig_mean"] = sum(lv[:3]) / len(lv[:3]) if lv else None
+
+
+def horse_feats(h, race, today, cs, n, l3f_norm, jt=None, sp=None):
+    """1頭分(他馬との比較は race_rows で足す)。jt は騎手・厩舎の成績(そのレースより前の日まで)、
+    sp は走破タイムの指数の表(keiba_speed)"""
     center = race["center"]
     past = [dict(r) for r in (h.get("past") or []) if r.get("surface") != "障"][:5]
     for r in past:
@@ -153,10 +179,12 @@ def horse_feats(h, race, today, cs, n, l3f_norm, jt=None):
     jt = jt or {}
     f["jockey_top3"], f["jockey_n"] = jt_rate(jt.get("jockey"), jt_name(h, "jockey"))
     f["trainer_top3"], f["trainer_n"] = jt_rate(jt.get("trainer"), jt_name(h, "trainer"))
+    if sp:
+        speed_feats(f, past, race, sp)
     return f
 
 
-def race_rows(race, today, pred, l3f_norm, jt=None):
+def race_rows(race, today, pred, l3f_norm, jt=None, sp=None):
     """1レース分の特徴量(馬番の順)。pred は keiba_logic.predict の結果(30か条の評価)"""
     horses = [h for h in race["horses"] if not h.get("scratched")]
     n = len(horses)
@@ -164,7 +192,7 @@ def race_rows(race, today, pred, l3f_norm, jt=None):
     pe = {x["umaban"]: x for x in (pred or {}).get("horses", [])}
     rows = []
     for h in horses:
-        f = horse_feats(h, race, today, cs, n, l3f_norm, jt)
+        f = horse_feats(h, race, today, cs, n, l3f_norm, jt, sp)
         e = pe.get(h["umaban"], {})
         f["rule_score"] = e.get("score")
         f["rule_ability"] = e.get("ability")
@@ -211,7 +239,8 @@ def probs(race, today, pred):
     bst, meta = load()
     if not bst:
         return None
-    rows = race_rows(race, today, pred, meta["l3f_norm"], meta.get("jt"))
+    sp = SP.load() if any(k.startswith(("spd_", "l3fig_")) for k in meta["features"]) else None
+    rows = race_rows(race, today, pred, meta["l3f_norm"], meta.get("jt"), sp)
     if not rows:
         return {}
     X = [[_num(f.get(k)) for k in meta["features"]] for _, f in rows]

@@ -310,5 +310,25 @@ class Parse(unittest.TestCase):
         self.assertEqual(K.venue_of("202644101801"), "大井")
 
 
+class Speed(unittest.TestCase):
+    def test_track_variant(self):
+        """同じコースで、速い日に走った馬は馬場差の分だけ割り引かれる"""
+        import keiba_speed as SP
+        recs = []
+        for day, shift in (("2026-05-01", 0.0), ("2026-05-02", -1.0)):     # 2日目は1kmあたり1秒速い馬場
+            for i in range(30):
+                recs.append({"date": day, "venue": "東京", "surface": "芝", "dist": 1600, "cls": 3,
+                             "center": "jra", "margin": 0.5, "time": round(1.6 * (60 + shift) + (i % 5) * 0.1, 1),
+                             "last3f": 34.0})
+        tb = SP.fit(recs)
+        slow = SP.figure({"date": "2026-05-01", "venue": "東京", "surface": "芝", "dist": 1600, "time": 96.0}, tb)
+        fast = SP.figure({"date": "2026-05-02", "venue": "東京", "surface": "芝", "dist": 1600, "time": 94.4}, tb)
+        self.assertAlmostEqual(slow, fast, delta=1.5)    # 1.6秒速いが、馬場差を引けばほぼ同じ指数
+        # 表に無い日は、集めた走りから馬場差を足せる
+        new = [dict(r, date="2026-05-03") for r in recs[30:]]
+        SP.extend(tb, new)
+        self.assertLess(tb["t"]["V"]["20260503|東京|芝"], -0.3)   # 基準は2日の真ん中なので約 -0.5
+
+
 if __name__ == "__main__":
     unittest.main()

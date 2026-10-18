@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import keiba as K            # noqa: E402
 import keiba_logic as L      # noqa: E402
 import keiba_model as M      # noqa: E402
+import keiba_speed as SP     # noqa: E402
 
 VALID_FROM, TEST_FROM = "20260701", "20260901"
 CACHE = os.environ.get("KEIBA_CACHE", "/tmp/keiba_dataset.pkl")
@@ -79,7 +80,17 @@ def jt_add(acc, rc):
                 v[1] += h["umaban"] in top3
 
 
-def build(races, norm):
+def speed_table(races, until=None):
+    """走破タイム・上がり3Fの指数の表。基準・クラスの差は until より前の走りだけで求め、
+    馬場差はすべての日について(その日のタイムだけで決まる)"""
+    recs = SP.collect(races, M.center_of)
+    base = [r for r in recs if not until or r["date"].replace("-", "") < until]
+    tb = SP.fit(base)
+    SP.extend(tb, recs)
+    return tb
+
+
+def build(races, norm, sp=None):
     """日付の順に作る。騎手・厩舎の成績は、その日より前のレースだけで数える(先の結果を使わない)"""
     rows = []
     acc = {"jockey": {}, "trainer": {}}
@@ -94,7 +105,7 @@ def build(races, norm):
         pred = L.predict(rc, today, use_model=False)      # 材料は手作りの評価だけ
         top3 = set(rc["result"]["order"][:3])
         ninki = rc["result"].get("ninki") or {}
-        for u, f in M.race_rows(rc, today, pred, norm, snap):
+        for u, f in M.race_rows(rc, today, pred, norm, snap, sp):
             rows.append({"date": d, "rid": rc["id"], "u": u, "f": f, "y": int(u in top3),
                          "ninki": ninki.get(str(u))})
         todays.append(rc)
@@ -166,6 +177,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--save", action="store_true")
     ap.add_argument("--rebuild", action="store_true")
+    ap.add_argument("--no-speed", action="store_true", help="走破タイムの指数を使わない(比べるため)")
     ap.add_argument("--walkforward", action="store_true",
                     help="月ごとに、その月より前だけで学んだモデルで確率を出して keiba/model_wf.json.gz に保存する"
                          "(過去の日の成績を、先の結果を知らないモデルで見るため)")
@@ -175,12 +187,14 @@ def main():
     races = load_races()
     races_by_id = {rc["id"]: rc for _, rc in races}
     print("レース", len(races), races[0][0], "〜", races[-1][0])
-    if os.path.exists(CACHE) and not a.rebuild:
-        norm, rows, jt_all = pickle.load(open(CACHE, "rb"))
+    cache = CACHE + (".nospeed" if a.no_speed else "")
+    if os.path.exists(cache) and not a.rebuild:
+        norm, rows, jt_all, sp = pickle.load(open(cache, "rb"))
     else:
         norm = l3f_norms(races)
-        rows, jt_all = build(races, norm)
-        pickle.dump((norm, rows, jt_all), open(CACHE, "wb"))
+        sp = None if a.no_speed else speed_table(races, VALID_FROM)
+        rows, jt_all = build(races, norm, sp)
+        pickle.dump((norm, rows, jt_all, sp), open(cache, "wb"))
     feats = sorted({k for r in rows for k in r["f"]})
     X = np.array([[M._num(r["f"].get(k)) for k in feats] for r in rows], dtype=float)
     y = np.array([r["y"] for r in rows])
