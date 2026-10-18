@@ -186,8 +186,14 @@ const BABA = {"良":"良","稍":"稍重","重":"重","不":"不良"};
 const yenK = v => { const a = Math.abs(v), sg = v > 0 ? "+" : v < 0 ? "-" : "±";
   return sg + (a >= 10000 ? (a / 10000).toFixed(a >= 100000 ? 0 : 1) + "万" : a.toLocaleString()); };
 const state = {day: null, hist: null, days: [], filter: "buy", center: "all", cache: {},
-               period: "30", src: "all", mcenter: "all", calMonth: null, moneyMonth: null};
+               period: "year", src: "all", mcenter: "all", calMonth: null, moneyMonth: null};
 const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+// 収支の絞り込みは覚えておく(次に開いたときも同じ期間で見られるように)
+try {
+  const saved = JSON.parse(store.get("keiba-money") || "{}");
+  for (const k of ["period", "src", "mcenter"]) if (typeof saved[k] === "string") state[k] = saved[k];
+} catch (e) { /* 覚えていなければ初期値 */ }
+const saveMoney = () => store.set("keiba-money", JSON.stringify({period: state.period, src: state.src, mcenter: state.mcenter}));
 const toDate = d => new Date(+d.slice(0,4), +d.slice(4,6) - 1, +d.slice(6,8));
 const dstr = t => `${t.getFullYear()}${String(t.getMonth()+1).padStart(2,"0")}${String(t.getDate()).padStart(2,"0")}`;
 const SRC = {live: "当日の予想", backfill: "再現"};
@@ -577,10 +583,10 @@ function renderMoney() {
         <td>${esc(r.verdict)}</td><td class="num">${r.hr ?? "-"}着 ${r.tr ?? "-"}着</td>
         <td class="${r.ret - r.stake >= 0 ? "good" : "neg"}"><b>${yen(r.ret - r.stake)}</b></td></tr>`).join("")}</tbody></table>` : ""}`;
 
-  el.querySelectorAll("[data-p]").forEach(b => b.onclick = () => { state.period = b.dataset.p; renderMoney(); });
-  el.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { state.src = b.dataset.s; renderMoney(); });
+  el.querySelectorAll("[data-p]").forEach(b => b.onclick = () => { state.period = b.dataset.p; saveMoney(); renderMoney(); });
+  el.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { state.src = b.dataset.s; saveMoney(); renderMoney(); });
   el.querySelectorAll("[data-mc]").forEach(b => {
-    const go = () => { state.mcenter = b.dataset.mc; renderMoney(); };
+    const go = () => { state.mcenter = b.dataset.mc; saveMoney(); renderMoney(); };
     b.onclick = go; b.onkeydown = e => { if (e.key === "Enter") go(); };
   });
   const wireCal = () => {
