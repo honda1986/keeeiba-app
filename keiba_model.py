@@ -23,6 +23,7 @@ import json
 import math
 import os
 import re
+import threading
 
 import keiba_logic as L
 import keiba_speed as SP
@@ -220,10 +221,14 @@ def race_rows(race, today, pred, l3f_norm, jt=None, sp=None):
 
 # ---------------------------------------------------------------- 予測(アプリで使う)
 _MODEL = {"booster": None, "meta": None, "tried": False}
+_LOCK = threading.Lock()
 
 
 def load():
-    if not _MODEL["tried"]:
+    # 予想は並列に呼ばれる。読み終わる前に「モデルなし」と答えると手作りの評価に落ちるので、読み終わるまで待たせる
+    with _LOCK:
+        if _MODEL["tried"]:
+            return _MODEL["booster"], _MODEL["meta"]
         _MODEL["tried"] = True
         try:
             import lightgbm as lgb
@@ -244,7 +249,8 @@ def probs(race, today, pred):
     if not rows:
         return {}
     X = [[_num(f.get(k)) for k in meta["features"]] for _, f in rows]
-    p = bst.predict(X)
+    with _LOCK:                         # 1つのモデルを並列に使うので、予測は1つずつ
+        p = bst.predict(X)
     # 1レースの3着以内は3頭なので、合計が3になるように揃える(頭数が少ないときは頭数まで)
     tot = sum(p)
     want = min(3, len(p))

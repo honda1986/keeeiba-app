@@ -22,6 +22,7 @@ keiba_speed.py -- 走破タイム・上がり3Fを馬場差で補正した指数
 
 import json
 import os
+import threading
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SPEED_FILE = os.path.join(HERE, "keiba_speed.json")
@@ -196,15 +197,18 @@ def extend(table, recs, center_of=None):
 
 
 _TABLE = {"t": None, "tried": False}
+_LOCK = threading.Lock()
 
 
 def load():
-    if not _TABLE["tried"]:
-        _TABLE["tried"] = True
-        try:
-            _TABLE["t"] = json.load(open(SPEED_FILE, encoding="utf-8"))
-        except Exception:
-            _TABLE["t"] = None
+    with _LOCK:                     # 並列に呼ばれても、読み終わるまで待たせる
+        if not _TABLE["tried"]:
+            try:
+                with open(SPEED_FILE, encoding="utf-8") as f:
+                    _TABLE["t"] = json.load(f)
+            except Exception:
+                _TABLE["t"] = None
+            _TABLE["tried"] = True
     return _TABLE["t"]
 
 

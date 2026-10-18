@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """keiba_logic / keiba のパースの確認。  python -m unittest test_keiba"""
 
+import os
 import unittest
 
 import keiba as K
@@ -329,6 +330,27 @@ class Speed(unittest.TestCase):
         new = [dict(r, date="2026-05-03") for r in recs[30:]]
         SP.extend(tb, new)
         self.assertLess(tb["t"]["V"]["20260503|東京|芝"], -0.3)   # 基準は2日の真ん中なので約 -0.5
+
+
+class Concurrency(unittest.TestCase):
+    def test_model_load_in_threads(self):
+        """並列の予想で、モデルを読み終わる前の呼び出しが「モデルなし」にならない"""
+        import keiba_model as KM
+        if not os.path.exists(KM.MODEL_FILE):
+            self.skipTest("モデルが無い")
+        try:
+            import lightgbm  # noqa: F401
+        except ImportError:
+            self.skipTest("lightgbm が無い")
+        saved = dict(KM._MODEL)
+        KM._MODEL.update({"booster": None, "meta": None, "tried": False})
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(8) as ex:
+                got = list(ex.map(lambda _: KM.load()[0] is not None, range(16)))
+            self.assertTrue(all(got))
+        finally:
+            KM._MODEL.update(saved)
 
 
 if __name__ == "__main__":
