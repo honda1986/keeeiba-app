@@ -25,6 +25,10 @@ on:
         description: '1ジョブで同時に取るレースの数'
         required: false
         default: '6'
+      mode:
+        description: 'predict(予想と結果を再現) / past(馬柱だけを今の読み方で取り直す)'
+        required: false
+        default: 'predict'
 
 concurrency:
   group: keiba-backfill
@@ -44,6 +48,7 @@ jobs:
           START: ${{ github.event.inputs.start }}
           END: ${{ github.event.inputs.end }}
           JOBS: ${{ github.event.inputs.jobs }}
+          MODE: ${{ github.event.inputs.mode }}
         run: |
           python3 - <<'PY'
           import json, os
@@ -56,9 +61,17 @@ jobs:
           while d.strftime("%Y%m%d") >= start:
               s = d.strftime("%Y%m%d")
               try:
-                  done = json.load(open("keiba/days/%s.json" % s)).get("complete")
+                  day = json.load(open("keiba/days/%s.json" % s))
+                  if os.environ.get("MODE") == "past":
+                      # 馬柱の読み方が古いレースが残っている日だけ
+                      import re
+                      ver = int(re.search(r"PAST_VER = (\d+)", open("keiba.py").read()).group(1))
+                      done = all(r.get("past_ver") == ver for r in day["races"].values()
+                                 if r.get("horses") and r["id"][4:6] != "65")
+                  else:
+                      done = day.get("complete")
               except Exception:
-                  done = False
+                  done = os.environ.get("MODE") == "past"
               if not done:
                   todo.append(s)
               d -= timedelta(days=1)
@@ -87,7 +100,10 @@ jobs:
       - name: 再現する
         timeout-minutes: 300
         continue-on-error: true
-        run: python keiba.py --backfill-dates "${{ matrix.chunk.dates }}" --workers "${{ github.event.inputs.workers || 6 }}" --no-history
+        run: |
+          EXTRA=""
+          [ "${{ github.event.inputs.mode }}" = "past" ] && EXTRA="--refetch-past"
+          python keiba.py --backfill-dates "${{ matrix.chunk.dates }}" --workers "${{ github.event.inputs.workers || 6 }}" --no-history $EXTRA
       - name: このジョブの日だけを渡す
         if: always()
         run: |

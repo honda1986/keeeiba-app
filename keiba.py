@@ -51,7 +51,7 @@ WORKERS = 4                # 1日のレースを同時に取る数
 CARD_REFRESH = 50          # 出馬表(馬場・取消)を取り直す間隔(分)
 ODDS_REFRESH = 20          # オッズを取り直す間隔(分)
 RESULT_AFTER = 8           # 発走から何分後に結果を見に行くか
-PAST_VER = 2               # 馬柱の読み方を直したら上げる(発走前のレースは取り直す)
+PAST_VER = 3               # 馬柱の読み方を直したら上げる(発走前のレースは取り直す)。3: 走破タイムを足した
 
 _TL = threading.local()
 
@@ -242,6 +242,13 @@ def parse_past_cell(td):
         r["surface"], r["dist"] = m.group(1), int(m.group(2))
     m = re.search(r"(良|稍重|稍|重|不良|不)(?!\S*頭)", d5)
     r["baba"] = m.group(1)[0] if m else None
+    # 走破タイム(秒)。「1:34.8」、1分を切るときは「57.9」のこともある
+    m = re.search(r"(\d{1,2}):(\d{2}\.\d)", d5)
+    if m:
+        r["time"] = round(int(m.group(1)) * 60 + float(m.group(2)), 1)
+    else:
+        m = re.search(r"(?<![\d.:])(\d{2}\.\d)(?![\d])", d5.replace(r.get("surface", "") + str(r.get("dist", "")), ""))
+        r["time"] = float(m.group(1)) if m else None
     d3 = L.nfkc(txt(td.select_one(".Data03"))) or t
     m = re.search(r"(\d+)頭", d3)
     r["n"] = int(m.group(1)) if m else None
@@ -511,6 +518,32 @@ def past_probs(rid, d):
     if _WF["end"] and d > _WF["end"]:
         return None
     return False
+
+
+def refetch_past(d, now):
+    """その日のレースの馬柱だけを今の読み方で取り直す(予想・結果はそのまま)"""
+    day = load_day(d)
+    iso_d = d[:4] + "-" + d[4:6] + "-" + d[6:]
+
+    def one(rid):
+        rc = day["races"][rid]
+        if not rc.get("horses") or rc.get("past_ver") == PAST_VER or venue_of(rid) == "帯広":
+            return 0
+        html = get(SITE[center_of(rid)] + "/race/shutuba_past.html", {"race_id": rid})
+        if not html:
+            return 0
+        past = parse_past(html)
+        if not past:
+            return 0
+        for h in rc["horses"]:
+            h["past"] = [r for r in past.get(h["umaban"], []) if (r.get("date") or "") < iso_d]
+        rc["past_ver"] = PAST_VER
+        return 1
+    n = sum(pmap(one, sorted(day["races"])))
+    save_day(d, day)
+    left = sum(1 for r in day["races"].values() if r.get("horses") and r.get("past_ver") != PAST_VER
+               and venue_of(r["id"]) != "帯広")
+    print("{} 馬柱を取り直した {} / 残り {}".format(d, n, left), flush=True)
 
 
 def predict_past(rc, d, today):
@@ -820,6 +853,8 @@ def main():
                     help="START〜END(YYYYMMDD)の日を新しい日から順に再現する。済んだ日は飛ばす")
     ap.add_argument("--backfill-dates", help="再現する日をカンマ区切りで(並列ジョブ用)")
     ap.add_argument("--workers", type=int, help="1日のレースを同時に取る数")
+    ap.add_argument("--refetch-past", action="store_true",
+                    help="--backfill-dates の日の馬柱だけを今の読み方で取り直す(予想はそのまま)")
     ap.add_argument("--no-history", action="store_true", help="history.json を作らない(並列ジョブ用)")
     ap.add_argument("--repredict", action="store_true",
                     help="再現の予想を今のロジックで作り直す(保存済みの馬柱を使う。取得しない)")
@@ -847,6 +882,10 @@ def main():
                 dates.append(d0.strftime("%Y%m%d"))
                 d0 -= timedelta(days=1)
         for d in dates:
+            if a.refetch_past:
+                if d < today_s:
+                    refetch_past(d, datetime.now(JST))
+                continue
             if d >= today_s:
                 print("{} は今日以降なので再現しません".format(d))
             elif load(day_path(d), {}).get("complete"):

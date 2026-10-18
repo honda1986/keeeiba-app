@@ -289,7 +289,9 @@ class Parse(unittest.TestCase):
         self.assertIn(3, p)
         r = p[3][0]
         self.assertEqual((r["date"], r["venue"], r["rank"]), ("2026-09-20", "中山", 1))
-        self.assertEqual((r["surface"], r["dist"], r["baba"]), ("芝", 2200, "良"))
+        self.assertEqual((r["surface"], r["dist"], r["baba"], r["time"]), ("芝", 2200, "良", 131.8))
+        r2 = K.parse_past(PAST_HTML.replace("芝2200 2:11.8 良", "芝1000 57.9 稍"))[3][0]
+        self.assertEqual((r2["dist"], r2["time"], r2["baba"]), (1000, 57.9, "稍"))
         self.assertEqual((r["n"], r["umaban"], r["ninki"], r["kinryo"]), (15, 7, 2, 57.0))
         self.assertEqual(r["pass"], [3, 3, 2, 2])
         self.assertEqual(r["margin"], -0.2)
