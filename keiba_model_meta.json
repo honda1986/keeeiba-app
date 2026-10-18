@@ -4647,35 +4647,35 @@
  "data": "20260101〜20261018 13423レース",
  "iterations": 916,
  "select": {
-  "t2": 0.7,
+  "t2": 0.75,
   "gap": 0.0,
   "axis_ok": true
  },
- "select_from": "walkforward",
+ "select_from": "fixed",
  "check_wf": {
   "選ぶ": {
    "label": "モデル",
-   "races": 939,
-   "hit": 0.616,
-   "stake": 93900,
-   "ret": 81210,
-   "roi": 0.865
+   "races": 509,
+   "hit": 0.686,
+   "stake": 50900,
+   "ret": 46150,
+   "roi": 0.907
   },
   "確かめ": {
    "label": "モデル",
-   "races": 179,
-   "hit": 0.693,
-   "stake": 17900,
-   "ret": 16840,
-   "roi": 0.941
+   "races": 96,
+   "hit": 0.719,
+   "stake": 9600,
+   "ret": 8860,
+   "roi": 0.923
   },
   "確かめ 市場": {
    "label": "市場 同じレースで1・2番人気",
-   "races": 179,
-   "hit": 0.709,
-   "stake": 17900,
-   "ret": 16850,
-   "roi": 0.941
+   "races": 96,
+   "hit": 0.719,
+   "stake": 9600,
+   "ret": 8760,
+   "roi": 0.912
   }
  },
  "check": {

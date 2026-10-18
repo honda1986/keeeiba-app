@@ -690,9 +690,15 @@ def predict(race, today=None, use_model=True, probs=None):
 
 # モデルで買うレースの基準(keiba_model_meta.json の select。無ければこの値)
 MODEL_SELECT = {"t2": 0.60, "gap": 0.0, "a": 0.65}
+# 利用者が決めた基準(2026-10-18: ○の確率75%以上)。学び直しても変えない。None なら学び直しで選んだ基準
+MODEL_SELECT_FIXED = {"t2": 0.75, "gap": 0.0}
 
 
 def model_select():
+    if MODEL_SELECT_FIXED:
+        s = dict(MODEL_SELECT, **MODEL_SELECT_FIXED)
+        s["a"] = s["t2"] + 0.05
+        return s
     try:
         import keiba_model as KM
         _, meta = KM.load()

@@ -160,6 +160,79 @@ def evaluate(rows, p, races_by_id, pick, label):
             "roi": round(rt / st, 3) if st else 0}
 
 
+def pick_model(t2, gap, pr, axis_ok=True):
+    """アプリと同じ選び方: ◎○=軸にできる馬(延長などでない)の確率上位2頭、
+    相手=残りの確率上位2頭。○の確率が t2 以上で、残りの1番手との差が gap 以上なら買う"""
+    def f(rid, rs, p):
+        if (rs[0]["rid"], rs[0]["u"]) not in pr:
+            return None
+        o = sorted(rs, key=lambda r: -pr[(r["rid"], r["u"])])
+        ok = [r for r in o if not (axis_ok and r["f"].get("rule_axis_ng"))]
+        if len(o) < 5 or len(ok) < 2:
+            return None
+        h, t = ok[0], ok[1]
+        rest = [r for r in o if r is not h and r is not t]
+        pt, p3 = pr[(t["rid"], t["u"])], pr[(rest[0]["rid"], rest[0]["u"])]
+        if pt < t2 or pt - p3 < gap:
+            return None
+        return h["u"], t["u"], [r["u"] for r in rest]
+    return f
+
+
+def by_market(sel):
+    """sel で選んだレースで、1・2番人気を◎○にする(確定人気。参考)"""
+    def f(rid, rs, p):
+        if not sel(rid, rs, p):
+            return None
+        o = sorted((r for r in rs if r["ninki"]), key=lambda r: r["ninki"])
+        if len(o) < 4:
+            return None
+        return o[0]["u"], o[1]["u"], [r["u"] for r in o[2:]]
+    return f
+
+
+def load_wf():
+    """月ごとの確率 (rid, 馬番) -> 確率。無ければ None"""
+    import gzip
+    try:
+        with gzip.open(os.path.join(K.OUT, "model_wf.json.gz"), "rt", encoding="utf-8") as f:
+            return {(rid, int(u)): v for rid, d in json.load(f)["probs"].items() for u, v in d.items()}
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def check_wf(rows, races_by_id, pw, t2, gap):
+    """月ごとの確率で、基準 (t2, gap) の成績(2月〜調整期間の終わり / 試験期間 / 試験期間の市場)"""
+    rs_sel = [x for x in rows if x["date"] < TEST_FROM and (x["rid"], x["u"]) in pw]
+    rs_chk = [x for x in rows if x["date"] >= TEST_FROM and (x["rid"], x["u"]) in pw]
+    return {"選ぶ": evaluate(rs_sel, None, races_by_id, pick_model(t2, gap, pw), "モデル"),
+            "確かめ": evaluate(rs_chk, None, races_by_id, pick_model(t2, gap, pw), "モデル"),
+            "確かめ 市場": evaluate(rs_chk, None, races_by_id, by_market(pick_model(t2, gap, pw)),
+                                "市場 同じレースで1・2番人気")}
+
+
+def show_check(chk):
+    for k, r in chk.items():
+        print("   {:<8} {:>5}R 的中{:>4.0%} 回収率{:>4.0%}".format(k, r["races"], r["hit"], r["roi"]))
+
+
+def update_select(rows, races_by_id):
+    """学び直さずに、基準と月ごとの確率での成績だけを keiba_model_meta.json に書き直す"""
+    fixed = L.MODEL_SELECT_FIXED
+    meta = json.load(open(M.META_FILE, encoding="utf-8"))
+    t2, gap = (fixed["t2"], fixed.get("gap", 0.0)) if fixed else (meta["select"]["t2"], meta["select"]["gap"])
+    pw = load_wf()
+    meta["select"].update({"t2": t2, "gap": gap})
+    if fixed:
+        meta["select_from"] = "fixed"
+    meta["check_wf"] = check_wf(rows, races_by_id, pw, t2, gap) if pw else None
+    print("基準 t2={:.2f} gap={:.2f}".format(t2, gap))
+    if pw:
+        show_check(meta["check_wf"])
+    json.dump(meta, open(M.META_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    print("保存", M.META_FILE)
+
+
 def auc(y, s):
     y = np.asarray(y)
     s = np.asarray(s, dtype=float)
@@ -178,6 +251,8 @@ def main():
     ap.add_argument("--save", action="store_true")
     ap.add_argument("--rebuild", action="store_true")
     ap.add_argument("--no-speed", action="store_true", help="走破タイムの指数を使わない(比べるため)")
+    ap.add_argument("--update-select", action="store_true",
+                    help="学び直さずに、今の月ごとの確率で基準の成績だけ出し直して keiba_model_meta.json に書く")
     ap.add_argument("--walkforward", action="store_true",
                     help="月ごとに、その月より前だけで学んだモデルで確率を出して keiba/model_wf.json.gz に保存する"
                          "(過去の日の成績を、先の結果を知らないモデルで見るため)")
@@ -195,6 +270,9 @@ def main():
         sp = None if a.no_speed else speed_table(races, VALID_FROM)
         rows, jt_all = build(races, norm, sp)
         pickle.dump((norm, rows, jt_all, sp), open(cache, "wb"))
+    if a.update_select:
+        update_select(rows, races_by_id)
+        return
     feats = sorted({k for r in rows for k in r["f"]})
     X = np.array([[M._num(r["f"].get(k)) for k in feats] for r in rows], dtype=float)
     y = np.array([r["y"] for r in rows])
@@ -225,32 +303,7 @@ def main():
         return pred["honmei"], pred["taikou"], [x for x in pred.get("aite", []) if x not in (pred["honmei"], pred["taikou"])]
 
     def by_model(t2, gap, axis_ok=True, pr=pr):
-        """アプリと同じ選び方: ◎○=軸にできる馬(延長などでない)の確率上位2頭、
-        相手=残りの確率上位2頭。○の確率が t2 以上で、残りの1番手との差が gap 以上なら買う"""
-        def f(rid, rs, p):
-            if (rs[0]["rid"], rs[0]["u"]) not in pr:
-                return None
-            o = sorted(rs, key=lambda r: -pr[(r["rid"], r["u"])])
-            ok = [r for r in o if not (axis_ok and r["f"].get("rule_axis_ng"))]
-            if len(o) < 5 or len(ok) < 2:
-                return None
-            h, t = ok[0], ok[1]
-            rest = [r for r in o if r is not h and r is not t]
-            pt, p3 = pr[(t["rid"], t["u"])], pr[(rest[0]["rid"], rest[0]["u"])]
-            if pt < t2 or pt - p3 < gap:
-                return None
-            return h["u"], t["u"], [r["u"] for r in rest]
-        return f
-
-    def by_market(sel):
-        def f(rid, rs, p):
-            if not sel(rid, rs, p):
-                return None
-            o = sorted((r for r in rs if r["ninki"]), key=lambda r: r["ninki"])
-            if len(o) < 4:
-                return None
-            return o[0]["u"], o[1]["u"], [r["u"] for r in o[2:]]
-        return f
+        return pick_model(t2, gap, pr, axis_ok)
 
     print("\n■ 調整期間で、モデルで買うレースの基準を探す(○の確率 t2 以上、○と3番手の差 gap 以上)")
     grid = []
@@ -323,7 +376,6 @@ def main():
         # 買うレースの基準を、月ごとの確率(先を知らない)の2月〜調整期間の終わりで選び直し、試験期間で確かめる
         pw = {(rid, int(u)): v for rid, d in wf.items() for u, v in d.items()}
         rs_sel = [x for x, d in zip(rows, dates) if d < TEST_FROM and (x["rid"], x["u"]) in pw]
-        rs_chk = [x for x, d in zip(rows, dates) if d >= TEST_FROM and (x["rid"], x["u"]) in pw]
         print("\n■ 月ごとの確率で、買うレースの基準を選び直す(2月〜{}で選び、{}〜で確かめる)".format(TEST_FROM[:6], TEST_FROM[:6]))
         g2 = []
         for t2w in (0.0, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75):
@@ -335,14 +387,19 @@ def main():
         for roi, t2w, gw, r in g2[:6]:
             print("  t2={:.2f} gap={:.2f} → {}R 的中{:.0%} 回収率{:.0%}".format(t2w, gw, r["races"], r["hit"], r["roi"]))
         _, t2, gap, _ = max((g for g in g2 if g[0] >= g2[0][0] - 0.01), key=lambda g: g[3]["races"])
-        wf_check = {"選ぶ": evaluate(rs_sel, None, races_by_id, by_model(t2, gap, True, pw), "モデル"),
-                    "確かめ": evaluate(rs_chk, None, races_by_id, by_model(t2, gap, True, pw), "モデル"),
-                    "確かめ 市場": evaluate(rs_chk, None, races_by_id, by_market(by_model(t2, gap, True, pw)),
-                                        "市場 同じレースで1・2番人気")}
+        wf_check = check_wf(rows, races_by_id, pw, t2, gap)
         select_from = "walkforward"
         print("  → 使う基準: t2={:.2f} gap={:.2f}".format(t2, gap))
-        for k, r in wf_check.items():
-            print("   {:<8} {:>5}R 的中{:>4.0%} 回収率{:>4.0%}".format(k, r["races"], r["hit"], r["roi"]))
+        show_check(wf_check)
+    # 利用者が決めた基準があれば、それを使う(成績は月ごとの確率で出し直す)
+    if L.MODEL_SELECT_FIXED:
+        t2, gap = L.MODEL_SELECT_FIXED["t2"], L.MODEL_SELECT_FIXED.get("gap", 0.0)
+        select_from = "fixed"
+        pw = pw if a.walkforward else load_wf()
+        wf_check = check_wf(rows, races_by_id, pw, t2, gap) if pw else None
+        print("\n  → 利用者が決めた基準を使う: t2={:.2f} gap={:.2f}".format(t2, gap))
+        if wf_check:
+            show_check(wf_check)
 
     if a.save:
         allm = np.ones(len(rows), dtype=bool)
