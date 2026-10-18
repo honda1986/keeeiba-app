@@ -44,7 +44,11 @@ TODAY = "2026-10-18"
 class Logic(unittest.TestCase):
     def test_two_strong_is_bought(self):
         hs = [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in range(3, 13)]
-        p = L.predict(race(hs), TODAY)
+        L.TH["bet_mode"] = "full"
+        try:
+            p = L.predict(race(hs), TODAY, use_model=False)
+        finally:
+            L.TH["bet_mode"] = "wide"
         self.assertIn(p["verdict"], ("A", "B"), p["reason"])
         self.assertEqual({p["honmei"], p["taikou"]}, {1, 2})
         types = [b["type"] for b in p["bets"]]
@@ -59,22 +63,55 @@ class Logic(unittest.TestCase):
         self.assertTrue(any(c[:2] == [p["taikou"], p["honmei"]] for c in t3))
         self.assertLessEqual(p["points"], 20)
 
+    def test_wide_only_bets(self):
+        hs = [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in range(3, 13)]
+        p = L.predict(race(hs), TODAY, use_model=False)
+        self.assertEqual({b["type"] for b in p["bets"]}, {"ワイド"})
+        main = p["bets"][0]
+        self.assertEqual((main["combos"], main["unit"]), ([sorted([p["honmei"], p["taikou"]])], 500))
+        self.assertEqual(p["stake"], 900)
+
+    def test_model_mode(self):
+        # 確率を外から渡す: ◎○は軸にできる馬の上位2頭、買うのは○が基準以上のとき
+        hs = [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in range(3, 13)]
+        r = race(hs)
+        probs = {u: 0.1 for u in range(1, 13)}
+        probs.update({1: 0.85, 2: 0.70, 3: 0.40, 4: 0.30})
+        p = L.predict(r, TODAY, probs=probs)
+        self.assertTrue(p["model"])
+        self.assertEqual((p["honmei"], p["taikou"], p["aite"]), (1, 2, [3, 4]))
+        self.assertEqual(p["verdict"], "A")
+        self.assertEqual({b["type"] for b in p["bets"]}, {"ワイド"})
+        # ○が基準に届かない → 見送り(1強)
+        probs[2] = 0.45
+        p = L.predict(r, TODAY, probs=probs)
+        self.assertEqual(p["verdict"], "見送り")
+        self.assertIn("1強", p["reason"])
+        # 延長の馬は確率が高くても軸にしない
+        ext = horse(5, [run(1, margin=-0.6, dist=1200)] * 3)
+        r2 = race([ext] + [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in (3, 4, 6, 7, 8, 9, 10)])
+        probs = {u: 0.1 for u in range(1, 11)}
+        probs.update({5: 0.9, 1: 0.8, 2: 0.7})
+        p = L.predict(r2, TODAY, probs=probs)
+        self.assertEqual((p["honmei"], p["taikou"]), (1, 2))
+        self.assertIn(5, p["aite"])
+
     def test_muddle_is_skipped(self):
         hs = [middle(u, m=0.5 + u * 0.02) for u in range(1, 13)]
-        p = L.predict(race(hs), TODAY)
+        p = L.predict(race(hs), TODAY, use_model=False)
         self.assertEqual(p["verdict"], "見送り")
         self.assertEqual(p["bets"], [])
 
     def test_one_strong_is_skipped(self):
         hs = [strong(1, first=2)] + [middle(u, m=0.9 + u * 0.01) for u in range(2, 13)]
-        p = L.predict(race(hs), TODAY)
+        p = L.predict(race(hs), TODAY, use_model=False)
         self.assertEqual(p["verdict"], "見送り")
 
     def test_extension_is_not_axis(self):
         ext = horse(1, [run(1, margin=-0.6, dist=1200), run(1, margin=-0.5, dist=1200),
                         run(1, margin=-0.5, dist=1200)])
         hs = [ext, strong(2, first=2), strong(3, first=9)] + [middle(u) for u in range(4, 13)]
-        p = L.predict(race(hs), TODAY)
+        p = L.predict(race(hs), TODAY, use_model=False)
         self.assertNotIn(1, (p.get("honmei"), p.get("taikou")))
         h1 = next(h for h in p["horses"] if h["umaban"] == 1)
         self.assertIn("距離延長", h1["axis_ng"])
@@ -83,13 +120,13 @@ class Logic(unittest.TestCase):
         # ◎も次点も逃げ馬 → ○は脚質の違う馬に替える
         hs = [strong(1, first=1), strong(2, first=1), strong(3, first=9)] + \
              [middle(u) for u in range(4, 13)]
-        p = L.predict(race(hs), TODAY)
+        p = L.predict(race(hs), TODAY, use_model=False)
         styles = {h["umaban"]: h["style"] for h in p["horses"]}
         self.assertFalse(styles[p["honmei"]] == styles[p["taikou"]] == "逃げ")
 
     def test_nar_waku1_penalty(self):
         hs = [strong(1, first=6, waku=1)] + [middle(u) for u in range(2, 11)]
-        p = L.predict(race(hs, center="nar", venue="大井", direction="右", cls=3.0), TODAY)
+        p = L.predict(race(hs, center="nar", venue="大井", direction="右", cls=3.0), TODAY, use_model=False)
         h1 = next(h for h in p["horses"] if h["umaban"] == 1)
         self.assertTrue(any("1枠" in m["t"] for m in h1["minus"]))
 
@@ -99,7 +136,7 @@ class Logic(unittest.TestCase):
                     kinryo=60.0)
         hs = [strong(1, first=2), strong(2, first=9), bad] + \
              [middle(u) for u in (3, 4, 6, 7, 8, 9, 10)]
-        p = L.predict(race(hs, baba="重"), TODAY)
+        p = L.predict(race(hs, baba="重"), TODAY, use_model=False)
         h5 = next(h for h in p["horses"] if h["umaban"] == 5)
         self.assertTrue(h5["cut"])
         self.assertEqual(h5["mark"], "×")
@@ -107,7 +144,7 @@ class Logic(unittest.TestCase):
     def test_ana_in_third(self):
         hs = [strong(1, first=2, ninki=1), strong(2, first=9, ninki=2)] + \
              [middle(u, m=0.8 + u * 0.03, ninki=u) for u in range(3, 13)]
-        p = L.predict(race(hs), TODAY)
+        p = L.predict(race(hs), TODAY, use_model=False)
         if p["verdict"] != "見送り":
             self.assertTrue(p["ana"])
             self.assertIn(p["ana"][0], p["aite"])
@@ -115,7 +152,7 @@ class Logic(unittest.TestCase):
     def test_course_style(self):
         # 函館ダ1700は前が残る(先行はダート平均の1.18倍、後方は半分ほど)
         hs = [strong(1, first=3), strong(2, first=12)] + [middle(u) for u in range(3, 13)]
-        p = L.predict(race(hs, venue="函館", surface="ダ", dist=1700, direction="右", cls=2), TODAY)
+        p = L.predict(race(hs, venue="函館", surface="ダ", dist=1700, direction="右", cls=2), TODAY, use_model=False)
         self.assertEqual(p["course"]["name"], "函館ダ1700")
         h = {x["umaban"]: x for x in p["horses"]}
         self.assertTrue(any("前が残りやすい" in m["t"] for m in h[1]["plus"]))
@@ -126,14 +163,14 @@ class Logic(unittest.TestCase):
         # 新潟芝1000(千直)は外枠有利・内枠不利
         hs = [horse(u, [run(3, margin=0.3, dist=1000, venue="新潟", first=5)] * 3, waku=(u + 1) // 2)
               for u in range(1, 17)]
-        p = L.predict(race(hs, venue="新潟", dist=1000, direction="直", cls=2), TODAY)
+        p = L.predict(race(hs, venue="新潟", dist=1000, direction="直", cls=2), TODAY, use_model=False)
         h = {x["umaban"]: x for x in p["horses"]}
         self.assertTrue(any("8枠有利" in m["t"] for m in h[16]["plus"]))
         self.assertTrue(any("1枠不利" in m["t"] for m in h[1]["minus"]))
 
     def test_course_only_jra(self):
         hs = [strong(1), strong(2)] + [middle(u) for u in range(3, 11)]
-        p = L.predict(race(hs, center="nar", venue="大井", direction="右", cls=3.0), TODAY)
+        p = L.predict(race(hs, center="nar", venue="大井", direction="右", cls=3.0), TODAY, use_model=False)
         self.assertNotIn("course", p)
 
     def test_course_fallback(self):
@@ -144,9 +181,9 @@ class Logic(unittest.TestCase):
 
     def test_course_kata(self):
         hs = [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in range(3, 13)]
-        p = L.predict(race(hs), TODAY)                       # 東京芝1600は堅い
+        p = L.predict(race(hs), TODAY, use_model=False)                       # 東京芝1600は堅い
         self.assertTrue(any("堅いコース" in n for n in p["notes"]))
-        p = L.predict(race(hs, venue="京都", dist=1400, direction="右"), TODAY)  # 京都芝1400は荒れやすい
+        p = L.predict(race(hs, venue="京都", dist=1400, direction="右"), TODAY, use_model=False)  # 京都芝1400は荒れやすい
         self.assertTrue(any("荒れやすいコース" in n for n in p["notes"]))
 
     def test_settle(self):

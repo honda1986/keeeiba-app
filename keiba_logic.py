@@ -153,6 +153,7 @@ TH = {
     "tan3_aite_max": 4,      # 3連単の3着候補の最大数
     "ana_ninki": 6,          # この人気以下を穴とみなす
     "kata_adj": 0.5,         # 堅いコースは2強の基準をこれだけ下げ、荒れやすいコースは上げる
+    "bet_mode": "wide",      # wide=ワイドだけ / full=3連複・3連単・馬連・ワイド(はじめの買い方)
     "course_style_k": 5.0,   # コースの脚質傾向の効き(比の対数 × これ)
     "course_waku_k": 5.0,    # コースの枠順傾向の効き
 }
@@ -542,8 +543,10 @@ def pick_marks(evs):
     return hon, first, [], ovl
 
 
-def predict(race, today=None):
-    """1レースの予想。買う/見送りの判定と、買い目まで出す。"""
+def predict(race, today=None, use_model=True, probs=None):
+    """1レースの予想。買う/見送りの判定と、買い目まで出す。
+    use_model … 3着以内の確率モデル(keiba_model)で◎○と買うレースを決める(無ければ手作りの評価)
+    probs     … 馬番 -> 3着以内の確率 を外から渡す(過去の日の検証用。先の結果で学んでいない確率)"""
     if isinstance(today, str):
         today = parse_date(today)
     horses = [h for h in race["horses"] if not h.get("scratched")]
@@ -594,6 +597,13 @@ def predict(race, today=None):
     if nodata / n > TH["max_nodata"]:
         out["reason"] = "過去走のない馬が多い(新馬・能力不明)"
         return out
+
+    # 3着以内の確率モデル(手作りの評価・加減点も材料にしている)
+    if use_model and probs is None:
+        import keiba_model as KM            # keiba_model は keiba_logic を読むので、ここで読む
+        probs = KM.probs(race, today, {"horses": res})
+    if probs:
+        return _predict_model(out, res, rb, horses, race, cs, pace, probs)
 
     hon, tai, memo, ovl = pick_marks(evs)
     if not hon:
@@ -671,10 +681,104 @@ def predict(race, today=None):
         out["notes"].append("◎は同型の多い人気の逃げ馬。過信禁物")
 
     if verdict != "見送り":
-        out["bets"] = make_bets(hon["umaban"], tai["umaban"], aite, verdict, gap12)
+        out["bets"] = (make_bets_wide(hon["umaban"], tai["umaban"], aite) if TH["bet_mode"] == "wide"
+                       else make_bets(hon["umaban"], tai["umaban"], aite, verdict, gap12))
         out["points"] = sum(len(b["combos"]) for b in out["bets"])
         out["stake"] = sum(len(b["combos"]) * b["unit"] for b in out["bets"])
     return out
+
+
+# モデルで買うレースの基準(keiba_model_meta.json の select。無ければこの値)
+MODEL_SELECT = {"t2": 0.60, "gap": 0.0, "a": 0.65}
+
+
+def model_select():
+    try:
+        import keiba_model as KM
+        _, meta = KM.load()
+        if meta and meta.get("select"):
+            s = dict(MODEL_SELECT)
+            s.update({k: v for k, v in meta["select"].items() if k in ("t2", "gap")})
+            s["a"] = s["t2"] + 0.05
+            return s
+    except Exception:
+        pass
+    return MODEL_SELECT
+
+
+def _predict_model(out, res, rb, horses, race, cs, pace, probs):
+    """確率で◎○と買うレースを決める。
+    ◎○ … 軸にできる馬(規則 15 延長などでない)のうち、3着以内の確率の上位2頭
+    相手 … 残りの確率上位2頭
+    買う … ○の確率が t2 以上で、残りの1番手との差が gap 以上(7〜8月で決め、9月〜で確かめた基準)
+    買い方 … ワイドだけ(◎-○を5点分、◎-相手・○-相手を1点ずつ)"""
+    sel = model_select()
+    for r in res:
+        r["p3"] = round(float(probs.get(r["umaban"], 0.0)), 3)
+    res.sort(key=lambda r: -r["p3"])
+    out["horses"] = res
+    out["model"] = True
+    ok = [r for r in res if not r["axis_ng"]]
+    if len(res) < 5 or len(ok) < 2:
+        out["reason"] = "軸にできる馬がいない"
+        return out
+    hon, tai = ok[0], ok[1]
+    rest = [r for r in res if r is not hon and r is not tai]
+    p1, p2, p3 = hon["p3"], tai["p3"], rest[0]["p3"]
+    out.update({"honmei": hon["umaban"], "taikou": tai["umaban"], "gap": round(p2 - p3, 3),
+                "gap12": round(p1 - p2, 3), "p3": [p1, p2, p3]})
+    hon["mark"], tai["mark"] = "◎", "○"
+    for r, m in zip(rest[:2], ("▲", "△")):
+        r["mark"] = m
+    for r in res:
+        if r["cut"] and not r["mark"]:
+            r["mark"] = "×"
+    skipped = [r for r in res[:2] if r["axis_ng"]]
+    if skipped:
+        out["notes"].append("{}番は確率では上位だが軸にしない({})".format(
+            skipped[0]["umaban"], "・".join(skipped[0]["axis_ng"])))
+    w = sorted(set(hon["weak"]) & set(tai["weak"]))
+    if w:
+        out["notes"].append("◎○の弱点が重なる({})。同じ負け方に注意".format("・".join(w)))
+    if p2 >= sel["t2"] and p2 - p3 >= sel["gap"]:
+        out["verdict"] = "A" if p2 >= sel["a"] else "B"
+        out["reason"] = "2強(○の3着内{:.0%}・3番手{:.0%})".format(p2, p3)
+    else:
+        out["verdict"] = "見送り"
+        out["reason"] = ("1強(◎{:.0%}・○{:.0%})".format(p1, p2) if p1 >= sel["t2"] and p1 - p2 >= 0.15
+                         else "混戦(○の3着内{:.0%}で基準{:.0%}に届かない)".format(p2, sel["t2"]))
+    # 規則 5・20: 人気は最後に照らすだけ
+    ninki = {h["umaban"]: h.get("ninki") for h in horses}
+    for i, r in enumerate(res):
+        nk = ninki.get(r["umaban"])
+        r["ninki"] = nk
+        if nk:
+            if nk <= 3 and i >= 5:
+                r["odds_note"] = "過剰人気?"
+            elif nk >= 6 and i <= 2:
+                r["odds_note"] = "妙味"
+    hn = ninki.get(hon["umaban"])
+    if hn and hn >= 4:
+        out["notes"].append("◎が{}番人気(市場の評価と違う。根拠を確認)".format(hn))
+    out["aite"] = [r["umaban"] for r in rest[:2]]
+    out["ana"] = []
+    if out["verdict"] != "見送り":
+        out["bets"] = make_bets_wide(hon["umaban"], tai["umaban"], out["aite"])
+        out["points"] = sum(len(b["combos"]) for b in out["bets"])
+        out["stake"] = sum(len(b["combos"]) * b["unit"] for b in out["bets"])
+    return out
+
+
+def make_bets_wide(h, t, aite):
+    """ワイドだけ(2026年1〜10月の再現で、ほかの券種より損が小さかった買い方)"""
+    a = [x for x in aite if x not in (h, t)][:2]
+    bets = [{"type": "ワイド", "role": "◎○が両方3着内", "kind": "◎-○", "combos": [sorted([h, t])], "unit": UNIT * 5}]
+    if a:
+        bets.append({"type": "ワイド", "role": "◎と相手が3着内", "kind": "◎-相手",
+                     "combos": [sorted([h, x]) for x in a], "unit": UNIT})
+        bets.append({"type": "ワイド", "role": "◎が飛んだときの保険", "kind": "○-相手",
+                     "combos": [sorted([t, x]) for x in a], "unit": UNIT})
+    return bets
 
 
 def make_bets(h, t, aite, verdict, gap12):

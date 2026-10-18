@@ -486,6 +486,40 @@ def minutes_since(iso, now):
     return (now - datetime.fromisoformat(iso)).total_seconds() / 60
 
 
+_WF = {}
+
+
+def past_probs(rid, d):
+    """過去の日の予想に使う確率。先の結果を知ったモデルで過去の成績をよく見せないため、
+    1) その月より前だけで学んだモデル(keiba/model_wf.json.gz)があればそれ
+    2) 今のモデルが学んだ期間より後の日なら今のモデル(None を返すと predict が使う)
+    3) どちらでもなければ手作りの評価(False)"""
+    if "wf" not in _WF:
+        try:
+            with gzip.open(os.path.join(OUT, "model_wf.json.gz"), "rt", encoding="utf-8") as f:
+                _WF["wf"] = json.load(f)["probs"]
+        except (OSError, ValueError, KeyError):
+            _WF["wf"] = {}
+        try:
+            import keiba_model as KM
+            _WF["end"] = json.load(open(KM.META_FILE, encoding="utf-8")).get("data_end", "")
+        except (OSError, ValueError):
+            _WF["end"] = ""
+    pw = _WF["wf"].get(rid)
+    if pw:
+        return {int(u): v for u, v in pw.items()}
+    if _WF["end"] and d > _WF["end"]:
+        return None
+    return False
+
+
+def predict_past(rc, d, today):
+    pr = past_probs(rc["id"], d)
+    if pr is False:
+        return L.predict(rc, today, use_model=False)
+    return L.predict(rc, today, probs=pr)
+
+
 def run_day(d, now, backfill=False):
     """1日分を進める。
     ふつう(当日) … 発走前は出馬表・馬柱・オッズを取って予想を作り直し、発走後は固定して結果を照合
@@ -567,7 +601,7 @@ def run_day(d, now, backfill=False):
                 if not h.get("ninki") and u in (res.get("ninki") or {}):
                     h["ninki"] = res["ninki"][u]
                     h["odds"] = (res.get("odds") or {}).get(u)
-            rc["pred"] = L.predict(rc, today)
+            rc["pred"] = predict_past(rc, d, today)
             rc["pred"]["src"] = "backfill"
             rc["pred_at"] = now.isoformat(timespec="seconds")
         if rc.get("result") and rc.get("pred"):
@@ -859,7 +893,7 @@ def repredict():
             p = rc.get("pred")
             if not rc.get("horses") or not rc.get("past_at") or (p and p.get("src") != "backfill"):
                 continue
-            rc["pred"] = L.predict(rc, today)
+            rc["pred"] = predict_past(rc, d, today)
             rc["pred"]["src"] = "backfill"
             if rc.get("result"):
                 rc["settle"] = L.settle(rc["pred"], rc["result"])

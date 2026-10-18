@@ -351,7 +351,7 @@ function card(r) {
   const p = r.pred, s = r.settle, res = r.result;
   const hv = p.horses.find(h => h.umaban === p.honmei) || {}, tv = p.horses.find(h => h.umaban === p.taikou) || {};
   const ax = (m, u, e) => `<div class="ax"><div class="n"><span class="m">${m}</span>${u} ${esc(hname(r, u))}</div>
-    <div class="s">${esc(e.style || "脚質?")} · 評価 ${e.score}</div></div>`;
+    <div class="s">${esc(e.style || "脚質?")} · ${e.p3 != null ? "3着内 " + Math.round(e.p3 * 100) + "%" : "評価 " + e.score}</div></div>`;
   const bets = p.bets.map(b => `<div class="bet ${b.hit && b.hit.length ? "hit" : ""}">
       <span class="ty">${esc(b.type)}</span>
       <span class="cb">${b.combos.map(c => c.join(b.type === "3連単" ? "→" : "-")).join("  ")}<span class="role">${esc(b.kind)} … ${esc(b.role)}</span></span>
@@ -404,12 +404,12 @@ function table(r) {
     return `<tr class="${h.cut ? "cut" : ""}"><td class="mk">${h.mark || ""}</td>
       <td class="num">${h.umaban}</td>
       <td><b>${esc(ho.name)}</b> <span class="muted">${esc(h.style || "")}</span><br>${tags}</td>
-      <td class="sc num">${h.score}</td>
+      <td class="sc num">${h.p3 != null ? Math.round(h.p3 * 100) + "%" : h.score}</td>
       <td class="odds num" style="text-align:right">${ho.ninki ? ho.ninki + "人" : "-"}<br><span class="muted">${ho.odds ?? ""}</span>
         ${h.odds_note ? `<br><span class="tag o">${esc(h.odds_note)}</span>` : ""}</td></tr>`;
   }).join("");
   return `<div style="overflow-x:auto;padding:0 8px"><table class="hs"><thead><tr><th></th><th>番</th><th>馬 / 減点・加点</th>
-    <th style="text-align:right">評価</th><th class="odds" style="text-align:right">人気</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    <th style="text-align:right;white-space:nowrap">${p.model ? "3着内" : "評価"}</th><th class="odds" style="text-align:right">人気</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 // ---------------------------------------------------------------- 収支・分析
@@ -552,7 +552,8 @@ function renderMoney() {
     ${state.mcenter === "all" && split.length > 1 ? `<div class="sec" style="margin-top:4px">中央・地方の内訳</div>${splitTbl}
       <p class="legendnote">行を押すとその分だけの収支に切り替わります。</p>` : ""}
     <p class="muted" style="font-size:12px">1点${h.unit}円で記録した買い目を、実際の払戻で計算。的中率より回収率で見る。
-      「再現」は過去の日を後から予想したもの(その日の馬柱で予想、人気は確定人気)。</p>
+      「再現」は過去の日を後から予想したもの(その日の馬柱で予想、人気は確定人気)。
+      2月以降の再現は、その月より前のレースだけで学んだモデルで予想している(先の結果は使っていない)。</p>
     ${pts.length >= 2 ? `<div class="sec">累積収支</div>${cumChart(pts)}<p class="legendnote">指でなぞると日ごとの数字が出ます。</p>` : ""}
     <div class="sec">カレンダー</div>
     <div id="mcal">${calendar(state.moneyMonth, calStat, null, "calg2")}</div>
@@ -596,15 +597,41 @@ function renderMoney() {
   wireChart(pts);
 }
 
+async function modelBox() {
+  let m = null;
+  try { m = await getJSON("../keiba_model_meta.json"); } catch (e) { return; }
+  const row = r => `<tr><td>${esc(r.label)}</td><td>${r.races}</td><td>${Math.round(r.hit * 100)}%</td>
+    <td class="${r.roi >= 1 ? "good" : "neg"}"><b>${Math.round(r.roi * 100)}%</b></td></tr>`;
+  const tbl = (name, rs) => `<div class="legendnote" style="margin-top:8px"><b>${esc(name)}</b></div>
+    <table class="tbl"><thead><tr><th>選び方(買い方はワイドだけ)</th><th>R</th><th>的中</th><th>回収率</th></tr></thead>
+    <tbody>${rs.map(row).join("")}</tbody></table>`;
+  const el = document.getElementById("modelbox");
+  if (!el) return;
+  el.innerHTML = `
+    <ul class="rules">
+      <li><b>何を出すか</b>各馬が3着以内に来る確率(LightGBM)。${esc(m.data)}で学習(${esc(m.trained)})</li>
+      <li><b>材料</b>過去5走(着差・着順・クラス・通過順・上がり・その時の人気)、出馬表(枠・斤量・馬体重・性齢)、
+        騎手・厩舎のそれまでの3着内率、コース傾向、30か条の評価(能力・加減点・軸不可・消し)。そのレースのオッズは使わない(規則20)</li>
+      <li><b>◎○</b>軸にできる馬(延長などでない。規則15)のうち確率の上位2頭。相手は残りの上位2頭</li>
+      <li><b>買うレース</b>○の確率が${Math.round(m.select.t2 * 100)}%以上(${Math.round((m.select.t2 + 0.05) * 100)}%以上はA)。足りなければ見送り(1強・混戦)</li>
+      <li><b>買い方</b>ワイドだけ。◎-○を5点分、◎-相手・○-相手を1点ずつ(1レース900円)</li>
+    </ul>
+    ${m.check && m.check["調整"] ? tbl("調整期間(7〜8月。基準を決めた期間)", m.check["調整"]) : ""}
+    ${m.check && m.check["試験"] ? tbl("試験期間(9月〜。学習にも基準にも使っていない)", m.check["試験"]) : ""}
+    <p class="legendnote">市場=同じレースで1・2番人気のワイド(確定オッズ。実際にはレース前に分からない参考値)。
+      手作りの評価より良くなり市場とも並ぶが、まだ回収率100%には届いていない。週に1回、新しい結果で学び直す。</p>`;
+}
+
 function renderRule() {
   $("#v-rule").innerHTML = `
     <div class="sec">流れ</div>
     <div class="flow"><div>全レースから、強い2頭がいるレースだけを選ぶ(A/B)。1強・混戦は見送り</div>
       <div>「来ない」馬の負け要因(距離・展開・枠・斤量・休み明け・クラス差・馬場)を探して消す</div>
-      <div>残った馬から◎○。延長の馬は軸にしない。◎○の弱点が同じなら○を替える</div>
-      <div>3連複は◎○2頭軸流し、3連単は◎⇄○の1・2着入れ替え</div>
-      <div>馬連・ワイド◎-○で別の着順も押さえ、○-相手のワイドで◎飛びに備える</div>
-      <div>3頭目に人気薄(☆)を入れて配当を狙う</div></div>
+      <div>30か条の評価も材料にした確率モデルで、軸にできる馬の上位2頭を◎○にする(延長の馬は軸にしない)</div>
+      <div>○の確率が基準に届くレースだけ買う(2強)。1強・混戦は見送り</div>
+      <div>買い方はワイドだけ: ◎-○を厚く、◎-相手・○-相手で◎飛びにも備える</div></div>
+    <div class="sec">3着以内の確率モデル(◎○と買うレースを決める)</div>
+    <div id="modelbox"><p class="muted" style="font-size:13px">モデルの情報を読み込み中…</p></div>
     <div class="sec">印</div>
     <div class="flow" style="font-size:13px">◎ 最も崩れにくい軸 / ○ ◎と違う強みの2頭目 / ▲△ 消せない相手 / ☆ 3頭目の穴 / × 消し</div>
     <div class="sec">評価の作り方</div>
@@ -630,6 +657,7 @@ function renderRule() {
       <li><b>少ない出走</b>出走が少ないコースは平均に寄せて控えめに効かせる。記事に無い距離は、その場の芝/ダート全体を半分の重みで使う</li>
     </ul>
     <p class="muted" style="font-size:12px;margin:12px 0">閾値は目安。「収支・分析」で条件別の回収率を見て、儲かる条件にレースを絞っていく。</p>`;
+  modelBox();
 }
 
 boot();

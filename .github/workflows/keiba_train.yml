@@ -1,0 +1,62 @@
+name: モデルを学び直す
+
+# 3着以内の確率モデル(keiba_model.txt)を、それまでの結果すべてで学び直す。
+# 毎週月曜の朝に自動で。手動で walkforward を on にすると、過去の日の予想も
+# 「その月より前だけで学んだモデル」で作り直す(収支の画面が先の結果を知らない成績になる)。
+
+on:
+  workflow_dispatch:
+    inputs:
+      walkforward:
+        description: '過去の日の予想も作り直す(on / off)'
+        required: false
+        default: 'off'
+  schedule:
+    - cron: '7 21 * * 0'        # 月曜 6:07(JST)
+
+concurrency:
+  group: keiba-backfill
+
+permissions:
+  contents: write
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests beautifulsoup4 numpy lightgbm
+      - run: python -m unittest test_keiba
+      - name: 学び直して保存
+        env:
+          WF: ${{ github.event.inputs.walkforward }}
+          KEIBA_CACHE: /tmp/keiba_dataset.pkl
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          ARGS="--save --rebuild"
+          [ "$WF" = "on" ] && ARGS="$ARGS --walkforward"
+          python tools/train_model.py $ARGS | tee train.log
+          if [ "$WF" = "on" ]; then
+            python keiba.py --repredict
+          fi
+          for k in 1 2 3; do
+            git add keiba_model.txt keiba_model_meta.json keiba/model_wf.json.gz keiba/days keiba/history.json 2>/dev/null
+            if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+            git commit -q -m "keiba: モデルを学び直す"
+            if git pull --rebase -X ours -q origin main; then
+              # 当日の更新を取り込んだので集計を作り直す
+              python keiba.py --history-only
+              git add keiba/history.json
+              git diff --cached --quiet || git commit -q -m "keiba: 集計を作り直す"
+              git push -q origin HEAD:main && exit 0
+            else
+              git rebase --abort 2>/dev/null || true
+            fi
+            sleep 10
+          done
+          exit 1
