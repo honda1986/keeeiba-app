@@ -413,7 +413,7 @@ function table(r) {
 // ---------------------------------------------------------------- 収支・分析
 const GROUPS = [["中央/地方","center"],["判定","verdict"],["芝/ダート","surface"],["距離","dist"],["頭数","field"],
                 ["馬場","baba"],["2強の差","gap"],["展開","pace"],["競馬場","venue"]];
-const PERIODS = [["7","7日"],["30","30日"],["month","今月"],["all","全期間"]];
+const PERIODS = [["7","7日"],["30","30日"],["month","今月"],["year","今年"],["all","全期間"]];
 
 function periodRange() {
   const ds = (state.hist?.days || []).map(d => d.date).sort();
@@ -421,6 +421,7 @@ function periodRange() {
   const last = ds[ds.length - 1];
   if (state.period === "all") return [ds[0], last];
   if (state.period === "month") return [last.slice(0, 6) + "01", last];
+  if (state.period === "year") return [last.slice(0, 4) + "0101", last];
   const t = toDate(last); t.setDate(t.getDate() - (+state.period - 1));
   return [dstr(t), last];
 }

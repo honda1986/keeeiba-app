@@ -1,20 +1,30 @@
 name: 過去の日を再現
 
 # 過去の日のレースを、その日の出馬表と「そのレースより前の過去走」だけで予想し、結果・払戻と照合する。
-# 新しい日から順に1日ずつ保存するので、途中で止まっても続きからやり直せる(済んだ日は飛ばす)。
+# 速く取るために、日付を最大 jobs 個のジョブに分けて同時に走らせ(別々のマシン)、
+# 各ジョブの中でも1日のレースを workers 本ずつ並列に取る。最後に1回だけまとめて保存する。
+# 済んだ日は飛ばすので、途中で止まってももう一度まわせば続きから再現する。
 # 予想には「再現」と印が付き、当日の予想とは分けて集計できる。人気は確定人気を使う。
 
 on:
   workflow_dispatch:
     inputs:
-      days:
-        description: '何日分さかのぼるか'
+      start:
+        description: 'いちばん古い日 YYYYMMDD'
         required: false
-        default: '30'
+        default: '20260101'
       end:
         description: 'いちばん新しい日 YYYYMMDD(空で昨日)'
         required: false
         default: ''
+      jobs:
+        description: '同時に走らせるジョブの数(最大20)'
+        required: false
+        default: '20'
+      workers:
+        description: '1ジョブで同時に取るレースの数'
+        required: false
+        default: '6'
 
 concurrency:
   group: keiba-backfill
@@ -23,49 +33,106 @@ permissions:
   contents: write
 
 jobs:
-  backfill:
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    outputs:
+      chunks: ${{ steps.p.outputs.chunks }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        env:
+          START: ${{ github.event.inputs.start }}
+          END: ${{ github.event.inputs.end }}
+          JOBS: ${{ github.event.inputs.jobs }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timedelta, timezone
+          jst = timezone(timedelta(hours=9))
+          start = os.environ.get("START") or "20260101"
+          end = os.environ.get("END") or (datetime.now(jst) - timedelta(days=1)).strftime("%Y%m%d")
+          n = max(1, min(20, int(os.environ.get("JOBS") or 20)))
+          todo, d = [], datetime.strptime(end, "%Y%m%d")
+          while d.strftime("%Y%m%d") >= start:
+              s = d.strftime("%Y%m%d")
+              try:
+                  done = json.load(open("keiba/days/%s.json" % s)).get("complete")
+              except Exception:
+                  done = False
+              if not done:
+                  todo.append(s)
+              d -= timedelta(days=1)
+          # 日付を交互に配る(中央のある土日が1つのジョブに偏らないように)
+          chunks = [{"i": i, "dates": ",".join(todo[i::n])} for i in range(n) if todo[i::n]]
+          print("再現する日", len(todo), "ジョブ", len(chunks))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("chunks=" + json.dumps(chunks) + "\n")
+          PY
+
+  fetch:
+    needs: plan
+    if: needs.plan.outputs.chunks != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        chunk: ${{ fromJson(needs.plan.outputs.chunks) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: 依存インストール
-        run: pip install requests beautifulsoup4
-      - name: テスト
-        run: python -m unittest test_keiba
-      - name: 1日ずつ再現して保存
-        env:
-          DAYS: ${{ github.event.inputs.days }}
-          END: ${{ github.event.inputs.end }}
+      - run: pip install requests beautifulsoup4
+      - name: 再現する
+        timeout-minutes: 300
+        continue-on-error: true
+        run: python keiba.py --backfill-dates "${{ matrix.chunk.dates }}" --workers "${{ github.event.inputs.workers || 6 }}" --no-history
+      - name: このジョブの日だけを渡す
+        if: always()
+        run: |
+          mkdir -p out/days out/past
+          for d in $(echo "${{ matrix.chunk.dates }}" | tr ',' ' '); do
+            [ -f keiba/days/$d.json ] && cp keiba/days/$d.json out/days/
+            [ -f keiba/past/$d.json.gz ] && cp keiba/past/$d.json.gz out/past/
+          done
+          ls out/days | wc -l
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: days-${{ matrix.chunk.i }}
+          path: out/
+          retention-days: 2
+
+  merge:
+    needs: fetch
+    if: always() && needs.fetch.result != 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests beautifulsoup4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: days-*
+          merge-multiple: true
+          path: incoming
+      - name: まとめて保存
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          DAYS="${DAYS:-30}"
-          END="${END:-$(TZ=Asia/Tokyo date -d yesterday +%Y%m%d)}"
-          START=$(date +%s)
-          LIMIT=$((330 * 60))     # ジョブの上限(350分)の前に切り上げる
-          for i in $(seq 0 $((DAYS - 1))); do
-            D=$(date -d "$END -$i day" +%Y%m%d)
-            if [ $(( $(date +%s) - START )) -gt $LIMIT ]; then
-              echo "時間切れ。$D から先は、もう一度まわすと続きから再現します"
-              break
-            fi
-            echo "===== $D ====="
-            python keiba.py --backfill-date "$D" || { echo "$D は失敗。次の日へ"; continue; }
+          for k in 1 2 3 4; do
+            git fetch -q origin main && git reset -q --hard origin/main
+            mkdir -p keiba/days keiba/past
+            cp incoming/days/*.json keiba/days/ 2>/dev/null || true
+            cp incoming/past/*.json.gz keiba/past/ 2>/dev/null || true
+            python keiba.py --history-only
             git add keiba/days keiba/past keiba/history.json
-            if git diff --cached --quiet; then
-              continue
-            fi
-            git commit -q -m "keiba: $D を再現"
-            for k in 1 2 3; do
-              # 当日の更新とぶつかったら取り込み直す(history.json は次の日の集計で作り直される)
-              if git pull --rebase -X theirs -q; then
-                git push -q && break
-              else
-                git rebase --abort 2>/dev/null || true
-              fi
-              sleep 5
-            done
+            if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+            git commit -q -m "keiba: 過去の日を再現($(ls incoming/days | wc -l)日)"
+            git push -q origin HEAD:main && exit 0
+            sleep 10
           done
+          exit 1

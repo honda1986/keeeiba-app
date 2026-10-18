@@ -28,8 +28,11 @@ import glob
 import gzip
 import json
 import os
+import random
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -43,21 +46,32 @@ SITE = {"jra": "https://race.netkeiba.com", "nar": "https://nar.netkeiba.com"}
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
       "Accept-Language": "ja"}
-WAIT = 0.4                 # 1リクエストごとの間隔(秒)
+WAIT = 0.4                 # 1リクエストごとの間隔(秒。スレッドごと)
+WORKERS = 4                # 1日のレースを同時に取る数
 CARD_REFRESH = 50          # 出馬表(馬場・取消)を取り直す間隔(分)
 ODDS_REFRESH = 20          # オッズを取り直す間隔(分)
 RESULT_AFTER = 8           # 発走から何分後に結果を見に行くか
 PAST_VER = 2               # 馬柱の読み方を直したら上げる(発走前のレースは取り直す)
 
-SESS = requests.Session()
-SESS.headers.update(UA)
+_TL = threading.local()
+
+
+def sess():
+    """スレッドごとのセッション(requests.Session はスレッド間で共有しない)"""
+    s = getattr(_TL, "s", None)
+    if s is None:
+        s = requests.Session()
+        s.headers.update(UA)
+        _TL.s = s
+    return s
 
 
 # ---------------------------------------------------------------- 取得
 def get(url, params=None, as_json=False):
-    for attempt in (1, 2, 3):
+    """取れなければ None。混んでいる(429/403/5xx)ときは待ってやり直す"""
+    for attempt in range(5):
         try:
-            r = SESS.get(url, params=params, timeout=30)
+            r = sess().get(url, params=params, timeout=30)
             time.sleep(WAIT)
             if r.status_code == 200:
                 if as_json:
@@ -67,8 +81,19 @@ def get(url, params=None, as_json=False):
                 return None
         except (requests.RequestException, ValueError):
             pass
-        time.sleep(2 * attempt)
+        time.sleep(min(60, 2 ** attempt * 2) + random.random())
+    print("取れない", url, params)
     return None
+
+
+def pmap(fn, items, workers=None):
+    """items を並列に処理する(順番は保つ)"""
+    items = list(items)
+    n = min(workers or WORKERS, len(items))
+    if n <= 1:
+        return [fn(x) for x in items]
+    with ThreadPoolExecutor(max_workers=n) as ex:
+        return list(ex.map(fn, items))
 
 
 def decode(b):
@@ -104,9 +129,9 @@ def race_ids(d):
     # 地方は race_list_sub.html にレースIDと開催ID(kaisai_id)が載る(race_list.html には無い)
     t = get(SITE["nar"] + "/top/race_list_sub.html", {"kaisai_date": d}) or ""
     ids |= set(re.findall(r"race_id=(\d{12})", t))
-    for kid in sorted(set(re.findall(r"kaisai_id=(\d{10})", t))):
-        s = get(SITE["nar"] + "/top/race_list_sub.html",
-                {"kaisai_id": kid, "kaisai_date": d}) or ""
+    kids = sorted(set(re.findall(r"kaisai_id=(\d{10})", t)))
+    for s in pmap(lambda kid: get(SITE["nar"] + "/top/race_list_sub.html",
+                                  {"kaisai_id": kid, "kaisai_date": d}) or "", kids):
         ids |= set(re.findall(r"race_id=(\d{12})", s))
     # 地方のIDは日付(MMDD)を含む。別の日が混ざらないようにする
     out = []
@@ -477,10 +502,12 @@ def run_day(d, now, backfill=False):
             races.setdefault(rid, {"id": rid})
     today = datetime.strptime(d, "%Y%m%d").date()
     iso_d = today.isoformat()
-    for rid in sorted(races):
+
+    def one(rid):
+        """1レース分(レースごとに独立しているので並列に回せる)"""
         rc = races[rid]
         if venue_of(rid) == "帯広":
-            continue
+            return
         st = start_dt(d, rc.get("start"))
         started = st is not None and now >= st
         site = SITE[center_of(rid)]
@@ -503,7 +530,7 @@ def run_day(d, now, backfill=False):
                     st = start_dt(d, rc.get("start"))
                     started = st is not None and now >= st
         if not rc.get("horses"):
-            continue
+            return
         # 馬柱(過去5走)は1回だけ。そのレースより前の走だけを使う
         if need_pred and rc.get("past_ver") != PAST_VER:
             html = get(site + "/race/shutuba_past.html", {"race_id": rid})
@@ -545,6 +572,8 @@ def run_day(d, now, backfill=False):
             rc["pred_at"] = now.isoformat(timespec="seconds")
         if rc.get("result") and rc.get("pred"):
             rc["settle"] = L.settle(rc["pred"], rc["result"])
+
+    pmap(one, sorted(races))
     if backfill:
         # 結果が取れないレース(中止・取得失敗)は2回試したらあきらめる
         todo = []
@@ -655,7 +684,7 @@ def diag(d):
     """netkeiba の応答の形をログに出す。何も保存しない。"""
     def raw(url, params=None):
         try:
-            r = SESS.get(url, params=params, timeout=30)
+            r = sess().get(url, params=params, timeout=30)
             time.sleep(WAIT)
             return r.status_code, r.content
         except requests.RequestException as e:
@@ -744,12 +773,17 @@ def diag(d):
 
 
 def main():
-    global WAIT
+    global WAIT, WORKERS
     ap = argparse.ArgumentParser()
     ap.add_argument("--date")
     ap.add_argument("--history-only", action="store_true")
     ap.add_argument("--diag", action="store_true", help="取得の診断をログに出す(保存しない)")
     ap.add_argument("--backfill-date", help="過去の日 YYYYMMDD を再現する")
+    ap.add_argument("--backfill-range", nargs=2, metavar=("START", "END"),
+                    help="START〜END(YYYYMMDD)の日を新しい日から順に再現する。済んだ日は飛ばす")
+    ap.add_argument("--backfill-dates", help="再現する日をカンマ区切りで(並列ジョブ用)")
+    ap.add_argument("--workers", type=int, help="1日のレースを同時に取る数")
+    ap.add_argument("--no-history", action="store_true", help="history.json を作らない(並列ジョブ用)")
     ap.add_argument("--repredict", action="store_true",
                     help="再現の予想を今のロジックで作り直す(保存済みの馬柱を使う。取得しない)")
     a = ap.parse_args()
@@ -757,21 +791,41 @@ def main():
         diag(a.date or datetime.now(JST).strftime("%Y%m%d"))
         return
     now = datetime.now(JST)
+    today_s = now.strftime("%Y%m%d")
+    if a.backfill_date or a.backfill_range or a.backfill_dates:
+        # 過去の日はまとめて取るので、レースを並列に取る(混んだら get が待ってやり直す)
+        WAIT = 0.15
+        WORKERS = a.workers or 8
+    elif a.workers:
+        WORKERS = a.workers
     if a.repredict:
         repredict()
-    elif a.backfill_date:
-        d = a.backfill_date
-        if d >= now.strftime("%Y%m%d"):
-            print("{} は今日以降なので再現しません".format(d))
-        elif load(day_path(d), {}).get("complete"):
-            print("{} は済み".format(d))
+    elif a.backfill_date or a.backfill_range or a.backfill_dates:
+        if a.backfill_dates:
+            dates = sorted({x for x in re.split(r"[,\s]+", a.backfill_dates) if x}, reverse=True)
         else:
-            WAIT = 0.6                 # まとめて取るので間隔を空ける
-            day = run_day(d, now, backfill=True)
-            show(day)
-    elif a.date and a.date < now.strftime("%Y%m%d"):
+            start, end = a.backfill_range or (a.backfill_date, a.backfill_date)
+            dates, d0 = [], datetime.strptime(end, "%Y%m%d")
+            while d0.strftime("%Y%m%d") >= start:
+                dates.append(d0.strftime("%Y%m%d"))
+                d0 -= timedelta(days=1)
+        for d in dates:
+            if d >= today_s:
+                print("{} は今日以降なので再現しません".format(d))
+            elif load(day_path(d), {}).get("complete"):
+                print("{} は済み".format(d))
+            else:
+                t0 = time.time()
+                day = run_day(d, datetime.now(JST), backfill=True)
+                show(day)
+                rs = [r for r in day["races"].values() if venue_of(r["id"]) != "帯広"]
+                print("  {:.0f}秒 / 出馬表なし {} / 馬柱なし {} / 結果なし {}".format(
+                    time.time() - t0, sum(1 for r in rs if not r.get("horses")),
+                    sum(1 for r in rs if r.get("horses") and not r.get("past_at")),
+                    sum(1 for r in rs if not r.get("result"))), flush=True)
+    elif a.date and a.date < today_s:
         # 過去の日を指定されたら再現として扱う(当日用の data.json は書き換えない)
-        WAIT = 0.6
+        WAIT, WORKERS = 0.15, a.workers or 8
         show(run_day(a.date, now, backfill=True))
     elif not a.history_only:
         d = a.date or now.strftime("%Y%m%d")
@@ -782,7 +836,8 @@ def main():
         day = run_day(d, now)
         save(OUT + "/data.json", day)
         show(day)
-    build_history()
+    if not a.no_history:
+        build_history()
 
 
 def repredict():
