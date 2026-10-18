@@ -316,6 +316,8 @@ def main():
         dall = lgb.Dataset(X[allm], y[allm], categorical_feature=cat)
         final = lgb.train(params, dall, int(best_iter * 1.15))
         final.save_model(M.MODEL_FILE)
+        if sp:
+            SP.save(sp)
         # 騎手・厩舎は全期間の成績を持たせる(当日の予想ではこれを使う)。乗った数が少ない人は省く
         jt_save = {k: {"base": v["base"], "by": {n: c for n, c in v["by"].items() if c[0] >= 5}}
                    for k, v in jt_all.items()}

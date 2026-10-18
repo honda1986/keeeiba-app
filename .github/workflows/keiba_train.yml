@@ -45,7 +45,7 @@ jobs:
             python keiba.py --repredict
           fi
           for k in 1 2 3; do
-            git add keiba_model.txt keiba_model_meta.json keiba/model_wf.json.gz keiba/days keiba/history.json 2>/dev/null
+            git add keiba_model.txt keiba_model_meta.json keiba_speed.json keiba/model_wf.json.gz keiba/days keiba/history.json 2>/dev/null
             if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
             git commit -q -m "keiba: モデルを学び直す"
             if git pull --rebase -X ours -q origin main; then
