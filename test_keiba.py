@@ -82,7 +82,8 @@ class Logic(unittest.TestCase):
         hs = [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in range(3, 13)]
         r = race(hs)
         probs = {u: 0.1 for u in range(1, 13)}
-        probs.update({1: 0.85, 2: 0.70, 3: 0.40, 4: 0.30})
+        sel = L.model_select()            # 基準は学び直しで変わるので、今の基準で A になる確率にする
+        probs.update({1: 0.95, 2: min(0.94, sel["a"] + 0.02), 3: 0.40, 4: 0.30})
         p = L.predict(r, TODAY, probs=probs)
         self.assertTrue(p["model"])
         self.assertEqual((p["honmei"], p["taikou"], p["aite"]), (1, 2, [3, 4]))
