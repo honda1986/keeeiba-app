@@ -353,5 +353,19 @@ class Concurrency(unittest.TestCase):
             KM._MODEL.update(saved)
 
 
+class CourseNar(unittest.TestCase):
+    def test_nar_course(self):
+        """地方のコース傾向(うまめし.com の記事から)を読める。距離が無ければ場全体"""
+        c = L.course_of({"center": "nar", "venue": "園田", "surface": "ダ", "dist": 1400})
+        if not c:
+            self.skipTest("keiba_course_nar.json が無い")
+        self.assertTrue(c["exact"])
+        self.assertGreater(c["waku_idx"][8], c["waku_idx"][1])          # 園田1400は外枠有利
+        v = L.course_of({"center": "nar", "venue": "園田", "surface": "ダ", "dist": 9999})
+        self.assertFalse(v["exact"])
+        self.assertIn("場全体", v["name"])
+        self.assertTrue(v["waku_idx"])                                   # 場全体の枠も使う
+
+
 if __name__ == "__main__":
     unittest.main()

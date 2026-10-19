@@ -38,7 +38,8 @@ STYLE_ID = {"逃げ": 0, "先行": 1, "差し": 2, "追込": 3}
 # 同じレースの中で順位・最大との差を取る特徴量
 REL = ["sc_mean", "sc_best2", "sc_last", "margin_min", "margin_mean", "rank_ratio_mean",
        "pop_mean", "pop_min", "rule_score", "rule_ability", "l3f_dev_best", "top3_rate",
-       "jockey_top3", "trainer_top3", "spd_best", "spd_best_surf", "spd_mean3", "spd_last", "l3fig_best"]
+       "jockey_top3", "trainer_top3", "spd_best", "spd_best_surf", "spd_mean3", "spd_last", "l3fig_best",
+       "spd_adj_best", "spd_adj_mean3"]
 JT_K = 30          # 騎手・厩舎の3着内率は、乗った数が少ないうちは全体の平均へ寄せる
 
 
@@ -90,6 +91,12 @@ def speed_feats(f, past, race, sp):
     lv = [x for x in lfg if x is not None]
     f["l3fig_best"] = max(lv) if lv else None
     f["l3fig_mean"] = sum(lv[:3]) / len(lv[:3]) if lv else None
+    # 競馬場ごとの目盛りのずれを足した指数(別の場から来た馬とも比べられる。地方競馬レベル順と力関係の考え方)
+    if sp.get("lvl"):
+        adj = [x + SP.level(r, sp) for x, r in zip(fig, past) if x is not None]
+        f["spd_adj_best"] = max(adj) if adj else None
+        f["spd_adj_mean3"] = sum(adj[:3]) / len(adj[:3]) if adj else None
+        f["spd_adj_last"] = adj[0] if adj and fig and fig[0] is not None else None
 
 
 def horse_feats(h, race, today, cs, n, l3f_norm, jt=None, sp=None):
@@ -144,6 +151,11 @@ def horse_feats(h, race, today, cs, n, l3f_norm, jt=None, sp=None):
     f["dist_from_best"] = dist - best["dist"] if best and best.get("dist") and dist else None
     f["same_surface"] = sum(1 for r in past if r.get("surface") == race.get("surface")) / len(past) if past else None
     f["same_venue_runs"] = sum(1 for r in past if r.get("venue") == race.get("venue"))
+    # 移籍・場の変化(地方の記事: 中央からの移籍馬、他場から来た馬)
+    f["same_venue_last"] = (1 if past[0].get("venue") == race.get("venue") else 0) if past else None
+    f["jra_share"] = sum(1 for r in past if r.get("center") == "jra") / len(past) if past else None
+    f["from_jra"] = (1 if center == "nar" and past[0].get("center") == "jra" else 0) if past else None
+    f["n_venues"] = len({r.get("venue") for r in past}) if past else None
     d0 = L.parse_date(last.get("date")) if last.get("date") else None
     f["rest_days"] = (today - d0).days if d0 and today else None
     f["kinryo"] = h.get("kinryo")
@@ -165,6 +177,7 @@ def horse_feats(h, race, today, cs, n, l3f_norm, jt=None, sp=None):
     f["surface"] = 0 if race.get("surface") == "芝" else 1
     f["baba"] = BABA.get((race.get("baba") or "良")[:1], 0)
     f["venue"] = VENUE_ID.get(race.get("venue"))
+    f["final_race"] = 1 if "ファイナル" in (race.get("name") or "") else 0     # 高知ファイナルなど(荒れやすい)
     # コース傾向(中央)
     st = None
     if past:

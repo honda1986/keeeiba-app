@@ -166,6 +166,56 @@ def figure(r, table, field="t"):
     return round((s + tb["V"].get(day_key(r), 0.0) - v) * 10, 2)
 
 
+def lvl_key(r):
+    return "{}|{}".format(r.get("venue") or "?", r.get("surface") or "?")
+
+
+def fit_levels(races, table, max_days=120, rounds=30, shrink=30):
+    """競馬場ごとのレベル差(指数の上乗せ)。同じ馬が別の競馬場で続けて走ったとき、
+    指数 + レベル がほぼ同じになるように求める(地方競馬レベル順と力関係・名古屋と笠松のタイム差の考え方)。
+    芝とダートは分ける。戻り値 {"競馬場|芝ダ": 上乗せ}。平均は走った数で重みを付けて 0"""
+    from datetime import date
+    pairs, seen = [], set()
+    for _, rc in races:
+        for h in rc.get("horses") or []:
+            past = [r for r in h.get("past") or [] if usable(r)]
+            for a, b in zip(past, past[1:]):          # 新しい順なので a が後の走り
+                if lvl_key(a) == lvl_key(b) or a.get("surface") != b.get("surface"):
+                    continue
+                k = (a["date"], a["venue"], a.get("race_name"), b["date"], b["venue"], b.get("race_name"))
+                if k in seen:
+                    continue
+                seen.add(k)
+                try:
+                    da, db = date.fromisoformat(a["date"]), date.fromisoformat(b["date"])
+                except ValueError:
+                    continue
+                if (da - db).days > max_days:
+                    continue
+                fa, fb = figure(a, table), figure(b, table)
+                if fa is None or fb is None:
+                    continue
+                pairs.append((lvl_key(a), fa, lvl_key(b), fb))
+    L = {}
+    for _ in range(rounds):
+        acc = {}
+        for ka, fa, kb, fb in pairs:
+            # fa + L[ka] ≒ fb + L[kb]
+            acc.setdefault(ka, []).append(_clip(fb + L.get(kb, 0.0) - fa, 30.0))
+            acc.setdefault(kb, []).append(_clip(fa + L.get(ka, 0.0) - fb, 30.0))
+        L = {k: _mean(v, shrink, 0.0) for k, v in acc.items()}
+        n = {k: len(v) for k, v in acc.items()}
+        tot = sum(n.values())
+        m = sum(L[k] * n[k] for k in L) / tot if tot else 0.0
+        L = {k: v - m for k, v in L.items()}
+    return {k: round(v, 2) for k, v in L.items()}, len(pairs)
+
+
+def level(r, table):
+    """その走りの競馬場のレベル(表に無ければ 0)"""
+    return (table or {}).get("lvl", {}).get(lvl_key(r), 0.0)
+
+
 def extend(table, recs, center_of=None):
     """表に無い日の馬場差を、集めた走り(当日の出馬表の馬柱など)から足す。基準・クラスの差はそのまま"""
     if not table:

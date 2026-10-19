@@ -533,19 +533,23 @@ function card(r) {
   </article>`;
 }
 
-// コース傾向(中央。titanic-online.com の2021〜2025年の集計)
+// コース傾向(中央は titanic-online.com の2021〜2025年の集計、地方はうまめし.com の記事)
 function courseBox(c) {
   if (!c) return "";
   const t = c.text || {};
+  const nar = !!c.source;
   const tag = (v, good) => v ? `<span class="tag ${good ? "p" : "o"}">${esc(v)}</span>` : "";
   const fav = c.fav_top3 != null ? `1・2番人気の3着内率 ${Math.round(c.fav_top3 * 100)}%` : "";
-  const rows = [["脚質", t["脚質傾向"]], ["枠", t["枠順傾向"]], ["ペース", t["ペース傾向"]],
-                ["向く馬", t["向いている馬"]], ["向かない馬", t["不向きな馬"]], ["最初のコーナーまで", t["最初のコーナーまで"]]]
+  const rows = (nar ? [["このコース", t["特徴"]], ["この場", t["場"]]]
+    : [["脚質", t["脚質傾向"]], ["枠", t["枠順傾向"]], ["ペース", t["ペース傾向"]],
+       ["向く馬", t["向いている馬"]], ["向かない馬", t["不向きな馬"]], ["最初のコーナーまで", t["最初のコーナーまで"]]])
     .filter(([, v]) => v);
+  const src = nar ? "出典: うまめし.com 地方競馬場の特徴と傾向(記事を読んでまとめたもの。数字は記事の集計)"
+    : "出典: titanic-online.com 競馬場の特徴(2021〜2025年)";
   return `<details class="more cbox"><summary>コース傾向 ${esc(c.name)} ${tag(c.lean, true)}${tag(c.waku, true)}${tag(c.kata, c.kata === "堅い")}</summary>
     <div class="note" style="padding-top:2px">${rows.map(([k, v]) => `<div><b>${esc(k)}</b> ${esc(v)}</div>`).join("")}
     ${fav ? `<div>${esc(fav)}(${c.races}レース)</div>` : ""}
-    <div class="muted">${c.exact ? "" : "この距離の記事が無いので、この場の芝/ダート全体の傾向。"}出典: titanic-online.com 競馬場の特徴(2021〜2025年)</div></div></details>`;
+    <div class="muted">${c.exact || nar ? "" : "この距離の記事が無いので、この場の芝/ダート全体の傾向。"}${src}</div></div></details>`;
 }
 
 // 見送ったレースで、もし◎-○のワイドを買っていたら(参考。収支には入れない)。結果が無ければ null

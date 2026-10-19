@@ -87,6 +87,9 @@ def speed_table(races, until=None):
     base = [r for r in recs if not until or r["date"].replace("-", "") < until]
     tb = SP.fit(base)
     SP.extend(tb, recs)
+    # 競馬場ごとの目盛りのずれ(同じ馬が別の場で続けて走ったときの指数の差)。基準と同じ期間だけで求める
+    tb["lvl"], n = SP.fit_levels([(d, rc) for d, rc in races if not until or d < until], tb)
+    print("競馬場のずれ", len(tb["lvl"]), "場 / 組", n)
     return tb
 
 
