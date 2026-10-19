@@ -13,12 +13,15 @@
   "dist",
   "dist_change",
   "dist_from_best",
+  "final_race",
+  "from_jra",
   "jockey_n",
   "jockey_top3",
   "jockey_top3_dhi",
   "jockey_top3_dlo",
   "jockey_top3_dmean",
   "jockey_top3_rank",
+  "jra_share",
   "kinryo",
   "kinryo_change",
   "l3f_dev_best",
@@ -46,6 +49,7 @@
   "margin_min_rank",
   "n",
   "n_runs",
+  "n_venues",
   "nige_rate",
   "pop_last",
   "pop_mean",
@@ -81,6 +85,7 @@
   "rule_score_dmean",
   "rule_score_rank",
   "same_surface",
+  "same_venue_last",
   "same_venue_runs",
   "sc_best2",
   "sc_best2_dhi",
@@ -99,6 +104,17 @@
   "sc_mean_dmean",
   "sc_mean_rank",
   "sex",
+  "spd_adj_best",
+  "spd_adj_best_dhi",
+  "spd_adj_best_dlo",
+  "spd_adj_best_dmean",
+  "spd_adj_best_rank",
+  "spd_adj_last",
+  "spd_adj_mean3",
+  "spd_adj_mean3_dhi",
+  "spd_adj_mean3_dlo",
+  "spd_adj_mean3_dmean",
+  "spd_adj_mean3_rank",
   "spd_best",
   "spd_best_dhi",
   "spd_best_dist",
@@ -4642,10 +4658,10 @@
    }
   }
  },
- "trained": "2026-10-18",
+ "trained": "2026-10-19",
  "data_end": "20261018",
  "data": "20260101〜20261018 13488レース",
- "iterations": 934,
+ "iterations": 806,
  "select": {
   "t2": 0.75,
   "gap": 0.0,
@@ -4655,62 +4671,62 @@
  "check_wf": {
   "選ぶ": {
    "label": "モデル",
-   "races": 509,
-   "hit": 0.686,
-   "stake": 50900,
-   "ret": 46150,
-   "roi": 0.907
+   "races": 577,
+   "hit": 0.681,
+   "stake": 57700,
+   "ret": 52620,
+   "roi": 0.912
   },
   "確かめ": {
    "label": "モデル",
-   "races": 96,
-   "hit": 0.719,
-   "stake": 9600,
-   "ret": 8860,
-   "roi": 0.923
+   "races": 118,
+   "hit": 0.754,
+   "stake": 11800,
+   "ret": 11380,
+   "roi": 0.964
   },
   "確かめ 市場": {
    "label": "市場 同じレースで1・2番人気",
-   "races": 96,
-   "hit": 0.719,
-   "stake": 9600,
-   "ret": 8760,
-   "roi": 0.912
+   "races": 118,
+   "hit": 0.78,
+   "stake": 11800,
+   "ret": 11790,
+   "roi": 0.999
   }
  },
  "check": {
   "調整": [
    {
     "label": "手作り(今の◎○・A/B)",
-    "races": 554,
-    "hit": 0.301,
-    "stake": 55400,
-    "ret": 35290,
-    "roi": 0.637
+    "races": 562,
+    "hit": 0.319,
+    "stake": 56200,
+    "ret": 39460,
+    "roi": 0.702
    },
    {
     "label": "モデル(全レース)",
-    "races": 2104,
-    "hit": 0.362,
-    "stake": 210400,
-    "ret": 167400,
-    "roi": 0.796
+    "races": 2105,
+    "hit": 0.363,
+    "stake": 210500,
+    "ret": 167060,
+    "roi": 0.794
    },
    {
     "label": "モデル(基準で選ぶ)",
-    "races": 394,
-    "hit": 0.591,
-    "stake": 39400,
-    "ret": 35730,
-    "roi": 0.907
+    "races": 233,
+    "hit": 0.657,
+    "stake": 23300,
+    "ret": 21120,
+    "roi": 0.906
    },
    {
     "label": "市場 同じレースで1・2番人気",
-    "races": 394,
-    "hit": 0.591,
-    "stake": 39400,
-    "ret": 35220,
-    "roi": 0.894
+    "races": 233,
+    "hit": 0.682,
+    "stake": 23300,
+    "ret": 22350,
+    "roi": 0.959
    },
    {
     "label": "市場 全レースで1・2番人気",
@@ -4724,35 +4740,35 @@
   "試験": [
    {
     "label": "手作り(今の◎○・A/B)",
-    "races": 504,
-    "hit": 0.325,
-    "stake": 50400,
-    "ret": 37620,
-    "roi": 0.746
+    "races": 498,
+    "hit": 0.329,
+    "stake": 49800,
+    "ret": 37870,
+    "roi": 0.76
    },
    {
     "label": "モデル(全レース)",
-    "races": 1720,
-    "hit": 0.377,
-    "stake": 172000,
-    "ret": 134610,
-    "roi": 0.783
+    "races": 1696,
+    "hit": 0.39,
+    "stake": 169600,
+    "ret": 134870,
+    "roi": 0.795
    },
    {
     "label": "モデル(基準で選ぶ)",
-    "races": 293,
-    "hit": 0.573,
-    "stake": 29300,
-    "ret": 25690,
-    "roi": 0.877
+    "races": 212,
+    "hit": 0.646,
+    "stake": 21200,
+    "ret": 20030,
+    "roi": 0.945
    },
    {
     "label": "市場 同じレースで1・2番人気",
-    "races": 292,
-    "hit": 0.565,
-    "stake": 29200,
-    "ret": 24260,
-    "roi": 0.831
+    "races": 212,
+    "hit": 0.623,
+    "stake": 21200,
+    "ret": 19000,
+    "roi": 0.896
    },
    {
     "label": "市場 全レースで1・2番人気",
