@@ -131,7 +131,40 @@ details>summary::-webkit-details-marker{display:none}
 .datenav .d{width:auto;flex:1;font-weight:700}
 .datenav .d small{font-weight:600;color:var(--muted);margin-left:4px}
 .srcnote{font-size:12px;color:var(--ink2);background:var(--accent-bg);border:1px solid var(--accent-line);border-radius:10px;padding:8px 12px;margin-bottom:10px}
-.card.flash{outline:2px solid var(--pos);outline-offset:2px}
+.card.flash,.skipd.flash,.waitr.flash{outline:2px solid var(--pos);outline-offset:2px}
+/* 場×レース番号の表(v24 と同じ考え方。押すとそのレースへ飛ぶ) */
+.map{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 8px 6px;margin-bottom:10px;overflow-x:auto;box-shadow:var(--shadow)}
+table.grid{border-collapse:separate;border-spacing:2px}
+table.grid th{font-size:10px;color:var(--muted);font-weight:600;padding:0 1px;text-align:center}
+table.grid th.v{text-align:right;white-space:nowrap;font-size:12px;color:var(--ink2);padding-right:5px}
+.cell{width:23px;height:24px;border-radius:6px;border:1px solid var(--line);background:var(--surface2);color:var(--muted);
+  font-size:11px;font-weight:700;line-height:22px;text-align:center;padding:0;display:block;font-variant-numeric:tabular-nums}
+.cell.skip{color:var(--ink2)}
+.cell.wait{border-style:dashed;background:none}
+.cell.buy{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
+.cell.hit{background:var(--good-bg);border-color:var(--good);color:var(--good);box-shadow:0 0 0 1px var(--good)}
+.cell.lose{background:var(--neg-bg);border-color:var(--neg);color:var(--neg)}
+.cell.ref{background:var(--pos-bg);border-color:var(--pos);color:var(--pos)}
+.cell.a{border-width:2px;line-height:20px}
+.cell.cur{outline:2px solid var(--ink);outline-offset:1px}
+.legend{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:6px;font-size:11px;color:var(--muted)}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;border:1px solid var(--line);margin-right:4px;vertical-align:-1px;background:var(--surface2)}
+.legend .g-buy i{background:var(--accent-bg);border-color:var(--accent)}
+.legend .g-hit i{background:var(--good-bg);border-color:var(--good)}
+.legend .g-lose i{background:var(--neg-bg);border-color:var(--neg)}
+.legend .g-ref i{background:var(--pos-bg);border-color:var(--pos)}
+.legend .g-wait i{border-style:dashed;background:none}
+.tools{display:flex;gap:6px;margin-bottom:8px}
+.tools input{flex:1;min-width:0;background:var(--surface);color:var(--ink);border:1px solid var(--line2);border-radius:10px;
+  padding:8px 10px;font:inherit;font-size:14px}
+.tools input::placeholder{color:var(--muted)}
+.tools .clr{flex:none;width:38px;border:1px solid var(--line2);border-radius:10px;background:var(--surface);color:var(--ink2);font-size:15px}
+.chips.k{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-bottom:6px}
+.chips.k::-webkit-scrollbar{display:none}
+.chips.k .chip{flex:none}
+.chip b{margin-left:5px;font-variant-numeric:tabular-nums}
+.waitr{display:flex;gap:10px;align-items:baseline;padding:9px 14px;font-size:13px;border-bottom:1px solid var(--line)}
+.waitr .r{flex:1;color:var(--muted)}
 .cal{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px}
 .calh{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 .calh b{flex:1;text-align:center}
@@ -187,7 +220,7 @@ const fmtD = d => d ? `${d.slice(0,4)}/${+d.slice(4,6)}/${+d.slice(6,8)}(${"日�
 const BABA = {"良":"良","稍":"稍重","重":"重","不":"不良"};
 const yenK = v => { const a = Math.abs(v), sg = v > 0 ? "+" : v < 0 ? "-" : "±";
   return sg + (a >= 10000 ? (a / 10000).toFixed(a >= 100000 ? 0 : 1) + "万" : a.toLocaleString()); };
-const state = {day: null, hist: null, days: [], filter: "buy", center: "all", cache: {},
+const state = {day: null, hist: null, days: [], filter: "all", center: "all", q: "", cache: {},
                period: "year", src: "all", mcenter: "all", calMonth: null, moneyMonth: null};
 const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 // 収支の絞り込みは覚えておく(次に開いたときも同じ期間で見られるように)
@@ -196,6 +229,14 @@ try {
   for (const k of ["period", "src", "mcenter"]) if (typeof saved[k] === "string") state[k] = saved[k];
 } catch (e) { /* 覚えていなければ初期値 */ }
 const saveMoney = () => store.set("keiba-money", JSON.stringify({period: state.period, src: state.src, mcenter: state.mcenter}));
+// レースの絞り込み(状態・中央/地方)も覚えておく
+try {
+  const saved = JSON.parse(store.get("keiba-race") || "{}");
+  if (typeof saved.filter === "string") state.filter = saved.filter === "buy" ? "bought" : saved.filter;
+  if (typeof saved.center === "string") state.center = saved.center;
+} catch (e) { /* 初期値のまま */ }
+const saveRace = () => store.set("keiba-race", JSON.stringify({filter: state.filter, center: state.center}));
+const setHash = (d, rid) => { try { history.replaceState(null, "", "#d=" + d + (rid ? "&r=" + rid : "")); } catch (e) { /* 無視 */ } };
 const toDate = d => new Date(+d.slice(0,4), +d.slice(4,6) - 1, +d.slice(6,8));
 const dstr = t => `${t.getFullYear()}${String(t.getMonth()+1).padStart(2,"0")}${String(t.getDate()).padStart(2,"0")}`;
 const SRC = {live: "当日の予想", backfill: "再現"};
@@ -238,18 +279,16 @@ async function boot() {
     try { state.day = await loadDay(latest); } catch (e) { /* data.json のまま */ }
   }
   renderRace(); renderMoney(); renderRule();
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get("d") && state.days.includes(h.get("d"))) openDay(h.get("d"), h.get("r"));
 }
 
 // 日付を移る。rid があればそのレースまでスクロール
 async function openDay(d, rid) {
   try { state.day = await loadDay(d); } catch (e) { return; }
-  if (rid) { state.center = "all"; }
   renderRace(); showTab("race");
-  const el = rid && document.getElementById("r-" + rid);
-  if (el) {
-    el.scrollIntoView({block: "start"});
-    el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1600);
-  } else scrollTo(0, 0);
+  if (rid && allRaces().some(r => r.id === rid)) jumpRace(rid, false);
+  else { scrollTo(0, 0); setHash(d); }
 }
 function goDay(step) {
   const i = state.days.indexOf(state.day?.date) + step;
@@ -300,6 +339,58 @@ function races() {
   return Object.values(state.day?.races || {}).filter(r => r.pred && r.horses)
     .sort((a, b) => (a.start || "99").localeCompare(b.start || "99") || a.id.localeCompare(b.id));
 }
+// 表に出すレース(出馬表がまだのレースも「予想前」として出す。ばんえいは除く)
+function allRaces() {
+  return Object.values(state.day?.races || {}).filter(r => r.venue && r.rno && r.venue !== "帯広")
+    .sort((a, b) => (a.start || "99").localeCompare(b.start || "99") || a.id.localeCompare(b.id));
+}
+const KIND = {buy: "買い", hit: "的中", lose: "外れ", skip: "見送り", ref: "見送り・◎○なら的中", wait: "予想前"};
+function raceKind(r) {
+  const p = r.pred;
+  if (!p || !r.horses) return "wait";
+  if (p.verdict !== "見送り") return r.settle && r.result ? (r.settle.hit ? "hit" : "lose") : "buy";
+  const ref = skipRef(r);
+  return ref && ref.ret ? "ref" : "skip";
+}
+const centerOkR = r => state.center === "all" || r.center === state.center;
+function raceVisible(r) {
+  const k = raceKind(r);
+  if (state.filter !== "all") {
+    if (state.filter === "skip") { if (k !== "skip" && k !== "ref") return false; }
+    else if (state.filter === "bought") { if (!["buy", "hit", "lose"].includes(k)) return false; }
+    else if (k !== state.filter) return false;
+  }
+  if (!state.q) return true;
+  const q = state.q.replace(/\s/g, "").toLowerCase();
+  const hay = [r.venue, r.rno + "R", String(r.rno), r.start, r.name, KIND[k], r.pred?.reason,
+               ...(r.horses || []).map(h => h.name || ""), ...(r.horses || []).map(h => h.jockey || "")]
+    .join("|").replace(/\s/g, "").toLowerCase();
+  return hay.includes(q);
+}
+
+function raceMap(rs) {
+  if (!rs.length) return "";
+  const venues = [], byV = new Map();
+  for (const r of rs) {
+    if (!byV.has(r.venue)) { byV.set(r.venue, new Map()); venues.push(r.venue); }
+    byV.get(r.venue).set(r.rno, r);
+  }
+  const maxR = Math.max(12, ...rs.map(r => r.rno || 0));
+  const cols = Array.from({length: maxR}, (_, i) => i + 1);
+  const rows = venues.map(v => `<tr><th class="v" scope="row">${esc(v)}</th>${cols.map(i => {
+    const r = byV.get(v).get(i);
+    if (!r) return `<td></td>`;
+    const k = raceKind(r);
+    const a = r.pred && r.pred.verdict === "A" ? " a" : "";
+    return `<td><button class="cell ${k}${a}" data-rid="${esc(r.id)}"
+      aria-label="${esc(v)}${i}R ${esc(r.start || "")} ${KIND[k]}${a ? " A" : ""}">${i}</button></td>`;
+  }).join("")}</tr>`).join("");
+  const seen = new Set(rs.map(raceKind));
+  const lg = ["buy", "hit", "lose", "skip", "ref", "wait"].filter(k => seen.has(k))
+    .map(k => `<span class="g-${k}"><i></i>${KIND[k]}</span>`).join("");
+  return `<div class="map"><table class="grid"><thead><tr><th></th>${cols.map(i => `<th scope="col">${i}</th>`).join("")}</tr></thead>
+    <tbody>${rows}</tbody></table><div class="legend">${lg}<span>太枠はA</span></div></div>`;
+}
 
 function renderRace() {
   const el = $("#v-race");
@@ -307,13 +398,24 @@ function renderRace() {
   $("#stamp").innerHTML = d?.updated ? `更新 ${esc(d.updated.slice(5,10).replace("-","/"))} ${esc(d.updated.slice(11,16))}` : "";
   if (!d) { el.innerHTML = `<div class="empty">まだデータがありません。<br>GitHub Actions の「競馬の予想」が回ると表示されます。</div>`; return; }
   const all = races();
-  const rs = all.filter(r => state.center === "all" || r.center === state.center);
+  const rs = all.filter(centerOkR);
   const buy = rs.filter(r => r.pred.verdict !== "見送り");
   const nA = buy.filter(r => r.pred.verdict === "A").length;
   const set = rs.filter(r => r.settle && r.pred.verdict !== "見送り");
   const st = set.reduce((a, r) => a + r.settle.stake, 0), rt = set.reduce((a, r) => a + r.settle.ret, 0);
   const nback = all.filter(r => r.pred.src === "backfill").length;
   const i = state.days.indexOf(d.date);
+  const mapRs = allRaces().filter(centerOkR);
+  const cnt = {all: mapRs.length, bought: 0};
+  for (const r of mapRs) {
+    const k = raceKind(r);
+    cnt[k] = (cnt[k] || 0) + 1;
+    if (["buy", "hit", "lose"].includes(k)) cnt.bought++;
+  }
+  cnt.skip = (cnt.skip || 0) + (cnt.ref || 0);
+  const kinds = [["all", "すべて"], ["bought", "買い"], ["hit", "的中"], ["lose", "外れ"], ["skip", "見送り"],
+                 ["ref", "見送り・◎○なら的中"], ["wait", "予想前"]].filter(([k]) => k === "all" || cnt[k]);
+  if (!kinds.some(([k]) => k === state.filter)) state.filter = "all";
   el.innerHTML = `
     <div class="datenav">
       <button id="prev" aria-label="前の日" ${i <= 0 ? "disabled" : ""}>◀</button>
@@ -328,22 +430,73 @@ function renderRace() {
       <div class="tile"><div class="k">${set.length ? "収支 " + pct(rt, st) : "見送り"}</div>
         <div class="v num ${set.length ? (rt - st >= 0 ? "good" : "neg") : ""}">${set.length ? yen(rt - st) : rs.length - buy.length}</div></div>
     </div>
-    <div class="chips" role="group" aria-label="絞り込み">
-      ${[["buy","買うレース"],["all","全レース"]].map(([k,t]) => `<button class="chip" data-f="${k}" aria-pressed="${state.filter===k}">${t}</button>`).join("")}
+    <div class="chips" role="group" aria-label="中央・地方">
       ${[["all","中央+地方"],["jra","中央"],["nar","地方"]].map(([k,t]) => `<button class="chip" data-c="${k}" aria-pressed="${state.center===k}">${t}</button>`).join("")}
     </div>
-    ${buy.length ? buy.map(card).join("") : `<div class="empty">この日は買う価値のあるレース(2強)がありません。<br>見送るのも予想のうち。</div>`}
-    ${state.filter === "all" ? `<div class="sec">${skipHead(rs.filter(r => r.pred.verdict === "見送り"))}</div>
-      <div class="card">${rs.filter(r => r.pred.verdict === "見送り").map(skipRow).join("")}</div>` : ""}`;
+    ${raceMap(mapRs)}
+    <div class="tools"><input id="q" type="search" placeholder="場・レース番号・馬名・騎手でしぼる" value="${esc(state.q)}"
+      aria-label="レースをしぼる" enterkeyhint="search"><button class="clr" id="qclr" aria-label="しぼり込みを消す">✕</button></div>
+    <div class="chips k" role="group" aria-label="レースの状態">
+      ${kinds.map(([k, t]) => `<button class="chip" data-f="${k}" aria-pressed="${state.filter===k}">${t}<b>${cnt[k]}</b></button>`).join("")}
+    </div>
+    <div id="rlist"></div>`;
   $("#prev").onclick = () => goDay(-1);
   $("#next").onclick = () => goDay(1);
   $("#pick").onclick = () => { state.calMonth = d.date.slice(0, 6); openCalendar(); };
-  el.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { state.filter = b.dataset.f; renderRace(); });
-  el.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { state.center = b.dataset.c; renderRace(); });
-  el.querySelectorAll(".oddsb").forEach(b => b.onclick = () => {
+  el.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { state.filter = b.dataset.f; saveRace(); renderRace(); });
+  el.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { state.center = b.dataset.c; saveRace(); renderRace(); });
+  el.querySelectorAll(".cell[data-rid]").forEach(b => b.onclick = () => jumpRace(b.dataset.rid));
+  $("#q").oninput = e => { state.q = e.target.value; drawList(); };
+  $("#qclr").onclick = () => { state.q = ""; $("#q").value = ""; drawList(); };
+  drawList();
+}
+
+// 発走順に並べる。買うレースはカード、見送り・予想前は1行(続く行は1つの枠にまとめる)
+function drawList() {
+  const box = $("#rlist");
+  if (!box) return;
+  const shown = allRaces().filter(r => centerOkR(r) && raceVisible(r));
+  if (!shown.length) {
+    box.innerHTML = `<div class="empty">${allRaces().length ? "この条件に合うレースはありません。" : "この日はまだレースがありません。"}</div>`;
+    return;
+  }
+  const skips = shown.filter(r => ["skip", "ref"].includes(raceKind(r)));
+  let html = skips.length ? `<div class="sec">${skipHead(skips)}</div>` : "", group = "";
+  const flush = () => { if (group) { html += `<div class="card">${group}</div>`; group = ""; } };
+  for (const r of shown) {
+    const k = raceKind(r);
+    if (["buy", "hit", "lose"].includes(k)) { flush(); html += card(r); }
+    else group += k === "wait" ? waitRow(r) : skipRow(r);
+  }
+  flush();
+  box.innerHTML = html;
+  box.querySelectorAll(".oddsb").forEach(b => b.onclick = () => {
     const c = b.closest(".card,.skipd"); c.classList.toggle("showodds");
     b.textContent = c.classList.contains("showodds") ? "人気・オッズを隠す" : "人気・オッズを見る(最後に)";
   });
+}
+
+function waitRow(r) {
+  return `<div class="waitr" id="r-${esc(r.id)}"><b>${head(r)}</b><span class="r">予想前(出馬表・馬柱を取っているところ)</span></div>`;
+}
+
+// 表のマスから、そのレースへ飛ぶ(絞り込みで隠れていたら外してから開く)
+function jumpRace(rid, smooth = true) {
+  const r = allRaces().find(x => x.id === rid);
+  if (!r) return;
+  if (!centerOkR(r) || !raceVisible(r)) {
+    if (!centerOkR(r)) state.center = "all";
+    state.filter = "all"; state.q = ""; saveRace(); renderRace();
+  }
+  const node = document.getElementById("r-" + rid);
+  if (!node) return;
+  if (node.tagName === "DETAILS") node.open = true;
+  node.scrollIntoView({behavior: smooth ? "smooth" : "auto", block: "center"});
+  node.classList.add("flash"); setTimeout(() => node.classList.remove("flash"), 1600);
+  document.querySelectorAll(".cell.cur").forEach(c => c.classList.remove("cur"));
+  const c = document.querySelector(`.cell[data-rid="${rid}"]`);
+  if (c) c.classList.add("cur");
+  setHash(state.day.date, rid);
 }
 
 function head(r) {
@@ -419,7 +572,7 @@ function skipRow(r) {
   const res = r.result, ref = skipRef(r);
   const rs = res && res.order && res.order.length >= 3
     ? `<span class="rs num ${ref && ref.ret ? "hit" : ""}">${res.order.slice(0, 3).join("-")}${ref && ref.ret ? " ◎○" : ""}</span>` : "";
-  return `<details class="skipd more" style="border-top:0;border-bottom:1px solid var(--line)"><summary class="skip">
+  return `<details class="skipd more" id="r-${esc(r.id)}" style="border-top:0;border-bottom:1px solid var(--line)"><summary class="skip">
     <b>${head(r)}</b><span class="r">${esc(r.pred.reason)}</span>${rs}</summary>
     ${skipRes(r)}
     <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${r.pred.horses.length ? table(r) + `<button class="oddsb">人気・オッズを見る(最後に)</button>` : ""}</details>`;
