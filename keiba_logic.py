@@ -52,6 +52,7 @@ NAR_CLS = {"A1": 4.5, "A2": 4.0, "A3": 3.75, "A4": 3.6, "B1": 3.5, "B2": 3.0, "B
 # 脚質の数字は「そのレースでの位置取り」なので、どのコースでも逃げ・先行の成績が良く出る。
 # そのまま使わず、同じ芝/ダートの全コース平均と比べた「このコースではどれだけ得か」を使う。
 COURSE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba_course.json")
+COURSE_NAR_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba_course_nar.json")
 STYLE_MAP = {"逃げ": "逃げ", "先行": "先行", "差し": "中団", "追込": "後方"}
 COURSE_STYLES = ("逃げ", "先行", "中団", "後方")
 
@@ -109,12 +110,96 @@ def load_courses(path=COURSE_FILE):
     return out
 
 
+def _nar_index(c, avg_style, avg_fav, venue_note, exact, source):
+    """地方の1コース(または1場)の傾向。脚質は記事の率(実際の位置取り)なので、地方全体の平均との比を
+    出走数で 1 に寄せる。枠は枠ごとの3着内率をコース平均へ寄せてから比にする"""
+    n_all = sum(v[0] for v in c["waku"].values())
+    w = n_all / (n_all + 2000.0)
+    style = {}
+    for st in COURSE_STYLES:
+        r = (c["style"].get(st) or {}).get("top3")
+        if r and avg_style.get(st):
+            style[st] = round(1 + w * (r / avg_style[st] - 1), 3)
+    tt = sum(v[2] for v in c["waku"].values())
+    avg = tt / n_all if n_all else 0
+    waku = {int(k): round(_shrink(v[2], v[0], avg, 150), 3) for k, v in c["waku"].items()} if avg else {}
+    n12 = sum(c["ninki"].get(k, [0, 0, 0])[0] for k in ("1", "2"))
+    t12 = sum(c["ninki"].get(k, [0, 0, 0])[2] for k in ("1", "2"))
+    text = {}
+    if c.get("note"):
+        text["特徴"] = c["note"]
+    if exact and venue_note:
+        text["場"] = venue_note
+    return {"name": "{}{}{}".format(c["venue"], "芝" if c["surface"] == "芝" else "ダ", c["dist"] or "(場全体)"),
+            "exact": exact, "text": text, "style_idx": style, "waku_idx": waku,
+            "kata": round(_shrink(t12, n12, avg_fav, 100), 3) if n12 else 1.0,
+            "races": c["ninki"].get("1", [0])[0], "fav_top3": round(t12 / n12, 3) if n12 else None,
+            "url": c.get("url"), "source": source}
+
+
+def load_courses_nar(path=COURSE_NAR_FILE):
+    """地方の (場, 芝/ダ, 距離) -> 傾向。場全体は (場, ダ, None)。記事に無い場全体は距離ごとの数字を足して作る"""
+    try:
+        raw = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    courses, venues, source = raw.get("courses", []), {v["venue"]: v for v in raw.get("venues", [])}, raw.get("source", "")
+    for v, vc in venues.items():
+        if not vc["waku"] or not vc["style"]:
+            agg = {"waku": {}, "ninki": {}, "style": {}}
+            wsum = {}
+            for c in courses:
+                if c["venue"] == v and c["surface"] == "ダ" and c["waku"]:
+                    for part in ("waku", "ninki"):
+                        for k, x in c[part].items():
+                            y = agg[part].setdefault(k, [0, 0, 0])
+                            for i in range(3):
+                                y[i] += x[i]
+                    n = sum(x[0] for x in c["waku"].values())
+                    for st, r in c["style"].items():
+                        if r.get("top3") is not None:
+                            a = wsum.setdefault(st, [0.0, 0])
+                            a[0] += r["top3"] * n
+                            a[1] += n
+            agg["style"] = {st: {"top3": round(a[0] / a[1], 1)} for st, a in wsum.items() if a[1]}
+            for k in ("waku", "ninki", "style"):
+                if not vc[k]:
+                    vc[k] = agg[k]
+    allc = [c for c in courses if c["waku"]] or list(venues.values())
+    avg_style = {}
+    for st in COURSE_STYLES:
+        num = sum((c["style"].get(st) or {}).get("top3", 0) * sum(x[0] for x in c["waku"].values()) for c in allc
+                  if (c["style"].get(st) or {}).get("top3"))
+        den = sum(sum(x[0] for x in c["waku"].values()) for c in allc if (c["style"].get(st) or {}).get("top3"))
+        avg_style[st] = num / den if den else 0
+    n12 = sum(c["ninki"].get(k, [0, 0, 0])[0] for c in allc for k in ("1", "2"))
+    avg_fav = sum(c["ninki"].get(k, [0, 0, 0])[2] for c in allc for k in ("1", "2")) / n12 if n12 else 0
+    out = {}
+    for c in courses:
+        vc = venues.get(c["venue"]) or {}
+        if c.get("stats") == "場全体":       # 数字の無い距離は場全体の数字に、この距離の説明を付ける
+            c = dict(c, **{k: vc.get(k) or {} for k in ("waku", "ninki", "style")})
+            out[(c["venue"], c["surface"], c["dist"])] = dict(_nar_index(c, avg_style, avg_fav, vc.get("note"), False, source),
+                                                             name="{}ダ{}(数字は場全体)".format(c["venue"], c["dist"]))
+            continue
+        out[(c["venue"], c["surface"], c["dist"])] = _nar_index(c, avg_style, avg_fav, vc.get("note"), True, source)
+    for v, vc in venues.items():
+        out[(v, "ダ", None)] = _nar_index(vc, avg_style, avg_fav, None, False, source)
+    return out
+
+
 COURSES = load_courses()
+COURSES.update(load_courses_nar())
+# 地方のコース傾向を予想に使うか。学び直したモデルと一緒に入れるまでは切っておく
+# (今のモデルは地方の加減点が無い材料で学んでいるので、入れるなら学び直しが要る)。KEIBA_NAR_COURSE=1 で入れて試せる
+USE_NAR_COURSE = os.environ.get("KEIBA_NAR_COURSE", "0") == "1"
 
 
 def course_of(race):
-    """中央のレースのコース傾向(無ければ None)"""
-    if race.get("center") != "jra" or race.get("surface") not in ("芝", "ダ"):
+    """コース傾向(中央は titanic-online.com、地方はうまめし.com の記事から)。無ければ None"""
+    if race.get("surface") not in ("芝", "ダ"):
+        return None
+    if race.get("center") != "jra" and not USE_NAR_COURSE:
         return None
     return (COURSES.get((race.get("venue"), race["surface"], race.get("dist")))
             or COURSES.get((race.get("venue"), race["surface"], None)))
@@ -136,7 +221,7 @@ def course_summary(cs):
     kata = "堅い" if cs["kata"] >= 1.05 else ("荒れやすい" if cs["kata"] <= 0.95 else "標準")
     return {"name": cs["name"], "exact": cs["exact"], "lean": lean, "waku": wlean, "kata": kata,
             "kata_idx": cs["kata"], "fav_top3": cs["fav_top3"], "races": cs["races"],
-            "style_idx": si, "text": cs["text"], "url": cs["url"]}
+            "style_idx": si, "text": cs["text"], "url": cs["url"], "source": cs.get("source")}
 
 
 # ---------------------------------------------------------------- 閾値(目安)
@@ -480,9 +565,9 @@ def apply_race_context(ev, h, race, pace, n, cs=None):
 
     # 規則 19: 枠は脚質とセットで(地方は1枠が基本不利)
     um, wk = h.get("umaban") or 0, h.get("waku") or 0
-    wi = cs["waku_idx"].get(wk) if cs and cs["exact"] and wk else None
+    wi = cs["waku_idx"].get(wk) if cs and wk and cs.get("waku_idx") else None
     if wi:
-        # 中央でコースの枠順成績があるときはそれを使う(下の一般則は使わない)
+        # コースの枠順成績があるときはそれを使う(下の一般則は使わない)。地方は場全体の成績でも使う
         v = max(-2.5, min(2.5, TH["course_waku_k"] * math.log(wi)))
         if v >= 0.5:
             plus("コース傾向: {}枠有利".format(wk), v)
