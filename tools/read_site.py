@@ -3,6 +3,7 @@
 """記事を読むための一時ツール(何も保存しない。ログに出すだけ)
    python tools/read_site.py list URL [題名の正規表現]  … カテゴリをたどって記事のURLを出す
    python tools/read_site.py read URL                    … 1記事の本文を出す
+   python tools/read_site.py links URL [正規表現]        … ページの中の同じサイトへのリンクを出す(複数可)
    直接読めない(403など)ときは Wayback Machine の最新のスナップショットを読む"""
 import re
 import sys
@@ -118,9 +119,28 @@ def do_read(u):
     print("##### おわり")
 
 
+def do_links(u, pat):
+    html = get(u)
+    if not html:
+        print("読めませんでした", u)
+        return
+    soup = BeautifulSoup(html, "html.parser")
+    seen = set()
+    for a in soup.find_all("a", href=True):
+        v = orig(urljoin(addr(u), a["href"]).split("#")[0])
+        t = a.get_text(" ", strip=True)
+        if same_site(v, u) and v not in seen and re.search(pat, t + " " + v):
+            seen.add(v)
+            print("LINK", v, "|", t)
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "list":
         do_list(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ".")
+    elif sys.argv[1] == "links":
+        for u in re.split(r"[\s,]+", sys.argv[2].strip()):
+            if u:
+                do_links(u, sys.argv[3] if len(sys.argv) > 3 else ".")
     else:
         for u in re.split(r"[\s,]+", sys.argv[2].strip()):
             if u:

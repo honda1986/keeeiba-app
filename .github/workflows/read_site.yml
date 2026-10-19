@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'list(記事のURLを出す) か read(1記事を読む)'
+        description: 'list(記事のURLを出す) か read(記事を読む) か links(ページ内のリンクを出す)'
         required: true
         default: 'list'
       url:
