@@ -190,8 +190,8 @@ def load_courses_nar(path=COURSE_NAR_FILE):
 
 COURSES = load_courses()
 COURSES.update(load_courses_nar())
-# 地方のコース傾向を予想に使うか。学び直したモデルと一緒に入れるまでは切っておく
-# (今のモデルは地方の加減点が無い材料で学んでいるので、入れるなら学び直しが要る)。KEIBA_NAR_COURSE=1 で入れて試せる
+# 地方のコース傾向を予想に使うか(2026-10-19 から使う。KEIBA_NAR_COURSE=0 で切って比べられる)。
+# 切り替えたらモデルを学び直すこと(モデルは30か条の加減点も材料にしているので)
 USE_NAR_COURSE = os.environ.get("KEIBA_NAR_COURSE", "0") == "1"
 
 
