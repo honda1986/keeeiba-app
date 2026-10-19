@@ -115,6 +115,8 @@ details>summary::-webkit-details-marker{display:none}
 .oddsb{font-size:12px;color:var(--pos);font-weight:600;padding:8px 14px}
 .skip{display:flex;gap:10px;align-items:baseline;padding:9px 14px;font-size:13px}
 .skip .r{flex:1;color:var(--muted);min-width:0}
+.skip .rs{white-space:nowrap;font-size:12px;color:var(--muted)}
+.skip .rs.hit{color:var(--pos);font-weight:600}
 .sec{font-size:13px;font-weight:800;color:var(--ink2);margin:18px 0 8px}
 .tbl{width:100%;border-collapse:collapse;font-size:13px;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .tbl th{font-size:11px;color:var(--muted);font-weight:600;text-align:right;padding:6px 8px;background:var(--surface2)}
@@ -331,7 +333,7 @@ function renderRace() {
       ${[["all","中央+地方"],["jra","中央"],["nar","地方"]].map(([k,t]) => `<button class="chip" data-c="${k}" aria-pressed="${state.center===k}">${t}</button>`).join("")}
     </div>
     ${buy.length ? buy.map(card).join("") : `<div class="empty">この日は買う価値のあるレース(2強)がありません。<br>見送るのも予想のうち。</div>`}
-    ${state.filter === "all" ? `<div class="sec">見送り ${rs.length - buy.length}レース</div>
+    ${state.filter === "all" ? `<div class="sec">${skipHead(rs.filter(r => r.pred.verdict === "見送り"))}</div>
       <div class="card">${rs.filter(r => r.pred.verdict === "見送り").map(skipRow).join("")}</div>` : ""}`;
   $("#prev").onclick = () => goDay(-1);
   $("#next").onclick = () => goDay(1);
@@ -393,10 +395,43 @@ function courseBox(c) {
     <div class="muted">${c.exact ? "" : "この距離の記事が無いので、この場の芝/ダート全体の傾向。"}出典: titanic-online.com 競馬場の特徴(2021〜2025年)</div></div></details>`;
 }
 
+// 見送ったレースで、もし◎-○のワイドを買っていたら(参考。収支には入れない)。結果が無ければ null
+function skipRef(r) {
+  const p = r.pred, res = r.result;
+  if (!res || !res.order || res.order.length < 3 || !p.honmei || !p.taikou) return null;
+  const key = [p.honmei, p.taikou].sort((a, b) => a - b).join("-");
+  return {ret: ((res.payout || {})["ワイド"] || {})[key] || 0};
+}
+
+function skipRes(r) {
+  const p = r.pred, res = r.result, s = r.settle || {};
+  if (!res || !res.order || res.order.length < 3) return "";
+  const ref = skipRef(r);
+  const names = res.order.slice(0, 3).map((u, i) => `${i + 1}着 ${u} ${esc(hname(r, u))}`).join(" / ");
+  return `<div class="res">結果 <b class="num">${res.order.slice(0, 3).join("-")}</b>
+    ${ref ? ` · ◎${s.honmei_rank ?? "-"}着 ○${s.taikou_rank ?? "-"}着 · ワイド◎-○なら
+      ${ref.ret ? `<b class="good">的中 ${yen(ref.ret)}</b>` : `<span class="neg">不的中</span>`}
+      <span class="muted">(見送ったので収支には入らない)</span>` : ""}
+    <div class="muted" style="margin-top:2px">${names}</div></div>`;
+}
+
 function skipRow(r) {
+  const res = r.result, ref = skipRef(r);
+  const rs = res && res.order && res.order.length >= 3
+    ? `<span class="rs num ${ref && ref.ret ? "hit" : ""}">${res.order.slice(0, 3).join("-")}${ref && ref.ret ? " ◎○" : ""}</span>` : "";
   return `<details class="skipd more" style="border-top:0;border-bottom:1px solid var(--line)"><summary class="skip">
-    <b>${head(r)}</b><span class="r">${esc(r.pred.reason)}</span></summary>
+    <b>${head(r)}</b><span class="r">${esc(r.pred.reason)}</span>${rs}</summary>
+    ${skipRes(r)}
     <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${r.pred.horses.length ? table(r) + `<button class="oddsb">人気・オッズを見る(最後に)</button>` : ""}</details>`;
+}
+
+// 見送り欄の見出し: 結果が出たレースで、もし◎-○のワイドを買っていたら
+function skipHead(rs) {
+  const refs = rs.map(skipRef).filter(Boolean);
+  if (!refs.length) return `見送り ${rs.length}レース`;
+  const hit = refs.filter(x => x.ret).length, ret = refs.reduce((a, x) => a + x.ret, 0);
+  return `見送り ${rs.length}レース <span class="muted" style="font-weight:400">· もし◎-○のワイドを買っていたら
+    ${refs.length}レース 的中${hit} 回収率${pct(ret, refs.length * 100)}(参考)</span>`;
 }
 
 function table(r) {
