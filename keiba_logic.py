@@ -775,35 +775,52 @@ def predict(race, today=None, use_model=True, probs=None):
 
 # モデルで買うレースの基準(keiba_model_meta.json の select。無ければこの値)
 MODEL_SELECT = {"t2": 0.60, "gap": 0.0, "a": 0.65}
-# 利用者が決めた基準(2026-10-18: ○の確率75%以上)。学び直しても変えない。None なら学び直しで選んだ基準
-MODEL_SELECT_FIXED = {"t2": 0.75, "gap": 0.0}
+# 利用者が決めた基準。中央と地方は別物なので別々に決める(2026-10-19)。学び直しても変えない。None なら学び直しで選ぶ
+#   地方 … ○の確率75%以上(Aは80%以上)
+#   中央 … ◎の確率60%以上で、○の確率40〜50%(Aは◎70%以上)。○が強すぎるレースは人気どおりで配当が安く、
+#          月ごとの確率で 2〜8月 111%(204R)/ 9月〜 125%(36R)。中央はレースが少ないので当日の成績で見直す
+MODEL_SELECT_FIXED = {
+    "nar": {"t2": 0.75},
+    "jra": {"t1": 0.60, "t2": 0.40, "t2_max": 0.50, "a_p1": 0.70},
+}
 
 
-def model_select():
+def model_select(center="nar"):
+    """中央(jra)・地方(nar)の買う基準。t1=◎の下限 / t2=○の下限 / t2_max=○の上限 / gap=○と3番手の差 /
+    a=Aにする○の下限(a_p1 があれば◎の下限でAにする)"""
     if MODEL_SELECT_FIXED:
-        s = dict(MODEL_SELECT, **MODEL_SELECT_FIXED)
+        s = dict(MODEL_SELECT, t1=0.0, t2_max=1.01)
+        s.update(MODEL_SELECT_FIXED.get(center) or MODEL_SELECT_FIXED["nar"])
         s["a"] = s["t2"] + 0.05
         return s
     try:
         import keiba_model as KM
         _, meta = KM.load()
-        if meta and meta.get("select"):
-            s = dict(MODEL_SELECT)
-            s.update({k: v for k, v in meta["select"].items() if k in ("t2", "gap")})
+        sel = (meta or {}).get("select") or {}
+        sel = sel.get(center, sel)
+        if sel.get("t2") is not None:
+            s = dict(MODEL_SELECT, t1=0.0, t2_max=1.01)
+            s.update({k: v for k, v in sel.items() if k in ("t1", "t2", "t2_max", "gap", "a_p1")})
             s["a"] = s["t2"] + 0.05
             return s
     except Exception:
         pass
-    return MODEL_SELECT
+    return dict(MODEL_SELECT, t1=0.0, t2_max=1.01)
+
+
+def select_ok(sel, p1, p2, p3):
+    """基準に入るか"""
+    return p1 >= sel["t1"] and sel["t2"] <= p2 < sel["t2_max"] and p2 - p3 >= sel["gap"]
 
 
 def _predict_model(out, res, rb, horses, race, cs, pace, probs):
     """確率で◎○と買うレースを決める。
     ◎○ … 軸にできる馬(規則 15 延長などでない)のうち、3着以内の確率の上位2頭
     相手 … 残りの確率上位2頭
-    買う … ○の確率が t2 以上で、残りの1番手との差が gap 以上(7〜8月で決め、9月〜で確かめた基準)
+    買う … 中央・地方で別の基準(model_select)。地方は○の確率、中央は◎の確率と○の確率の帯で決める
     買い方 … ワイド(TH["bet_mode"]。wide1 は◎-○の1点)"""
-    sel = model_select()
+    center = "jra" if race.get("center") == "jra" else "nar"
+    sel = model_select(center)
     for r in res:
         r["p3"] = round(float(probs.get(r["umaban"], 0.0)), 3)
     res.sort(key=lambda r: -r["p3"])
@@ -831,13 +848,22 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
     w = sorted(set(hon["weak"]) & set(tai["weak"]))
     if w:
         out["notes"].append("◎○の弱点が重なる({})。同じ負け方に注意".format("・".join(w)))
-    if p2 >= sel["t2"] and p2 - p3 >= sel["gap"]:
-        out["verdict"] = "A" if p2 >= sel["a"] else "B"
-        out["reason"] = "2強(○の3着内{:.0%}・3番手{:.0%})".format(p2, p3)
+    if select_ok(sel, p1, p2, p3):
+        a = p1 >= sel["a_p1"] if sel.get("a_p1") else p2 >= sel["a"]
+        out["verdict"] = "A" if a else "B"
+        out["reason"] = ("2強(◎の3着内{:.0%}・○{:.0%}。中央の基準 ◎{:.0%}以上・○{:.0%}〜{:.0%})".format(
+            p1, p2, sel["t1"], sel["t2"], sel["t2_max"]) if center == "jra"
+            else "2強(○の3着内{:.0%}・3番手{:.0%})".format(p2, p3))
     else:
         out["verdict"] = "見送り"
-        out["reason"] = ("1強(◎{:.0%}・○{:.0%})".format(p1, p2) if p1 >= sel["t2"] and p1 - p2 >= 0.15
-                         else "混戦(○の3着内{:.0%}で基準{:.0%}に届かない)".format(p2, sel["t2"]))
+        if p1 < sel["t1"]:
+            out["reason"] = "混戦(◎の3着内{:.0%}で基準{:.0%}に届かない)".format(p1, sel["t1"])
+        elif p2 >= sel["t2_max"]:
+            out["reason"] = "人気どおり(○の3着内{:.0%}。中央は○{:.0%}〜{:.0%}だけ買う)".format(p2, sel["t2"], sel["t2_max"])
+        elif p1 >= sel["t2"] and p1 - p2 >= 0.15:
+            out["reason"] = "1強(◎{:.0%}・○{:.0%})".format(p1, p2)
+        else:
+            out["reason"] = "混戦(○の3着内{:.0%}で基準{:.0%}に届かない)".format(p2, sel["t2"])
     # 規則 5・20: 人気は最後に照らすだけ
     ninki = {h["umaban"]: h.get("ninki") for h in horses}
     for i, r in enumerate(res):

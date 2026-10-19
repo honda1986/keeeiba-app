@@ -832,6 +832,21 @@ async function modelBox() {
     <tbody>${rs.map(row).join("")}</tbody></table>`;
   const el = document.getElementById("modelbox");
   if (!el) return;
+  // 買う基準は中央・地方で別(古い形は両方同じ)
+  const sels = m.select && m.select.nar ? m.select : {nar: m.select || {}, jra: m.select || {}};
+  const chks = m.check_wf && m.check_wf.nar ? m.check_wf : (m.check_wf ? {nar: m.check_wf} : null);
+  const pct = v => Math.round(v * 100);
+  const selText = s => {
+    const t = [];
+    if (s.t1) t.push(`◎の確率${pct(s.t1)}%以上`);
+    t.push(s.t2_max && s.t2_max <= 1 ? `○の確率${pct(s.t2)}〜${pct(s.t2_max)}%` : `○の確率${pct(s.t2)}%以上`);
+    if (s.gap) t.push(`3番手との差${pct(s.gap)}ポイント以上`);
+    return t.join("・") + (s.a_p1 ? `(◎${pct(s.a_p1)}%以上はA)` : `(○${pct(s.t2 + 0.05)}%以上はA)`);
+  };
+  const chkTbl = (name, c) => c ? tbl(`${name}: 月ごとに、その月より前だけで学んだモデルで確かめた成績`, [
+      Object.assign({}, c["選ぶ"], {label: "2〜8月(基準を選んだ期間)"}),
+      Object.assign({}, c["確かめ"], {label: "9月〜(基準を選ぶのに使っていない)"}),
+      Object.assign({}, c["確かめ 市場"], {label: "9月〜 同じレースで1・2番人気"})]) : "";
   el.innerHTML = `
     <ul class="rules">
       <li><b>何を出すか</b>各馬が3着以内に来る確率(LightGBM)。${esc(m.data)}で学習(${esc(m.trained)})</li>
@@ -840,18 +855,19 @@ async function modelBox() {
         中央からの移籍・前走と同じ場か、
         騎手・厩舎のそれまでの3着内率、コース傾向(中央・地方)、30か条の評価(能力・加減点・軸不可・消し)。そのレースのオッズは使わない(規則20)</li>
       <li><b>◎○</b>軸にできる馬(延長などでない。規則15)のうち確率の上位2頭。相手は残りの上位2頭</li>
-      <li><b>買うレース</b>○の確率が${Math.round(m.select.t2 * 100)}%以上(${Math.round((m.select.t2 + 0.05) * 100)}%以上はA)${m.select.gap ? `、かつ3番手との差が${Math.round(m.select.gap * 100)}ポイント以上` : ""}。足りなければ見送り(1強・混戦)</li>
+      <li><b>買うレース</b>中央と地方は別物なので、基準を別々に決める。
+        <br><b>地方</b> ${selText(sels.nar)}
+        <br><b>中央</b> ${selText(sels.jra)}。中央は○が強すぎると人気どおりで配当が安いので、○の確率に上限を置く
+        <br>基準に入らなければ見送り(1強・混戦・人気どおり)</li>
       <li><b>買い方</b>ワイド◎-○の1点だけ(1レース100円)。2026年の再現で、相手まで買うより回収率が高かった</li>
     </ul>
-    ${m.check_wf ? tbl("月ごとに、その月より前だけで学んだモデルで確かめた成績", [
-        Object.assign({}, m.check_wf["選ぶ"], {label: "2〜8月(基準を選んだ期間)"}),
-        Object.assign({}, m.check_wf["確かめ"], {label: "9月〜(基準を選ぶのに使っていない)"}),
-        Object.assign({}, m.check_wf["確かめ 市場"], {label: "9月〜 同じレースで1・2番人気"})])
+    ${chks ? chkTbl("地方", chks.nar) + chkTbl("中央", chks.jra)
       : (m.check && m.check["試験"] ? tbl("試験期間(9月〜。学習にも基準にも使っていない)", m.check["試験"]) : "")}
     <p class="legendnote">市場=同じレースで1・2番人気のワイド(確定オッズ。実際にはレース前に分からない参考値)。
-      買うレースを選ぶ力はあるが、同じレースで2頭を選ぶのはまだ1・2番人気に届かない(特に中央)。
-      市場と食い違う馬を、タイム指数・上がり・人気馬の減点という理由で絞っても良くならなかった。
-      まだ回収率100%には届いていない。週に1回、新しい結果で学び直す。</p>`;
+      地方は○の確率が高いレースほど当たり、回収率も上がる(75%から上は横ばい)。
+      中央は○の確率で選んでも良くならず、◎がしっかりしていて○が抜けすぎていない(配当がつく)レースだけ100%を超えた。
+      中央はレースが少なく(2〜8月で約200R)、たまたまの可能性もあるので、当日の成績で見直す。
+      市場と食い違う馬を、タイム指数・上がり・人気馬の減点という理由で絞っても良くならなかった。週に1回、新しい結果で学び直す。</p>`;
 }
 
 function renderRule() {
@@ -860,7 +876,7 @@ function renderRule() {
     <div class="flow"><div>全レースから、強い2頭がいるレースだけを選ぶ(A/B)。1強・混戦は見送り</div>
       <div>「来ない」馬の負け要因(距離・展開・枠・斤量・休み明け・クラス差・馬場)を探して消す</div>
       <div>30か条の評価も材料にした確率モデルで、軸にできる馬の上位2頭を◎○にする(延長の馬は軸にしない)</div>
-      <div>○の確率が基準に届くレースだけ買う(2強)。1強・混戦は見送り</div>
+      <div>買う基準は中央と地方で別。地方は○の確率が基準に届くレース、中央は◎がしっかりしていて○が強すぎないレースだけ買う。それ以外は見送り</div>
       <div>買い方はワイド◎-○の1点だけ(◎○が両方3着内で的中)</div></div>
     <div class="sec">3着以内の確率モデル(◎○と買うレースを決める)</div>
     <div id="modelbox"><p class="muted" style="font-size:13px">モデルの情報を読み込み中…</p></div>

@@ -163,9 +163,10 @@ def evaluate(rows, p, races_by_id, pick, label):
             "roi": round(rt / st, 3) if st else 0}
 
 
-def pick_model(t2, gap, pr, axis_ok=True):
+def pick_model(t2, gap, pr, axis_ok=True, t1=0.0, t2_max=1.01):
     """アプリと同じ選び方: ◎○=軸にできる馬(延長などでない)の確率上位2頭、
-    相手=残りの確率上位2頭。○の確率が t2 以上で、残りの1番手との差が gap 以上なら買う"""
+    相手=残りの確率上位2頭。◎の確率が t1 以上、○の確率が t2 以上 t2_max 未満で、
+    残りの1番手との差が gap 以上なら買う"""
     def f(rid, rs, p):
         if (rs[0]["rid"], rs[0]["u"]) not in pr:
             return None
@@ -175,8 +176,8 @@ def pick_model(t2, gap, pr, axis_ok=True):
             return None
         h, t = ok[0], ok[1]
         rest = [r for r in o if r is not h and r is not t]
-        pt, p3 = pr[(t["rid"], t["u"])], pr[(rest[0]["rid"], rest[0]["u"])]
-        if pt < t2 or pt - p3 < gap:
+        ph, pt, p3 = pr[(h["rid"], h["u"])], pr[(t["rid"], t["u"])], pr[(rest[0]["rid"], rest[0]["u"])]
+        if ph < t1 or pt < t2 or pt >= t2_max or pt - p3 < gap:
             return None
         return h["u"], t["u"], [r["u"] for r in rest]
     return f
@@ -204,32 +205,62 @@ def load_wf():
         return None
 
 
-def check_wf(rows, races_by_id, pw, t2, gap):
-    """月ごとの確率で、基準 (t2, gap) の成績(2月〜調整期間の終わり / 試験期間 / 試験期間の市場)"""
+CENTERS = (("nar", "地方"), ("jra", "中央"))
+
+
+def of_center(rows, c):
+    """中央(jra)・地方(nar)の行だけ"""
+    v = 0 if c == "jra" else 1
+    return [x for x in rows if x["f"].get("center") == v]
+
+
+def pick_sel(sel, pr):
+    """model_select の形の基準で選ぶ"""
+    return pick_model(sel["t2"], sel.get("gap", 0.0), pr, True, sel.get("t1", 0.0), sel.get("t2_max", 1.01))
+
+
+def check_wf(rows, races_by_id, pw, sel):
+    """月ごとの確率で、基準 sel の成績(2月〜調整期間の終わり / 試験期間 / 試験期間の市場)"""
     rs_sel = [x for x in rows if x["date"] < TEST_FROM and (x["rid"], x["u"]) in pw]
     rs_chk = [x for x in rows if x["date"] >= TEST_FROM and (x["rid"], x["u"]) in pw]
-    return {"選ぶ": evaluate(rs_sel, None, races_by_id, pick_model(t2, gap, pw), "モデル"),
-            "確かめ": evaluate(rs_chk, None, races_by_id, pick_model(t2, gap, pw), "モデル"),
-            "確かめ 市場": evaluate(rs_chk, None, races_by_id, by_market(pick_model(t2, gap, pw)),
+    return {"選ぶ": evaluate(rs_sel, None, races_by_id, pick_sel(sel, pw), "モデル"),
+            "確かめ": evaluate(rs_chk, None, races_by_id, pick_sel(sel, pw), "モデル"),
+            "確かめ 市場": evaluate(rs_chk, None, races_by_id, by_market(pick_sel(sel, pw)),
                                 "市場 同じレースで1・2番人気")}
 
 
+def check_centers(rows, races_by_id, pw, sels):
+    """中央・地方それぞれの基準で、それぞれのレースだけを確かめる"""
+    return {c: check_wf(of_center(rows, c), races_by_id, pw, sels[c]) for c, _ in CENTERS}
+
+
 def show_check(chk):
-    for k, r in chk.items():
-        print("   {:<8} {:>5}R 的中{:>4.0%} 回収率{:>4.0%}".format(k, r["races"], r["hit"], r["roi"]))
+    for c, name in CENTERS:
+        if c not in chk:
+            continue
+        print("  {}".format(name))
+        for k, r in chk[c].items():
+            print("   {:<8} {:>5}R 的中{:>4.0%} 回収率{:>4.0%}".format(k, r["races"], r["hit"], r["roi"]))
+
+
+def fixed_selects():
+    """利用者が決めた中央・地方の基準(keiba_logic.MODEL_SELECT_FIXED)を model_select の形で"""
+    return {c: {k: v for k, v in L.model_select(c).items() if k in ("t1", "t2", "t2_max", "gap", "a_p1")}
+            for c, _ in CENTERS}
 
 
 def update_select(rows, races_by_id):
     """学び直さずに、基準と月ごとの確率での成績だけを keiba_model_meta.json に書き直す"""
-    fixed = L.MODEL_SELECT_FIXED
     meta = json.load(open(M.META_FILE, encoding="utf-8"))
-    t2, gap = (fixed["t2"], fixed.get("gap", 0.0)) if fixed else (meta["select"]["t2"], meta["select"]["gap"])
     pw = load_wf()
-    meta["select"].update({"t2": t2, "gap": gap})
-    if fixed:
+    if L.MODEL_SELECT_FIXED:
+        meta["select"] = fixed_selects()
         meta["select_from"] = "fixed"
-    meta["check_wf"] = check_wf(rows, races_by_id, pw, t2, gap) if pw else None
-    print("基準 t2={:.2f} gap={:.2f}".format(t2, gap))
+    sels = meta["select"]
+    if "nar" not in sels:                   # 古い形(中央・地方で同じ基準)
+        sels = {c: sels for c, _ in CENTERS}
+    meta["check_wf"] = check_centers(rows, races_by_id, pw, sels) if pw else None
+    print("基準", json.dumps(sels, ensure_ascii=False))
     if pw:
         show_check(meta["check_wf"])
     json.dump(meta, open(M.META_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
@@ -345,14 +376,17 @@ def main():
     print("  " + " / ".join("{} {:.0f}".format(k, v) for v, k in imp))
 
     wf_check, select_from = None, "valid"
+    sels = {c: {"t2": t2, "gap": gap} for c, _ in CENTERS}
     if not a.walkforward:
         # 月ごとの確率で選んだ基準があれば、それを引き継ぐ(1回の分け方で選ぶより偏りが少ない)
         try:
             old_meta = json.load(open(M.META_FILE, encoding="utf-8"))
             if old_meta.get("select_from") == "walkforward":
-                t2, gap = old_meta["select"]["t2"], old_meta["select"]["gap"]
+                sels = old_meta["select"]
+                if "nar" not in sels:
+                    sels = {c: {"t2": sels["t2"], "gap": sels["gap"]} for c, _ in CENTERS}
                 wf_check, select_from = old_meta.get("check_wf"), "walkforward"
-                print("  → 月ごとの確率で選んだ基準を引き継ぐ: t2={:.2f} gap={:.2f}".format(t2, gap))
+                print("  → 月ごとの確率で選んだ基準を引き継ぐ:", json.dumps(sels, ensure_ascii=False))
         except (OSError, ValueError, KeyError):
             pass
     if a.walkforward:
@@ -390,17 +424,18 @@ def main():
         for roi, t2w, gw, r in g2[:6]:
             print("  t2={:.2f} gap={:.2f} → {}R 的中{:.0%} 回収率{:.0%}".format(t2w, gw, r["races"], r["hit"], r["roi"]))
         _, t2, gap, _ = max((g for g in g2 if g[0] >= g2[0][0] - 0.01), key=lambda g: g[3]["races"])
-        wf_check = check_wf(rows, races_by_id, pw, t2, gap)
+        sels = {c: {"t2": t2, "gap": gap} for c, _ in CENTERS}
+        wf_check = check_centers(rows, races_by_id, pw, sels)
         select_from = "walkforward"
         print("  → 使う基準: t2={:.2f} gap={:.2f}".format(t2, gap))
         show_check(wf_check)
-    # 利用者が決めた基準があれば、それを使う(成績は月ごとの確率で出し直す)
+    # 利用者が決めた基準があれば、それを使う(中央・地方で別。成績は月ごとの確率で出し直す)
     if L.MODEL_SELECT_FIXED:
-        t2, gap = L.MODEL_SELECT_FIXED["t2"], L.MODEL_SELECT_FIXED.get("gap", 0.0)
+        sels = fixed_selects()
         select_from = "fixed"
         pw = pw if a.walkforward else load_wf()
-        wf_check = check_wf(rows, races_by_id, pw, t2, gap) if pw else None
-        print("\n  → 利用者が決めた基準を使う: t2={:.2f} gap={:.2f}".format(t2, gap))
+        wf_check = check_centers(rows, races_by_id, pw, sels) if pw else None
+        print("\n  → 利用者が決めた基準を使う:", json.dumps(sels, ensure_ascii=False))
         if wf_check:
             show_check(wf_check)
 
@@ -418,7 +453,7 @@ def main():
                 "data_end": races[-1][0],
                 "data": "{}〜{} {}レース".format(races[0][0], races[-1][0], len(races)),
                 "iterations": int(best_iter * 1.15),
-                "select": {"t2": t2, "gap": gap, "axis_ok": axis_ok},
+                "select": sels,
                 "select_from": select_from,
                 "check_wf": wf_check,
                 "check": {k: v for k, v in out.items()},

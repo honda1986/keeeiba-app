@@ -79,22 +79,32 @@ class Logic(unittest.TestCase):
         self.assertEqual((p["bets"][0]["unit"], p["stake"]), (500, 900))
 
     def test_model_mode(self):
-        # 確率を外から渡す: ◎○は軸にできる馬の上位2頭、買うのは○が基準以上のとき
+        # 確率を外から渡す: ◎○は軸にできる馬の上位2頭。買う基準は中央と地方で別
         hs = [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in range(3, 13)]
-        r = race(hs)
         probs = {u: 0.1 for u in range(1, 13)}
-        sel = L.model_select()            # 基準は学び直しで変わるので、今の基準で A になる確率にする
+        # 地方: ○の確率が基準以上なら買う
+        nar = race(hs, center="nar")
+        sel = L.model_select("nar")       # 基準は学び直しで変わるので、今の基準で A になる確率にする
         probs.update({1: 0.95, 2: min(0.94, sel["a"] + 0.02), 3: 0.40, 4: 0.30})
-        p = L.predict(r, TODAY, probs=probs)
+        p = L.predict(nar, TODAY, probs=probs)
         self.assertTrue(p["model"])
         self.assertEqual((p["honmei"], p["taikou"], p["aite"]), (1, 2, [3, 4]))
         self.assertEqual(p["verdict"], "A")
         self.assertEqual({b["type"] for b in p["bets"]}, {"ワイド"})
-        # ○が基準に届かない → 見送り(1強)
-        probs[2] = 0.45
-        p = L.predict(r, TODAY, probs=probs)
+        probs[2] = 0.45                   # ○が基準に届かない → 見送り(1強)
+        p = L.predict(nar, TODAY, probs=probs)
         self.assertEqual(p["verdict"], "見送り")
         self.assertIn("1強", p["reason"])
+        # 中央: ◎の下限と○の帯の中だけ買う
+        jra = race(hs)
+        sj = L.model_select("jra")
+        mid = (sj["t2"] + sj["t2_max"]) / 2
+        probs.update({1: 0.95, 2: mid, 3: 0.20, 4: 0.15})
+        self.assertIn(L.predict(jra, TODAY, probs=probs)["verdict"], ("A", "B"))
+        probs[2] = min(0.94, sj["t2_max"] + 0.05)   # ○が帯より強い → 見送り
+        self.assertEqual(L.predict(jra, TODAY, probs=probs)["verdict"], "見送り")
+        probs.update({1: max(0.0, sj["t1"] - 0.05), 2: mid - 0.06})   # ◎が下限に届かない → 見送り
+        self.assertEqual(L.predict(jra, TODAY, probs=probs)["verdict"], "見送り")
         # 延長の馬は確率が高くても軸にしない
         ext = horse(5, [run(1, margin=-0.6, dist=1200)] * 3)
         r2 = race([ext] + [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in (3, 4, 6, 7, 8, 9, 10)])
