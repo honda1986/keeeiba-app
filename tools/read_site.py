@@ -91,18 +91,20 @@ def do_read(u):
         print("読めませんでした")
         return
     soup = BeautifulSoup(html, "html.parser")
-    for t in soup(["script", "style", "noscript", "iframe", "nav", "footer", "aside", "form"]):
+    for t in soup(["script", "style", "noscript", "iframe", "nav", "footer", "aside", "form", "header"]):
         t.decompose()
     h1 = soup.find("h1")
     print("##### 記事", u)
     print("##### 題名", h1.get_text(" ", strip=True) if h1 else "")
     body = (soup.select_one(".entry-content") or soup.select_one(".post_content")
-            or soup.select_one(".post-content") or soup.select_one("article") or soup.select_one("main"))
+            or soup.select_one(".post-content") or soup.select_one("article") or soup.select_one("main")
+            or soup.select_one("#main") or soup.select_one("#contents") or soup.select_one(".contents")
+            or soup.body)            # 決まった入れ物が無いサイトはページ全体から拾う
     if not body:
         print("本文が見つかりません")
         return
-    for el in body.find_all(["h2", "h3", "h4", "p", "li", "tr", "figcaption"]):
-        if el.name in ("p", "h2", "h3", "h4") and el.find_parent(["li", "tr"]):
+    for el in body.find_all(["h1", "h2", "h3", "h4", "h5", "p", "li", "tr", "dt", "dd", "figcaption"]):
+        if el.name in ("p", "h2", "h3", "h4", "h5", "dt", "dd") and el.find_parent(["li", "tr"]):
             continue
         if el.name == "li" and el.find_parent("li"):
             continue
@@ -111,7 +113,8 @@ def do_read(u):
         else:
             t = re.sub(r"\s+", " ", el.get_text(" ", strip=True))
         if t:
-            print({"h2": "## ", "h3": "### ", "h4": "#### ", "tr": "| ", "li": "- "}.get(el.name, "") + t)
+            print({"h1": "# ", "h2": "## ", "h3": "### ", "h4": "#### ", "h5": "##### ", "tr": "| ", "li": "- ",
+                   "dt": "* "}.get(el.name, "") + t)
     print("##### おわり")
 
 
