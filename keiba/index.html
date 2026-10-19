@@ -527,7 +527,8 @@ function card(r) {
     <div class="bets">${bets}
       <div class="total"><span>${p.points}点</span><span>${yen(p.stake)}</span></div></div>
     ${res && res.order ? `<div class="res">結果 <b class="num">${res.order.slice(0,3).join("-")}</b>
-      ${s ? ` · ◎${s.honmei_rank ?? "-"}着 ○${s.taikou_rank ?? "-"}着 · ${s.hit ? `<b class="good">的中 ${yen(s.ret)}</b>` : `<span class="neg">不的中</span>`}` : ""}</div>` : ""}
+      ${s ? ` · ◎${s.honmei_rank ?? "-"}着 ○${s.taikou_rank ?? "-"}着 · ${s.hit ? `<b class="good">的中 ${yen(s.ret)}</b>` : `<span class="neg">不的中</span>`}` : ""}
+      ${altLine(r)}</div>` : ""}
     <details class="more"><summary>全馬の評価(来ない理由)</summary>${table(r)}
       <button class="oddsb">人気・オッズを見る(最後に)</button></details>
   </article>`;
@@ -550,6 +551,17 @@ function courseBox(c) {
     <div class="note" style="padding-top:2px">${rows.map(([k, v]) => `<div><b>${esc(k)}</b> ${esc(v)}</div>`).join("")}
     ${fav ? `<div>${esc(fav)}(${c.races}レース)</div>` : ""}
     <div class="muted">${c.exact || nar ? "" : "この距離の記事が無いので、この場の芝/ダート全体の傾向。"}${src}</div></div></details>`;
+}
+
+// 同じ◎○で、ほかの買い方を1点100円で買っていたら(参考)。払戻表にその券種が無ければ出さない
+function altLine(r) {
+  const p = r.pred, pay = (r.result || {}).payout || {};
+  if (!p.honmei || !p.taikou || !r.result || (r.result.order || []).length < 3) return "";
+  const pair = [p.honmei, p.taikou].sort((a, b) => a - b).join("-");
+  const xs = [["馬連", pair, "馬連◎-○"], ["馬単", p.honmei + "-" + p.taikou, "馬単◎→○"], ["単勝", String(p.honmei), "単勝◎"]]
+    .filter(([t]) => pay[t]).map(([t, k, label]) => { const y = pay[t][k] || 0;
+      return `${label} ${y ? `<b class="good">${yen(y)}</b>` : `<span class="muted">×</span>`}`; });
+  return xs.length ? `<div class="muted" style="margin-top:2px">ほかの買い方なら(参考): ${xs.join(" · ")}</div>` : "";
 }
 
 // 見送ったレースで、もし◎-○のワイドを買っていたら(参考。収支には入れない)。結果が無ければ null
@@ -730,6 +742,20 @@ function renderMoney() {
       <td class="${x.ret >= x.stake ? "good" : "neg"}">${yen(x.ret - x.stake)}</td>
       <td class="${x.ret >= x.stake ? "good" : "neg"}"><b>${pct(x.ret, x.stake)}</b></td></tr>`).join("")}</tbody></table>`;
   const srcs = [...new Set((h.races || []).map(r => r.src))];
+  // 買い方をくらべる(同じ◎○を1点100円ずつ。払戻表にその券種が無いレースは数えない)
+  const ALT = [["ワイド", "ワイド◎-○(今)"], ["馬連", "馬連◎-○"], ["馬単", "馬単◎→○"], ["単勝", "単勝◎"]];
+  const altRows = ALT.map(([k, label]) => {
+    const xs = rs.filter(r => r.alt && r.alt[k] != null);
+    const n = xs.length, ret = xs.reduce((a, r) => a + r.alt[k], 0), hitN = xs.filter(r => r.alt[k] > 0).length;
+    return {k, label, n, hit: hitN, stake: n * h.unit, ret};
+  });
+  const altMissing = rs.filter(r => r.alt && r.alt["馬単"] == null).length;
+  const altTbl = `<table class="tbl"><thead><tr><th>買い方</th><th>R</th><th>的中</th><th>収支</th><th>回収率</th></tr></thead><tbody>
+    ${altRows.map(x => `<tr><td>${x.k === "ワイド" ? "<b>" + esc(x.label) + "</b>" : esc(x.label)}</td><td>${x.n}</td><td>${pct(x.hit, x.n)}</td>
+      <td class="${x.ret >= x.stake ? "good" : "neg"}">${x.n ? yen(x.ret - x.stake) : "-"}</td>
+      <td class="${x.ret >= x.stake ? "good" : "neg"}"><b>${pct(x.ret, x.stake)}</b></td></tr>`).join("")}</tbody></table>
+    <p class="legendnote">買ったレースで、同じ◎○を1点${h.unit}円ずつ買っていたら(実際の払戻で計算)。収支に入っているのはワイドだけ。
+      ${altMissing ? `馬単の払戻をまだ取っていないレース(${altMissing}R)は馬単に数えていない。` : ""}</p>`;
 
   el.innerHTML = `
     <div class="chips" role="group" aria-label="期間" style="margin-top:12px">
@@ -749,6 +775,7 @@ function renderMoney() {
     </div>
     ${state.mcenter === "all" && split.length > 1 ? `<div class="sec" style="margin-top:4px">中央・地方の内訳</div>${splitTbl}
       <p class="legendnote">行を押すとその分だけの収支に切り替わります。</p>` : ""}
+    ${rs.some(r => r.alt) ? `<div class="sec" style="margin-top:4px">買い方をくらべる(同じ◎○)</div>${altTbl}` : ""}
     <p class="muted" style="font-size:12px">1点${h.unit}円で記録した買い目を、実際の払戻で計算。的中率より回収率で見る。
       「再現」は過去の日を後から予想したもの(その日の馬柱で予想、人気は確定人気)。
       2月以降の再現は、その月より前のレースだけで学んだモデルで予想している(先の結果は使っていない)。</p>

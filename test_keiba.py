@@ -243,6 +243,8 @@ RESULT_HTML = """<table class="RaceTable01"><tr class="HorseList"><td><div class
 <tr class="Wide"><th>ワイド</th><td class="Result"><ul><li><span>1</span></li><li><span>3</span></li></ul>
 <ul><li><span>3</span></li><li><span>9</span></li></ul><ul><li><span>1</span></li><li><span>9</span></li></ul></td>
 <td class="Payout"><span>400円<br>900円<br>700円</span></td></tr>
+<tr class="Umatan"><th>馬単</th><td class="Result"><ul><li><span>3</span></li><li><span>1</span></li></ul></td>
+<td class="Payout"><span>2,560円</span></td></tr>
 <tr class="Tan3"><th>3連単</th><td class="Result"><ul><li><span>3</span></li><li><span>1</span></li><li><span>9</span></li></ul></td>
 <td class="Payout"><span>12,340円</span></td></tr></table>"""
 
@@ -305,6 +307,10 @@ class Parse(unittest.TestCase):
         self.assertEqual(r["payout"]["馬連"], {"1-3": 1230})
         self.assertEqual(r["payout"]["ワイド"], {"1-3": 400, "3-9": 900, "1-9": 700})
         self.assertEqual(r["payout"]["3連単"], {"3-1-9": 12340})
+        self.assertEqual(r["payout"]["馬単"], {"3-1": 2560})                 # 馬単は着順どおり
+        # ほかの買い方(参考): ◎3 ○1 なら馬連・馬単は的中、単勝は払戻表に無いので None
+        self.assertEqual(K.alt_bets({"honmei": 3, "taikou": 1}, r), {"ワイド": 400, "馬連": 1230, "馬単": 2560, "単勝": None})
+        self.assertEqual(K.alt_bets({"honmei": 1, "taikou": 3}, r)["馬単"], 0)  # 逆の順は外れ
         self.assertEqual((r["ninki"]["3"], r["odds"]["3"]), (8, 15.8))
 
     def test_center(self):

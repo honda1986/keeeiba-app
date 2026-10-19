@@ -26,7 +26,7 @@ on:
         required: false
         default: '6'
       mode:
-        description: 'predict(予想と結果を再現) / past(馬柱だけを今の読み方で取り直す)'
+        description: 'predict(予想と結果を再現) / past(馬柱だけを今の読み方で取り直す) / result(結果・払戻だけを取り直す)'
         required: false
         default: 'predict'
 
@@ -62,7 +62,11 @@ jobs:
               s = d.strftime("%Y%m%d")
               try:
                   day = json.load(open("keiba/days/%s.json" % s))
-                  if os.environ.get("MODE") == "past":
+                  if os.environ.get("MODE") == "result":
+                      # 払戻表に馬単が無いレースが残っている日だけ
+                      done = all("馬単" in (r.get("result") or {}).get("payout", {}) for r in day["races"].values()
+                                 if (r.get("result") or {}).get("payout") and r["id"][4:6] != "65")
+                  elif os.environ.get("MODE") == "past":
                       # 馬柱の読み方が古いレースが残っている日だけ
                       import re
                       ver = int(re.search(r"PAST_VER = (\d+)", open("keiba.py").read()).group(1))
@@ -71,7 +75,7 @@ jobs:
                   else:
                       done = day.get("complete")
               except Exception:
-                  done = os.environ.get("MODE") == "past"
+                  done = os.environ.get("MODE") in ("past", "result")
               if not done:
                   todo.append(s)
               d -= timedelta(days=1)
@@ -103,6 +107,7 @@ jobs:
         run: |
           EXTRA=""
           [ "${{ github.event.inputs.mode }}" = "past" ] && EXTRA="--refetch-past"
+          [ "${{ github.event.inputs.mode }}" = "result" ] && EXTRA="--refetch-result"
           python keiba.py --backfill-dates "${{ matrix.chunk.dates }}" --workers "${{ github.event.inputs.workers || 6 }}" --no-history $EXTRA
       - name: このジョブの日だけを渡す
         if: always()

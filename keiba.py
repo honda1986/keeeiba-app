@@ -357,8 +357,9 @@ def fetch_odds(rid):
     return out
 
 
-PAY = {"Tansho": ("単勝", 1), "Umaren": ("馬連", 2), "Wide": ("ワイド", 2),
+PAY = {"Tansho": ("単勝", 1), "Umaren": ("馬連", 2), "Wide": ("ワイド", 2), "Umatan": ("馬単", 2),
        "Fuku3": ("3連複", 3), "Tan3": ("3連単", 3)}
+ORDERED = ("馬単", "3連単")      # 着順どおりの組で払い戻す券種
 
 
 def parse_result(html):
@@ -413,7 +414,7 @@ def parse_result(html):
         combos = [nums[i:i + k] for i in range(0, len(nums) - k + 1, k)]
         d = {}
         for c, y in zip(combos, yen):
-            c = c if typ == "3連単" else sorted(c)
+            c = c if typ in ORDERED else sorted(c)
             d["-".join(str(x) for x in c)] = y
         pay[typ] = d
     return {"order": order, "payout": pay, "ninki": ninki, "odds": odds}
@@ -547,6 +548,30 @@ def refetch_past(d, now):
     left = sum(1 for r in day["races"].values() if r.get("horses") and r.get("past_ver") != PAST_VER
                and venue_of(r["id"]) != "帯広")
     print("{} 馬柱を取り直した {} / 残り {}".format(d, n, left), flush=True)
+
+
+def refetch_result(d, now):
+    """結果(払戻)を今の読み方で取り直す。馬単の払戻が無い日に使う(予想はそのまま、照合はやり直す)"""
+    day = load_day(d)
+
+    def one(rid):
+        rc = day["races"][rid]
+        res = rc.get("result") or {}
+        if not res or "馬単" in (res.get("payout") or {}) or venue_of(rid) == "帯広":
+            return 0
+        html = get(SITE[center_of(rid)] + "/race/result.html", {"race_id": rid})
+        new = parse_result(html) if html else None
+        if not new or len(new["order"]) < 3 or not new["payout"]:
+            return 0
+        rc["result"] = new
+        if rc.get("pred"):
+            rc["settle"] = L.settle(rc["pred"], new)
+        return 1
+    n = sum(pmap(one, sorted(day["races"])))
+    save_day(d, day)
+    left = sum(1 for r in day["races"].values() if r.get("result") and "馬単" not in (r["result"].get("payout") or {})
+               and venue_of(r["id"]) != "帯広")
+    print("{} 結果を取り直した {} / 残り {}".format(d, n, left), flush=True)
 
 
 def predict_past(rc, d, today):
@@ -688,6 +713,18 @@ def bet_key(b):
     return b["type"] + ("(◎飛び保険)" if "飛" in b["role"] else "")
 
 
+def alt_bets(p, res):
+    """同じ◎○で、買い方を変えて1点100円で買っていたらの払戻(参考)。払戻表にその券種が無ければ None
+    ワイド ◎-○(今の買い方) / 馬連 ◎-○ / 馬単 ◎→○ / 単勝 ◎"""
+    pay = res.get("payout") or {}
+    h, t = p.get("honmei"), p.get("taikou")
+    if not h or not t:
+        return {}
+    pair = "-".join(str(x) for x in sorted((h, t)))
+    keys = {"ワイド": pair, "馬連": pair, "馬単": "{}-{}".format(h, t), "単勝": str(h)}
+    return {typ: ((pay.get(typ) or {}).get(k, 0) * L.UNIT // 100 if typ in pay else None) for typ, k in keys.items()}
+
+
 def build_history():
     """日別ファイルから、期間で絞れる形の成績を作る。
     days  … 日ごとの合計と、印・負けパターンの集計(アプリが期間で足し合わせる)
@@ -755,7 +792,8 @@ def build_history():
                 "baba": "道悪" if (rc.get("baba") or "良") in L.HEAVY else "良・稍",
                 "gap": gap_band(p.get("gap") or 0), "pace": (p.get("pace") or {}).get("pace", "?"),
                 "stake": s["stake"], "ret": s["ret"], "hit": s["hit"],
-                "hr": s.get("honmei_rank"), "tr": s.get("taikou_rank"), "bets": bt})
+                "hr": s.get("honmei_rank"), "tr": s.get("taikou_rank"), "bets": bt,
+                "alt": alt_bets(p, rc.get("result") or {})})
         days.append(row)
     hist = {"updated": datetime.now(JST).isoformat(timespec="seconds"), "unit": L.UNIT,
             "days": days, "races": races}
@@ -869,6 +907,8 @@ def main():
     ap.add_argument("--workers", type=int, help="1日のレースを同時に取る数")
     ap.add_argument("--refetch-past", action="store_true",
                     help="--backfill-dates の日の馬柱だけを今の読み方で取り直す(予想はそのまま)")
+    ap.add_argument("--refetch-result", action="store_true",
+                    help="--backfill-dates の日の結果(払戻)だけを今の読み方で取り直す(予想はそのまま)")
     ap.add_argument("--no-history", action="store_true", help="history.json を作らない(並列ジョブ用)")
     ap.add_argument("--repredict", action="store_true",
                     help="再現の予想を今のロジックで作り直す(保存済みの馬柱を使う。取得しない)")
@@ -896,9 +936,9 @@ def main():
                 dates.append(d0.strftime("%Y%m%d"))
                 d0 -= timedelta(days=1)
         for d in dates:
-            if a.refetch_past:
+            if a.refetch_past or a.refetch_result:
                 if d < today_s:
-                    refetch_past(d, datetime.now(JST))
+                    (refetch_past if a.refetch_past else refetch_result)(d, datetime.now(JST))
                 continue
             if d >= today_s:
                 print("{} は今日以降なので再現しません".format(d))

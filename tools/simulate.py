@@ -15,7 +15,7 @@ UNIT = 100
 
 
 def key(typ, c):
-    return "-".join(str(x) for x in (c if typ == "3連単" else sorted(c)))
+    return "-".join(str(x) for x in (c if typ in ("3連単", "馬単") else sorted(c)))
 
 
 def ret_of(bets, pay):
