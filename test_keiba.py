@@ -91,6 +91,10 @@ class Logic(unittest.TestCase):
         self.assertEqual((p["honmei"], p["taikou"], p["aite"]), (1, 2, [3, 4]))
         self.assertEqual(p["verdict"], "A")
         self.assertEqual({b["type"] for b in p["bets"]}, {"ワイド"})
+        small = race(hs[:sel["n_min"] - 1], center="nar")   # 少頭数は確率が高くても買わない
+        p = L.predict(small, TODAY, probs=probs)
+        self.assertEqual(p["verdict"], "見送り")
+        self.assertIn("少頭数", p["reason"])
         probs[2] = 0.45                   # ○が基準に届かない → 見送り(1強)
         p = L.predict(nar, TODAY, probs=probs)
         self.assertEqual(p["verdict"], "見送り")

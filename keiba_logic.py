@@ -776,18 +776,19 @@ def predict(race, today=None, use_model=True, probs=None):
 # モデルで買うレースの基準(keiba_model_meta.json の select。無ければこの値)
 MODEL_SELECT = {"t2": 0.60, "gap": 0.0, "a": 0.65}
 # 利用者が決めた基準。中央と地方は別物なので別々に決める(2026-10-19)。学び直しても変えない。None なら学び直しで選ぶ
-#   地方 … ○の確率75%以上(Aは80%以上)
+#   地方 … ○の確率75%以上(Aは80%以上)で、9頭以上。8頭以下はワイドの配当が安く、月ごとの確率で
+#          8頭以下 2〜8月 85%(219R)/ 9月〜 90%(48R)、9頭以上 96%(323R)/ 104%(65R)(2026-10-20)
 #   中央 … ◎の確率60%以上で、○の確率40〜50%(Aは◎70%以上)。○が強すぎるレースは人気どおりで配当が安く、
 #          月ごとの確率で 2〜8月 111%(204R)/ 9月〜 125%(36R)。中央はレースが少ないので当日の成績で見直す
 MODEL_SELECT_FIXED = {
-    "nar": {"t2": 0.75},
+    "nar": {"t2": 0.75, "n_min": 9},
     "jra": {"t1": 0.60, "t2": 0.40, "t2_max": 0.50, "a_p1": 0.70},
 }
 
 
 def model_select(center="nar"):
     """中央(jra)・地方(nar)の買う基準。t1=◎の下限 / t2=○の下限 / t2_max=○の上限 / gap=○と3番手の差 /
-    a=Aにする○の下限(a_p1 があれば◎の下限でAにする)"""
+    n_min=頭数の下限 / a=Aにする○の下限(a_p1 があれば◎の下限でAにする)"""
     if MODEL_SELECT_FIXED:
         s = dict(MODEL_SELECT, t1=0.0, t2_max=1.01)
         s.update(MODEL_SELECT_FIXED.get(center) or MODEL_SELECT_FIXED["nar"])
@@ -800,7 +801,7 @@ def model_select(center="nar"):
         sel = sel.get(center, sel)
         if sel.get("t2") is not None:
             s = dict(MODEL_SELECT, t1=0.0, t2_max=1.01)
-            s.update({k: v for k, v in sel.items() if k in ("t1", "t2", "t2_max", "gap", "a_p1")})
+            s.update({k: v for k, v in sel.items() if k in ("t1", "t2", "t2_max", "gap", "n_min", "a_p1")})
             s["a"] = s["t2"] + 0.05
             return s
     except Exception:
@@ -808,9 +809,10 @@ def model_select(center="nar"):
     return dict(MODEL_SELECT, t1=0.0, t2_max=1.01)
 
 
-def select_ok(sel, p1, p2, p3):
-    """基準に入るか"""
-    return p1 >= sel["t1"] and sel["t2"] <= p2 < sel["t2_max"] and p2 - p3 >= sel["gap"]
+def select_ok(sel, p1, p2, p3, n=99):
+    """基準に入るか(n=頭数)"""
+    return (p1 >= sel["t1"] and sel["t2"] <= p2 < sel["t2_max"] and p2 - p3 >= sel["gap"]
+            and n >= sel.get("n_min", 0))
 
 
 def _predict_model(out, res, rb, horses, race, cs, pace, probs):
@@ -848,7 +850,7 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
     w = sorted(set(hon["weak"]) & set(tai["weak"]))
     if w:
         out["notes"].append("◎○の弱点が重なる({})。同じ負け方に注意".format("・".join(w)))
-    if select_ok(sel, p1, p2, p3):
+    if select_ok(sel, p1, p2, p3, len(horses)):
         a = p1 >= sel["a_p1"] if sel.get("a_p1") else p2 >= sel["a"]
         out["verdict"] = "A" if a else "B"
         out["reason"] = ("2強(◎の3着内{:.0%}・○{:.0%}。中央の基準 ◎{:.0%}以上・○{:.0%}〜{:.0%})".format(
@@ -856,7 +858,9 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
             else "2強(○の3着内{:.0%}・3番手{:.0%})".format(p2, p3))
     else:
         out["verdict"] = "見送り"
-        if p1 < sel["t1"]:
+        if len(horses) < sel.get("n_min", 0) and sel["t2"] <= p2:
+            out["reason"] = "少頭数({}頭。{}頭以下はワイドの配当が安いので買わない)".format(len(horses), sel["n_min"] - 1)
+        elif p1 < sel["t1"]:
             out["reason"] = "混戦(◎の3着内{:.0%}で基準{:.0%}に届かない)".format(p1, sel["t1"])
         elif p2 >= sel["t2_max"]:
             out["reason"] = "人気どおり(○の3着内{:.0%}。中央は○{:.0%}〜{:.0%}だけ買う)".format(p2, sel["t2"], sel["t2_max"])
