@@ -185,6 +185,8 @@ def parse_header(soup, rid):
     race["slope"] = vi[2] if vi else None
     m = re.search(r"馬場\s*:\s*(良|稍重|稍|重|不良|不)", d1)
     race["baba"] = m.group(1)[0] if m else None
+    m = re.search(r"天候\s*:\s*(晴|曇|小雨|雨|小雪|雪)", d1)
+    race["tenko"] = m.group(1) if m else None
     grade = None
     for g, lv in (("Icon_GradeType1", 8), ("Icon_GradeType2", 7), ("Icon_GradeType3", 6)):
         if soup.select_one(".RaceName ." + g) or soup.select_one(".RaceName." + g):

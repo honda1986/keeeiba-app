@@ -1,0 +1,43 @@
+name: 気象データを取る
+
+# 競馬場ごとの気温・湿度・雨量・天気(Open-Meteo)を keiba_weather.json に貯める。
+# 過去の分をまとめて取るとき用(毎日の直近と予報は「競馬の予想」が取る)。
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: '過去データの最初の日 YYYY-MM-DD'
+        required: false
+        default: '2022-01-01'
+
+concurrency:
+  group: keiba-backfill
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - name: 取って保存
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          python tools/fetch_weather.py --start "${{ github.event.inputs.start || '2022-01-01' }}" --recent
+          for k in 1 2 3 4; do
+            git add keiba_weather.json
+            if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+            git commit -q -m "keiba: 気象データ"
+            git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep 10
+          done
+          exit 1
