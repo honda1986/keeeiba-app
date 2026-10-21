@@ -352,6 +352,27 @@ class Centers(unittest.TestCase):
         self.assertEqual(self.ids({"race.netkeiba.com": "<html></html>"}), [])   # 開催が無い日
 
 
+class Weather(unittest.TestCase):
+    """気象の材料(既定では使わないが、作り方は確かめておく)"""
+
+    def test_feats(self):
+        import datetime
+        import keiba_weather as KW
+        row = [[10 + i, 60, 1.0 if i < 2 else 0.0, 61 if i < 2 else 0] for i in range(10)]   # 8〜17時
+        wx = {"hours": list(range(8, 18)), "data": {"東京": {"20261018": row, "20260801": [[30, 70, 0, 0]] * 10,
+                                                          "20260105": [[5, 40, 0, 0]] * 10}}}
+        self.assertEqual(KW.at(wx, "東京", "2026-10-18", "15:40"), (18, 60, 0, 2.0))   # 16時の値、朝からの雨 2mm
+        self.assertEqual(KW.code_kind(61), 2)
+        past = [{"venue": "東京", "date": "2026-08-01", "rank": 1, "n": 10},
+                {"venue": "東京", "date": "2026-01-05", "rank": 10, "n": 10},
+                {"venue": "大井", "date": "2026-01-06", "rank": 1, "n": 10}]       # 中央の外は数えない
+        f = {}
+        KW.feats(f, past, {"venue": "東京", "start": "15:40"}, datetime.date(2026, 10, 18), wx)
+        self.assertEqual((f["wx_temp"], f["wx_n"]), (18, 2))
+        self.assertAlmostEqual(f["wx_hot_rr"], 0.45)       # 暑い日は着順の比が平均より 0.45 良い
+        self.assertAlmostEqual(f["wx_cold_rr"], -0.45)
+
+
 class Speed(unittest.TestCase):
     def test_track_variant(self):
         """同じコースで、速い日に走った馬は馬場差の分だけ割り引かれる"""

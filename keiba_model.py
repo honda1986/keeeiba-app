@@ -27,12 +27,15 @@ import threading
 
 import keiba_logic as L
 import keiba_speed as SP
+import keiba_weather as KW
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_FILE = os.path.join(HERE, "keiba_model.txt")
 META_FILE = os.path.join(HERE, "keiba_model_meta.json")
 
 BABA = {"良": 0, "稍": 1, "重": 2, "不": 3}
+# 気象の材料(気温・湿度・雨量・天気)。2026-10-22 に試したが良くならなかったので、既定では使わない(1 で使う)
+USE_WX = os.environ.get("KEIBA_WX", "0") == "1"
 VENUE_ID = {v: i for i, v in enumerate(sorted(L.VENUES))}
 STYLE_ID = {"逃げ": 0, "先行": 1, "差し": 2, "追込": 3}
 # 同じレースの中で順位・最大との差を取る特徴量
@@ -195,6 +198,8 @@ def horse_feats(h, race, today, cs, n, l3f_norm, jt=None, sp=None):
     f["trainer_top3"], f["trainer_n"] = jt_rate(jt.get("trainer"), jt_name(h, "trainer"))
     if sp:
         speed_feats(f, past, race, sp)
+    if USE_WX:
+        KW.feats(f, past, race, today)          # 気温・湿度・雨量・天気(keiba_weather.json)
     return f
 
 
