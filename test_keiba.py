@@ -332,6 +332,26 @@ class Parse(unittest.TestCase):
         self.assertEqual(K.venue_of("202644101801"), "大井")
 
 
+class Centers(unittest.TestCase):
+    """2026-10-21 から中央だけ。一覧が取れない(メンテナンス)と開催が無い日を分ける"""
+
+    def ids(self, pages):
+        get, K.get = K.get, lambda url, params=None, as_json=False: pages.get(url.split("/")[2])
+        try:
+            return K.race_ids("20261025")
+        finally:
+            K.get = get
+
+    def test_jra_only(self):
+        self.assertEqual(K.CENTERS, ("jra",))
+        page = 'race_id=202605040811 race_id=202644102501 kaisai_id=2026441025'
+        self.assertEqual(self.ids({"race.netkeiba.com": page, "nar.netkeiba.com": page}), ["202605040811"])
+
+    def test_list_failure_is_not_empty_day(self):
+        self.assertIsNone(self.ids({}))                                  # 503 などで取れない
+        self.assertEqual(self.ids({"race.netkeiba.com": "<html></html>"}), [])   # 開催が無い日
+
+
 class Speed(unittest.TestCase):
     def test_track_variant(self):
         """同じコースで、速い日に走った馬は馬場差の分だけ割り引かれる"""

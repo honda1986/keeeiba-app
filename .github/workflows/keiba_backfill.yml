@@ -12,7 +12,7 @@ on:
       start:
         description: 'いちばん古い日 YYYYMMDD'
         required: false
-        default: '20260101'
+        default: '20240101'
       end:
         description: 'いちばん新しい日 YYYYMMDD(空で昨日)'
         required: false
@@ -54,7 +54,7 @@ jobs:
           import json, os
           from datetime import datetime, timedelta, timezone
           jst = timezone(timedelta(hours=9))
-          start = os.environ.get("START") or "20260101"
+          start = os.environ.get("START") or "20240101"
           end = os.environ.get("END") or (datetime.now(jst) - timedelta(days=1)).strftime("%Y%m%d")
           n = max(1, min(20, int(os.environ.get("JOBS") or 20)))
           todo, d = [], datetime.strptime(end, "%Y%m%d")
@@ -63,15 +63,15 @@ jobs:
               try:
                   day = json.load(open("keiba/days/%s.json" % s))
                   if os.environ.get("MODE") == "result":
-                      # 払戻表に馬単が無いレースが残っている日だけ
+                      # 払戻表に馬単が無いレースが残っている日だけ(中央だけ。地方は2026-10-21にやめた)
                       done = all("馬単" in (r.get("result") or {}).get("payout", {}) for r in day["races"].values()
-                                 if (r.get("result") or {}).get("payout") and r["id"][4:6] != "65")
+                                 if (r.get("result") or {}).get("payout") and int(r["id"][4:6]) < 30)
                   elif os.environ.get("MODE") == "past":
                       # 馬柱の読み方が古いレースが残っている日だけ
                       import re
                       ver = int(re.search(r"PAST_VER = (\d+)", open("keiba.py").read()).group(1))
                       done = all(r.get("past_ver") == ver for r in day["races"].values()
-                                 if r.get("horses") and r["id"][4:6] != "65")
+                                 if r.get("horses") and int(r["id"][4:6]) < 30)
                   else:
                       done = day.get("complete")
               except Exception:

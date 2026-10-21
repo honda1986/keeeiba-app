@@ -53,6 +53,8 @@ WORKERS = 4                # 1日のレースを同時に取る数
 CARD_REFRESH = 50          # 出馬表(馬場・取消)を取り直す間隔(分)
 ODDS_REFRESH = 20          # オッズを取り直す間隔(分)
 RESULT_AFTER = 8           # 発走から何分後に結果を見に行くか
+# 予想する中央・地方(2026-10-21: 中央だけに絞る。地方は取らない・予想しない・収支に出さない)
+CENTERS = tuple(c for c in os.environ.get("KEIBA_CENTERS", "jra").split(",") if c)
 PAST_VER = 3               # 馬柱の読み方を直したら上げる(発走前のレースは取り直す)。3: 走破タイムを足した
 
 _TL = threading.local()
@@ -124,28 +126,33 @@ def venue_of(rid):
 
 
 def race_ids(d):
-    """その日の中央・地方のレースID"""
-    ids = set()
-    t = get(SITE["jra"] + "/top/race_list_sub.html", {"kaisai_date": d}) or ""
-    ids |= set(re.findall(r"race_id=(\d{12})", t))
-    # 地方は race_list_sub.html にレースIDと開催ID(kaisai_id)が載る(race_list.html には無い)
-    t = get(SITE["nar"] + "/top/race_list_sub.html", {"kaisai_date": d}) or ""
-    ids |= set(re.findall(r"race_id=(\d{12})", t))
-    kids = sorted(set(re.findall(r"kaisai_id=(\d{10})", t)))
-    for s in pmap(lambda kid: get(SITE["nar"] + "/top/race_list_sub.html",
-                                  {"kaisai_id": kid, "kaisai_date": d}) or "", kids):
-        ids |= set(re.findall(r"race_id=(\d{12})", s))
+    """その日の対象(CENTERS)のレースID。一覧が取れなかったら None(開催が無い日は [])"""
+    ids, ok = set(), True
+    if "jra" in CENTERS:
+        t = get(SITE["jra"] + "/top/race_list_sub.html", {"kaisai_date": d})
+        ok = ok and t is not None
+        ids |= set(re.findall(r"race_id=(\d{12})", t or ""))
+    if "nar" in CENTERS:
+        # 地方は race_list_sub.html にレースIDと開催ID(kaisai_id)が載る(race_list.html には無い)
+        t = get(SITE["nar"] + "/top/race_list_sub.html", {"kaisai_date": d})
+        ok = ok and t is not None
+        t = t or ""
+        ids |= set(re.findall(r"race_id=(\d{12})", t))
+        kids = sorted(set(re.findall(r"kaisai_id=(\d{10})", t)))
+        for s in pmap(lambda kid: get(SITE["nar"] + "/top/race_list_sub.html",
+                                      {"kaisai_id": kid, "kaisai_date": d}) or "", kids):
+            ids |= set(re.findall(r"race_id=(\d{12})", s))
     # 地方のIDは日付(MMDD)を含む。別の日が混ざらないようにする
     out = []
     for rid in ids:
-        if not venue_of(rid) or venue_of(rid) == "帯広":     # ばんえいは対象外
+        if not venue_of(rid) or venue_of(rid) == "帯広" or center_of(rid) not in CENTERS:   # ばんえいは対象外
             continue
         if center_of(rid) == "nar" and (rid[:4] != d[:4] or rid[6:10] != d[4:8]):
             continue
         if center_of(rid) == "jra" and rid[:4] != d[:4]:
             continue
         out.append(rid)
-    return sorted(out)
+    return sorted(out) if ok else None
 
 
 # ---------------------------------------------------------------- パース
@@ -531,7 +538,8 @@ def refetch_past(d, now):
 
     def one(rid):
         rc = day["races"][rid]
-        if not rc.get("horses") or rc.get("past_ver") == PAST_VER or venue_of(rid) == "帯広":
+        if (not rc.get("horses") or rc.get("past_ver") == PAST_VER or venue_of(rid) == "帯広"
+                or center_of(rid) not in CENTERS):
             return 0
         html = get(SITE[center_of(rid)] + "/race/shutuba_past.html", {"race_id": rid})
         if not html:
@@ -546,7 +554,7 @@ def refetch_past(d, now):
     n = sum(pmap(one, sorted(day["races"])))
     save_day(d, day)
     left = sum(1 for r in day["races"].values() if r.get("horses") and r.get("past_ver") != PAST_VER
-               and venue_of(r["id"]) != "帯広")
+               and venue_of(r["id"]) != "帯広" and center_of(r["id"]) in CENTERS)
     print("{} 馬柱を取り直した {} / 残り {}".format(d, n, left), flush=True)
 
 
@@ -557,7 +565,7 @@ def refetch_result(d, now):
     def one(rid):
         rc = day["races"][rid]
         res = rc.get("result") or {}
-        if not res or "馬単" in (res.get("payout") or {}) or venue_of(rid) == "帯広":
+        if not res or "馬単" in (res.get("payout") or {}) or venue_of(rid) == "帯広" or center_of(rid) not in CENTERS:
             return 0
         html = get(SITE[center_of(rid)] + "/race/result.html", {"race_id": rid})
         new = parse_result(html) if html else None
@@ -570,7 +578,7 @@ def refetch_result(d, now):
     n = sum(pmap(one, sorted(day["races"])))
     save_day(d, day)
     left = sum(1 for r in day["races"].values() if r.get("result") and "馬単" not in (r["result"].get("payout") or {})
-               and venue_of(r["id"]) != "帯広")
+               and venue_of(r["id"]) != "帯広" and center_of(r["id"]) in CENTERS)
     print("{} 結果を取り直した {} / 残り {}".format(d, n, left), flush=True)
 
 
@@ -590,10 +598,10 @@ def run_day(d, now, backfill=False):
     races = day["races"]
     if not races or minutes_since(day.get("list_at"), now) > (10 ** 8 if backfill else 180):
         ids = race_ids(d)
-        print("{} レース一覧 {}件".format(d, len(ids)))
-        if ids:
+        print("{} レース一覧 {}".format(d, "取れない" if ids is None else "{}件".format(len(ids))))
+        if ids is not None:
             day["list_at"] = now.isoformat(timespec="seconds")
-        for rid in ids:
+        for rid in ids or []:
             races.setdefault(rid, {"id": rid})
     today = datetime.strptime(d, "%Y%m%d").date()
     iso_d = today.isoformat()
@@ -601,7 +609,7 @@ def run_day(d, now, backfill=False):
     def one(rid):
         """1レース分(レースごとに独立しているので並列に回せる)"""
         rc = races[rid]
-        if venue_of(rid) == "帯広":
+        if venue_of(rid) == "帯広" or center_of(rid) not in CENTERS:
             return
         st = start_dt(d, rc.get("start"))
         started = st is not None and now >= st
@@ -654,7 +662,7 @@ def run_day(d, now, backfill=False):
     def two(rid):
         """予想。当日は発走後に固定。過去の日は予想が無いときだけ作る(人気は確定人気)"""
         rc = races[rid]
-        if venue_of(rid) == "帯広" or not rc.get("horses"):
+        if venue_of(rid) == "帯広" or center_of(rid) not in CENTERS or not rc.get("horses"):
             return
         st = start_dt(d, rc.get("start"))
         started = st is not None and now >= st
@@ -684,12 +692,13 @@ def run_day(d, now, backfill=False):
         # 結果が取れないレース(中止・取得失敗)は2回試したらあきらめる
         todo = []
         for r in races.values():
-            if venue_of(r["id"]) == "帯広" or r.get("result"):
+            if venue_of(r["id"]) == "帯広" or center_of(r["id"]) not in CENTERS or r.get("result"):
                 continue
             r["tries"] = r.get("tries", 0) + 1
             if r["tries"] < 2:
                 todo.append(r["id"])
-        day["complete"] = bool(races) and not todo
+        # 開催の無い日(一覧は取れて対象のレースが0件)も済みにする
+        day["complete"] = (bool(races) or bool(day.get("list_at"))) and not todo
     day["updated"] = now.isoformat(timespec="seconds")
     return save_day(d, day)
 
@@ -746,7 +755,7 @@ def build_history():
                "src": [], "stats": {}, "races_c": {}, "buy_c": {}}
         for rid, rc in sorted(day.get("races", {}).items()):
             p = rc.get("pred")
-            if not p:
+            if not p or center_of(rid) not in CENTERS:
                 continue
             row["races"] += 1
             center = "中央" if rc.get("center") == "jra" else "地方"
@@ -837,7 +846,7 @@ def diag(d):
               len(set(re.findall(r"race_id=(\d{12})", t))), sorted(set(re.findall(r"kaisai_id=(\d+)", t)))[:8]))
         print("  links:", sorted(set(re.findall(r'href="([^"]*race[^"]*)"', t)))[:12])
     print("==== 中央の一覧", d)
-    ids = race_ids(d)
+    ids = race_ids(d) or []
     print(" ", len(ids), ids[:3], ids[-3:])
     jra = [x for x in ids if center_of(x) == "jra"]
     nar = [x for x in ids if center_of(x) == "nar"]
@@ -874,7 +883,7 @@ def diag(d):
                 print("   tr:", [(td.get("class"), txt(td)[:20]) for td in tr.find_all("td")][:8])
     # 前日(過去のレース)が取れるか
     y = (datetime.strptime(d, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-    yid = race_ids(y)
+    yid = race_ids(y) or []
     print("==== 前日", y, len(yid), "レース")
     for rid in [x for x in yid if center_of(x) == "jra"][-1:] + [x for x in yid if center_of(x) == "nar"][-1:]:
         pass
@@ -941,7 +950,12 @@ def main():
             while d0.strftime("%Y%m%d") >= start:
                 dates.append(d0.strftime("%Y%m%d"))
                 d0 -= timedelta(days=1)
+        fails = 0
         for d in dates:
+            if fails >= 2:
+                # 一覧が続けて取れないのは netkeiba のメンテナンスなど。残りは次の再現にまわす
+                print("{} から先は取らない(レース一覧が{}日続けて取れない。メンテナンス中?)".format(d, fails))
+                break
             if a.refetch_past or a.refetch_result:
                 if d < today_s:
                     (refetch_past if a.refetch_past else refetch_result)(d, datetime.now(JST))
@@ -953,6 +967,7 @@ def main():
             else:
                 t0 = time.time()
                 day = run_day(d, datetime.now(JST), backfill=True)
+                fails = 0 if day.get("list_at") or day["races"] else fails + 1
                 show(day)
                 rs = [r for r in day["races"].values() if venue_of(r["id"]) != "帯広"]
                 print("  {:.0f}秒 / 出馬表なし {} / 馬柱なし {} / 結果なし {}".format(
@@ -990,7 +1005,8 @@ def repredict():
         changed = False
         for rc in day["races"].values():
             p = rc.get("pred")
-            if not rc.get("horses") or not rc.get("past_at") or (p and p.get("src") != "backfill"):
+            if (not rc.get("horses") or not rc.get("past_at") or (p and p.get("src") != "backfill")
+                    or center_of(rc["id"]) not in CENTERS):
                 continue
             rc["pred"] = predict_past(rc, d, today)
             rc["pred"]["src"] = "backfill"
