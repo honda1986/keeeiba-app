@@ -625,7 +625,7 @@ function table(r) {
 // ---------------------------------------------------------------- 収支・分析
 const GROUPS = [["判定","verdict"],["芝/ダート","surface"],["距離","dist"],["頭数","field"],
                 ["馬場","baba"],["2強の差","gap"],["展開","pace"],["競馬場","venue"]];
-const PERIODS = [["7","7日"],["30","30日"],["month","今月"],["year","今年"],["all","全期間"]];
+const PERIODS = [["7","7日"],["30","30日"],["month","今月"],["year","今年"],["lastyear","去年"],["all","全期間"]];
 
 function periodRange() {
   const ds = (state.hist?.days || []).map(d => d.date).sort();
@@ -634,8 +634,15 @@ function periodRange() {
   if (state.period === "all") return [ds[0], last];
   if (state.period === "month") return [last.slice(0, 6) + "01", last];
   if (state.period === "year") return [last.slice(0, 4) + "0101", last];
+  if (state.period === "lastyear" && !hasLastYear()) state.period = "year";
+  if (state.period === "year") return [last.slice(0, 4) + "0101", last];
+  if (state.period === "lastyear") { const y = String(+last.slice(0, 4) - 1); return [y + "0101", y + "1231"]; }
   const t = toDate(last); t.setDate(t.getDate() - (+state.period - 1));
   return [dstr(t), last];
+}
+function hasLastYear() {
+  const ds = (state.hist?.days || []).map(d => d.date).sort();
+  return ds.length > 0 && ds[0].slice(0, 4) < ds[ds.length - 1].slice(0, 4);
 }
 const srcOk = s => state.src === "all" || s === state.src;
 const centerOk = c => state.mcenter === "all" || c === state.mcenter;
@@ -759,7 +766,7 @@ function renderMoney() {
 
   el.innerHTML = `
     <div class="chips" role="group" aria-label="期間" style="margin-top:12px">
-      ${PERIODS.map(([k, t]) => `<button class="chip" data-p="${k}" aria-pressed="${state.period === k}">${t}</button>`).join("")}
+      ${PERIODS.filter(([k]) => k !== "lastyear" || hasLastYear()).map(([k, t]) => `<button class="chip" data-p="${k}" aria-pressed="${state.period === k}">${t}</button>`).join("")}
     </div>
     ${srcs.length > 1 ? `<div class="chips" role="group" aria-label="予想の出どころ">
       ${[["all","すべて"],["live","当日の予想"],["backfill","再現"]].map(([k, t]) => `<button class="chip" data-s="${k}" aria-pressed="${state.src === k}">${t}</button>`).join("")}
@@ -844,10 +851,12 @@ async function modelBox() {
     if (s.n_min) t.push(`${s.n_min}頭以上`);
     return t.join("・") + (s.a_p1 ? `(◎${pct(s.a_p1)}%以上はA)` : `(○${pct(s.t2 + 0.05)}%以上はA)`);
   };
-  const chkTbl = (name, c) => c ? tbl(`${name}: 月ごとに、その月より前だけで学んだモデルで確かめた成績`, [
+  // 期間ごとの行のリスト(古い形は 選ぶ/確かめ/確かめ 市場)
+  const chkRows = c => Array.isArray(c) ? c : [
       Object.assign({}, c["選ぶ"], {label: "2〜8月(基準を選んだ期間)"}),
       Object.assign({}, c["確かめ"], {label: "9月〜(基準を選ぶのに使っていない)"}),
-      Object.assign({}, c["確かめ 市場"], {label: "9月〜 同じレースで1・2番人気"})]) : "";
+      Object.assign({}, c["確かめ 市場"], {label: "9月〜 同じレースで1・2番人気"})];
+  const chkTbl = (name, c) => c ? tbl(`${name}: 月ごとに、その月より前だけで学んだモデルで確かめた成績`, chkRows(c)) : "";
   el.innerHTML = `
     <ul class="rules">
       <li><b>何を出すか</b>各馬が3着以内に来る確率(LightGBM)。${esc(m.data)}で学習(${esc(m.trained)})</li>

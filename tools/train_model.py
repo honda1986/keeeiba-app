@@ -27,6 +27,11 @@ import keiba_model as M      # noqa: E402
 import keiba_speed as SP     # noqa: E402
 
 VALID_FROM, TEST_FROM = "20260701", "20260901"
+WF_FROM = "202501"            # 月ごとの確率を作る最初の月(2024年は学ぶだけ)
+# 月ごとの確率で成績を確かめる期間(名前, 最初の日, 最後の日の次)。買う基準は2026年2〜8月で決めた
+CHECK_PERIODS = (("2025年(基準を決めるのに使っていない)", "20250101", "20260101"),
+                 ("2026年1〜8月(基準を決めた期間)", "20260101", "20260901"),
+                 ("2026年9月〜", "20260901", "99999999"))
 CACHE = os.environ.get("KEIBA_CACHE", "/tmp/keiba_dataset.pkl")
 
 
@@ -221,13 +226,16 @@ def pick_sel(sel, pr):
 
 
 def check_wf(rows, races_by_id, pw, sel):
-    """月ごとの確率で、基準 sel の成績(2月〜調整期間の終わり / 試験期間 / 試験期間の市場)"""
-    rs_sel = [x for x in rows if x["date"] < TEST_FROM and (x["rid"], x["u"]) in pw]
-    rs_chk = [x for x in rows if x["date"] >= TEST_FROM and (x["rid"], x["u"]) in pw]
-    return {"選ぶ": evaluate(rs_sel, None, races_by_id, pick_sel(sel, pw), "モデル"),
-            "確かめ": evaluate(rs_chk, None, races_by_id, pick_sel(sel, pw), "モデル"),
-            "確かめ 市場": evaluate(rs_chk, None, races_by_id, by_market(pick_sel(sel, pw)),
-                                "市場 同じレースで1・2番人気")}
+    """月ごとの確率で、基準 sel の成績(CHECK_PERIODS ごと / 全期間の同じレースで1・2番人気)。表の行のリスト"""
+    rs = [x for x in rows if (x["rid"], x["u"]) in pw]
+    out = []
+    for name, a, b in CHECK_PERIODS:
+        sub = [x for x in rs if a <= x["date"] < b]
+        if sub:
+            out.append(evaluate(sub, None, races_by_id, pick_sel(sel, pw), name))
+    out.append(evaluate(rs, None, races_by_id, by_market(pick_sel(sel, pw)),
+                        "同じレースで1・2番人気({}〜。参考)".format(min(x["date"] for x in rs)[:4] if rs else "")))
+    return out
 
 
 def check_centers(rows, races_by_id, pw, sels):
@@ -240,8 +248,8 @@ def show_check(chk):
         if c not in chk:
             continue
         print("  {}".format(name))
-        for k, r in chk[c].items():
-            print("   {:<8} {:>5}R 的中{:>4.0%} 回収率{:>4.0%}".format(k, r["races"], r["hit"], r["roi"]))
+        for r in chk[c]:
+            print("   {:<28} {:>5}R 的中{:>4.0%} 回収率{:>4.0%}".format(r["label"], r["races"], r["hit"], r["roi"]))
 
 
 def fixed_selects():
@@ -295,7 +303,6 @@ def main():
     import lightgbm as lgb
 
     races = load_races()
-    races_by_id = {rc["id"]: rc for _, rc in races}
     print("レース", len(races), races[0][0], "〜", races[-1][0])
     cache = CACHE + (".nospeed" if a.no_speed else "")
     if os.path.exists(cache) and not a.rebuild:
@@ -305,11 +312,18 @@ def main():
         sp = None if a.no_speed else speed_table(races, VALID_FROM)
         rows, jt_all = build(races, norm, sp)
         pickle.dump((norm, rows, jt_all, sp), open(cache, "wb"))
+    # 3年分になるとメモリが足りなくなるので、手作りの評価で比べる期間(調整・試験)より前は結果だけ残す
+    races_by_id = {rc["id"]: (rc if d >= VALID_FROM else {"id": rc["id"], "center": rc.get("center"),
+                                                         "result": rc["result"]}) for d, rc in races}
+    span = (races[0][0], races[-1][0], len(races))
+    del races
     if a.update_select:
         update_select(rows, races_by_id)
         return
     feats = sorted({k for r in rows for k in r["f"]})
-    X = np.array([[M._num(r["f"].get(k)) for k in feats] for r in rows], dtype=float)
+    X = np.empty((len(rows), len(feats)))
+    for i, r in enumerate(rows):
+        X[i] = [M._num(r["f"].get(k)) for k in feats]
     y = np.array([r["y"] for r in rows])
     dates = np.array([r["date"] for r in rows])
     tr, va, te = dates < VALID_FROM, (dates >= VALID_FROM) & (dates < TEST_FROM), dates >= TEST_FROM
@@ -393,7 +407,7 @@ def main():
     if a.walkforward:
         wf = {}
         months = sorted({d[:6] for d in dates})
-        for mth in months[1:]:
+        for mth in [m for m in months[1:] if m >= WF_FROM]:
             m_tr, m_pr = dates < mth + "01", np.array([d[:6] == mth for d in dates])
             b = lgb.train(params, lgb.Dataset(X[m_tr], y[m_tr], categorical_feature=cat), best_iter)
             pm = b.predict(X[m_pr])
@@ -414,7 +428,7 @@ def main():
         # 買うレースの基準を、月ごとの確率(先を知らない)の2月〜調整期間の終わりで選び直し、試験期間で確かめる
         pw = {(rid, int(u)): v for rid, d in wf.items() for u, v in d.items()}
         rs_sel = [x for x, d in zip(rows, dates) if d < TEST_FROM and (x["rid"], x["u"]) in pw]
-        print("\n■ 月ごとの確率で、買うレースの基準を選び直す(2月〜{}で選び、{}〜で確かめる)".format(TEST_FROM[:6], TEST_FROM[:6]))
+        print("\n■ 月ごとの確率で、買うレースの基準を選び直す({}〜{}で選び、{}〜で確かめる)".format(WF_FROM, TEST_FROM[:6], TEST_FROM[:6]))
         g2 = []
         for t2w in (0.0, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75):
             for gw in (0.0, 0.05, 0.10, 0.15, 0.20):
@@ -451,8 +465,8 @@ def main():
         jt_save = {k: {"base": v["base"], "by": {n: c for n, c in v["by"].items() if c[0] >= 5}}
                    for k, v in jt_all.items()}
         meta = {"features": feats, "l3f_norm": norm, "jt": jt_save, "trained": datetime.now().strftime("%Y-%m-%d"),
-                "data_end": races[-1][0],
-                "data": "{}〜{} {}レース".format(races[0][0], races[-1][0], len(races)),
+                "data_end": span[1],
+                "data": "{}〜{} {}レース".format(*span),
                 "iterations": int(best_iter * 1.15),
                 "select": sels,
                 "select_from": select_from,
