@@ -725,12 +725,18 @@ def alt_bets(p, res):
     return {typ: ((pay.get(typ) or {}).get(k, 0) * L.UNIT // 100 if typ in pay else None) for typ, k in keys.items()}
 
 
+# アプリの収支に出す最初の日。これより前の日は学習用に取り込んだもの(モデルの月ごとの確率が無い)
+HISTORY_FROM = "20260101"
+
+
 def build_history():
     """日別ファイルから、期間で絞れる形の成績を作る。
     days  … 日ごとの合計と、印・負けパターンの集計(アプリが期間で足し合わせる)
     races … 買ったレース1件ずつ(条件・券種ごとの投資と払戻)"""
     days, races = [], []
     for f in sorted(glob.glob(OUT + "/days/*.json")):
+        if os.path.basename(f)[:8] < HISTORY_FROM:
+            continue
         day = load(f, None)
         if not day:
             continue
