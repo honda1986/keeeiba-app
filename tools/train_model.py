@@ -470,6 +470,7 @@ def main():
                 "data": "{}〜{} {}レース".format(*span),
                 "iterations": int(best_iter * 1.15),
                 "select": sels,
+                "centers": list(K.CENTERS),
                 "select_from": select_from,
                 "check_wf": wf_check,
                 "check": {k: v for k, v in out.items()},
