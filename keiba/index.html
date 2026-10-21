@@ -272,14 +272,18 @@ async function boot() {
   try { state.hist = await getJSON("history.json"); } catch (e) { state.hist = null; }
   state.days = (state.hist?.days || []).filter(d => d.races).map(d => d.date);
   try { state.day = await getJSON("data.json"); } catch (e) { state.day = null; }
+  const today = state.day?.date;
   if (state.day) {
-    state.cache[state.day.date] = state.day;
-    if (!state.days.includes(state.day.date)) state.days.push(state.day.date);
+    state.cache[today] = state.day;
+    const has = Object.values(state.day.races || {}).some(r => CENTERS.includes(r.center) && r.venue);
+    if (has && !state.days.includes(today)) state.days.push(today);
   }
   state.days.sort();
-  const latest = state.days[state.days.length - 1];
-  if (state.day && latest && latest > state.day.date) {
-    try { state.day = await loadDay(latest); } catch (e) { /* data.json のまま */ }
+  // 中央は土日が中心。今日に開催が無ければ、次の開催(先に予想してある日)か、無ければ最後の開催を開く
+  if (today && !state.days.includes(today)) {
+    const pick = state.days.find(d => d > today) || state.days[state.days.length - 1];
+    state.noRace = {today, pick, next: pick > today};
+    if (pick) { try { state.day = await loadDay(pick); } catch (e) { /* data.json のまま */ } }
   }
   renderRace(); renderMoney(); renderRule();
   const h = new URLSearchParams(location.hash.slice(1));
@@ -425,6 +429,8 @@ function renderRace() {
       <button class="d" id="pick" aria-haspopup="dialog">${fmtD(d.date)}<small>📅</small></button>
       <button id="next" aria-label="次の日" ${i < 0 || i >= state.days.length - 1 ? "disabled" : ""}>▶</button>
     </div>
+    ${state.noRace && d.date === state.noRace.pick ? `<div class="srcnote">今日 ${fmtD(state.noRace.today).slice(5)} は中央の開催がありません。
+      ${state.noRace.next ? "次の開催の予想を出しています(出馬表は土曜分が木曜、日曜分が金曜に出ます)。" : "最後の開催を出しています。"}</div>` : ""}
     ${nback ? `<div class="srcnote">${nback === all.length ? "この日" : nback + "レース"}は<b>後から再現した予想</b>です。
       その日の出馬表と、そのレースより前の過去走だけで予想しています(人気は確定人気)。</div>` : ""}
     <div class="sum">
@@ -460,7 +466,7 @@ function drawList() {
   if (!box) return;
   const shown = allRaces().filter(r => centerOkR(r) && raceVisible(r));
   if (!shown.length) {
-    box.innerHTML = `<div class="empty">${allRaces().length ? "この条件に合うレースはありません。" : "この日はまだレースがありません。"}</div>`;
+    box.innerHTML = `<div class="empty">${allRaces().length ? "この条件に合うレースはありません。" : "この日は中央の開催がありません。"}</div>`;
     return;
   }
   const skips = shown.filter(r => ["skip", "ref"].includes(raceKind(r)));

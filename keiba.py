@@ -55,6 +55,7 @@ ODDS_REFRESH = 20          # オッズを取り直す間隔(分)
 RESULT_AFTER = 8           # 発走から何分後に結果を見に行くか
 # 予想する中央・地方(2026-10-21: 中央だけに絞る。地方は取らない・予想しない・収支に出さない)
 CENTERS = tuple(c for c in os.environ.get("KEIBA_CENTERS", "jra").split(",") if c)
+AHEAD_DAYS = 2             # 当日の更新で、何日先の開催まで出馬表を取って予想しておくか
 PAST_VER = 3               # 馬柱の読み方を直したら上げる(発走前のレースは取り直す)。3: 走破タイムを足した
 
 _TL = threading.local()
@@ -980,13 +981,19 @@ def main():
         show(run_day(a.date, now, backfill=True))
     elif not a.history_only:
         d = a.date or now.strftime("%Y%m%d")
-        # 前日の夜(地方のナイター)の結果が欠けていれば先に埋める
+        # 前日の結果が欠けていれば先に埋める
         y = (datetime.strptime(d, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
         if os.path.exists(day_path(y)) and not load(day_path(y), {}).get("complete"):
             run_day(y, now, backfill=True)
         day = run_day(d, now)
         save(OUT + "/data.json", day)
         show(day)
+        # 中央の出馬表は木・金に出る(土曜は木曜、日曜は金曜)。明日・明後日の開催も先に予想しておく
+        for k in range(1, AHEAD_DAYS + 1):
+            nd = (datetime.strptime(d, "%Y%m%d") + timedelta(days=k)).strftime("%Y%m%d")
+            ahead = run_day(nd, now)
+            if ahead["races"]:
+                show(ahead)
     if not a.no_history:
         build_history()
 
