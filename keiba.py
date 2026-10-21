@@ -736,7 +736,7 @@ def alt_bets(p, res):
 
 
 # アプリの収支に出す最初の日。これより前の日は学習用に取り込んだもの(モデルの月ごとの確率が無い)
-HISTORY_FROM = "20260101"
+HISTORY_FROM = "20250101"
 
 
 def build_history():
