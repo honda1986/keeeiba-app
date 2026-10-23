@@ -12,7 +12,10 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
+import android.view.InputDevice;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
@@ -36,7 +39,8 @@ import java.io.InputStream;
 
 /**
  * 2強レース(個人用)。下の切り替えで「予想」(GitHub Pages のアプリ)と「IPAT」(JRA のネット投票)を行き来する。
- * 予想の「IPATで買う」を押すと、IPAT の画面を順に押して「金額入力」の画面まで進める(assets/autopilot.js)。
+ * 予想の「IPATで入力」を押すと、IPAT の画面を順に押して「金額入力」の画面まで進める。
+ * 押す場所は assets/autopilot.js が画面の文字から決め、このアプリが指で押したのと同じように押す。
  * 金額・セット・投票は自分で入れる。ログイン情報はこのアプリでは持たず、IPAT の画面に入れる。
  */
 public class MainActivity extends Activity {
@@ -242,17 +246,27 @@ public class MainActivity extends Activity {
             String s = new JSONArray("[" + raw + "]").getString(0);
             JSONObject o = new JSONObject(s);
             String st = o.optString("st"), msg = o.optString("msg");
-            if ("step".equals(st) || "login".equals(st)) {      // 進んだ(ログイン中も)ら、止めるまでの時間を延ばす
-                if ("step".equals(st)) steps++;
+            if ("tap".equals(st) || "login".equals(st)) {       // 進んだ(ログイン中も)ら、止めるまでの時間を延ばす
                 lastAt = System.currentTimeMillis();
             }
-            if ("final".equals(st)) {          // 金額入力の画面に着いた: ここで止まる
+            if ("tap".equals(st)) {
+                if (ipatBox.getVisibility() == View.VISIBLE) {     // 予想に切り替えていたら押さない
+                    steps++;
+                    tapAt((float) o.getDouble("x"), (float) o.getDouble("y"));
+                    setBar(msg);
+                }
+            } else if ("final".equals(st)) {          // 金額入力の画面に着いた: ここで止まる
                 handler.removeCallbacks(tick);
                 phase = "final";
                 setBar(msg + "\n買ったら予想の投票タブで「買った」を押してください");
                 return;
             } else if ("error".equals(st)) {
                 stopTask();
+                String info = o.optString("info");
+                if (!info.isEmpty()) {          // 押そうとした所の形(画面の文字は入っていない)。送ってもらって直す
+                    copy(info);
+                    msg += "\n(押そうとした所の情報をコピーしました。困ったら貼り付けて送ってください)";
+                }
                 setBar("止めました: " + msg);
                 return;
             } else if (!"wait".equals(st)) {
@@ -262,6 +276,22 @@ public class MainActivity extends Activity {
             setBar("画面を読めませんでした。手で続けてください");
         }
         if ("run".equals(phase)) handler.postDelayed(tick, TICK_MS);
+    }
+
+    /** IPAT の画面を、画面に対する割合 (fx, fy) の所で指で押したのと同じように押す */
+    void tapAt(float fx, float fy) {
+        float x = fx * ipat.getWidth(), y = fy * ipat.getHeight();
+        long t = SystemClock.uptimeMillis();
+        MotionEvent down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, x, y, 0);
+        down.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        ipat.dispatchTouchEvent(down);
+        down.recycle();
+        handler.postDelayed(() -> {
+            MotionEvent up = MotionEvent.obtain(t, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0);
+            up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+            ipat.dispatchTouchEvent(up);
+            up.recycle();
+        }, 80);
     }
 
     String readAsset(String name) {

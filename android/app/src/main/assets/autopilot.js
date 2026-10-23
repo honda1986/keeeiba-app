@@ -1,47 +1,145 @@
 // IPAT(スマホ版)で、買い目の「金額入力」の画面まで進める。アプリが 0.8 秒ごとに呼ぶ。
 //   B … {venue, dow, rno, type, method, combo: [馬番(枠連は枠番)...], axis, aite}
 //       method = 通常 / ボックス / ながし / フォーメーション。ながし・フォーメーションは馬番を選ぶ画面で止まる
-// 画面の文字で今どこかを見て、1回に1つだけ押す。金額・セット・投票は押さない(金額入力の画面で止まる)。
-// 戻り値(JSON の文字列): {st: step|wait|login|final|error|unknown, msg}
+// 画面の文字で今どこかを見て、押す場所を1つだけ返す。押すのはアプリ(指で押したのと同じになる。
+// スクリプトからの click() では IPAT の画面が進まないため)。金額・セット・投票は押さない(金額入力の画面で止まる)。
+// 戻り値(JSON の文字列): {st: tap|wait|login|final|error|unknown, msg, x, y, info}
+//   x, y … 押す場所(画面の幅・高さに対する割合)。info … うまく押せないときの、押そうとした所の形
 (function (B, STARTED) {
   var txt = function (e) { return ((e.innerText || e.textContent || "") + "").replace(/\s+/g, " ").trim(); };
   var body = txt(document.body || document.documentElement);
-  var out = function (st, msg) { return JSON.stringify({st: st, msg: msg || ""}); };
+  var out = function (st, msg, extra) {
+    var o = {st: st, msg: msg || ""};
+    for (var k in extra || {}) o[k] = extra[k];
+    return JSON.stringify(o);
+  };
   var visible = function (e) { return !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length); };
   var esc = function (s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); };
   var z2 = function (u) { return (u < 10 ? "0" : "") + u; };
-  // 文字が合う、いちばん小さい(内側の)見えている要素
-  function find(re) {
-    var best = null, bl = 1e9;
-    var els = document.querySelectorAll("a,button,input[type=button],input[type=submit],li,td,th,span,div,p,label");
+  var CLICKABLE = "a,button,input,label,li,[onclick],[ng-click],[role=button]";
+
+  // 文字が合う、見えている要素(文字の短い順。画像は alt の文字)
+  function findAll(re) {
+    var hits = [];
+    var els = document.querySelectorAll("a,button,input[type=button],input[type=submit],li,td,th,span,div,p,label,img");
     for (var i = 0; i < els.length; i++) {
       var e = els[i];
       if (!visible(e)) continue;
-      var t = e.tagName === "INPUT" ? (e.value || "").trim() : txt(e);
+      var t = e.tagName === "INPUT" ? (e.value || "").trim() : e.tagName === "IMG" ? (e.alt || "").trim() : txt(e);
       if (!t || t.length > 80) continue;
-      if (re.test(t) && t.length < bl) { best = e; bl = t.length; }
+      if (re.test(t)) hits.push({e: e, n: t.length, i: i});
     }
-    return best;
+    hits.sort(function (a, b) { return a.n - b.n || a.i - b.i; });
+    return hits.map(function (h) { return h.e; });
   }
-  function tap(e) {
-    var c = e.closest ? (e.closest("a,button,input,li,[onclick],[ng-click],[role=button]") || e) : e;
-    try { c.scrollIntoView({block: "center"}); } catch (x) { /* 無視 */ }
-    c.click();
+  // 要素の真ん中が画面の中にあって、ほかの物に隠れていなければ、その場所(画面に対する割合)
+  function point(el) {
+    try { el.scrollIntoView({block: "center"}); } catch (x) { /* 無視 */ }
+    var r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    if (cx < 0 || cy < 0 || cx > innerWidth || cy > innerHeight) return null;
+    var hit = document.elementFromPoint(cx, cy);
+    if (!hit) return null;
+    var ok = hit === el || el.contains(hit) ||
+      (hit.contains(el) && hit !== document.body && hit !== document.documentElement);
+    if (!ok) return null;
+    var vv = window.visualViewport;
+    var ox = vv ? vv.offsetLeft : 0, oy = vv ? vv.offsetTop : 0;
+    var w = vv ? vv.width : innerWidth, h = vv ? vv.height : innerHeight;
+    var x = (cx - ox) / w, y = (cy - oy) / h;
+    return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? {x: x, y: y} : null;
   }
-  // 同じ画面で続けて押さない(画面が変わるまで 4 秒は待つ)
+  // 押す所: 押せる親(リンク・ボタンなど)が小さければその真ん中、大きければ文字の真ん中
+  function spot(e) {
+    var c = e.closest ? e.closest(CLICKABLE) : null;
+    if (c && c !== e) {
+      var r = c.getBoundingClientRect();
+      if (r.height < 260 && r.width <= innerWidth + 1) {
+        var p = point(c);
+        if (p) return {p: p, el: c};
+      }
+    }
+    var q = point(e);
+    return q ? {p: q, el: e} : null;
+  }
+  // 押そうとした所の形(タグ・class・属性だけ。画面の文字やURLは入れない)。うまく進まないときに送ってもらう
+  function describe(el) {
+    var s = [];
+    for (var i = 0; el && i < 6 && el !== document.body; i++, el = el.parentElement) {
+      var a = [];
+      for (var j = 0; j < el.attributes.length; j++) {
+        var at = el.attributes[j], v = String(at.value);
+        if (at.name === "href") a.push("href=" + (/^(#|javascript)/.test(v) ? v.slice(0, 30) : "(url)"));
+        else if (/^(id|class|role|type|for|name|onclick|ng-click|ontouch\w+|data-[\w-]+)$/.test(at.name))
+          a.push(at.name + "=" + v.slice(0, 40));
+      }
+      s.push(el.tagName.toLowerCase() + (a.length ? "[" + a.join(" ") + "]" : ""));
+    }
+    return s.join(" < ").slice(0, 1200);
+  }
+  function tapOn(el, msg) {
+    var s = spot(el);
+    if (!s) return null;
+    window.__kbInfo = location.pathname + " | " + describe(s.el);
+    return out("tap", msg, {x: s.p.x, y: s.p.y});
+  }
+  // 同じ画面で続けて押さない(画面が変わるまで 4 秒は待つ)。同じ所を続けて3回押しても変わらなければ止める
   function once(key, fn) {
     if (window.__kbKey === key && Date.now() - (window.__kbAt || 0) < 4000) return out("wait", "画面が変わるのを待っています");
+    window.__kbN = window.__kbKey === key ? (window.__kbN || 0) + 1 : 1;
+    if (window.__kbN > 3)
+      return out("error", "3回押しても画面が変わりません。手で押して進むか確かめてください", {info: window.__kbInfo || ""});
     window.__kbKey = key; window.__kbAt = Date.now();
     return fn();
   }
   function clickText(key, re, msg) {
     return once(key, function () {
-      var e = find(re);
-      if (!e) return out("error", msg + " が見つかりません。手で続けてください");
-      tap(e);
-      return out("step", msg);
+      var es = findAll(re);
+      if (!es.length) return out("error", msg + " が見つかりません。手で続けてください");
+      for (var i = 0; i < es.length; i++) {
+        var r = tapOn(es[i], msg);
+        if (r) return r;
+      }
+      return out("error", msg + " を押せる場所が見つかりません。手で続けてください", {info: describe(es[0])});
     });
   }
+  // 馬番(枠番) u のチェック。馬単・3連単の通常は 1着・2着・3着 の列(pos 番目)、それ以外は1列
+  function boxFor(u, pos, ordered) {
+    var all = Array.prototype.filter.call(document.querySelectorAll("input[type=checkbox]"), function (c) { return !c.disabled; });
+    // value が馬番になっていれば(0 が無く、1〜18 だけ)それを使う
+    var numeric = all.length > 0 && all.every(function (c) { return /^\d{1,2}$/.test(c.value) && +c.value >= 1 && +c.value <= 18; });
+    if (numeric) {
+      var byVal = all.filter(function (c) { return +c.value === u; });
+      if (byVal.length) return byVal[ordered ? pos : 0] || null;
+    }
+    // 馬番の文字のある行から探す
+    var cells = Array.prototype.filter.call(document.querySelectorAll("td,th,span,div,p,label,b,strong"), function (e) {
+      var t = txt(e);
+      return visible(e) && e.children.length === 0 && (t === String(u) || t === z2(u));
+    });
+    for (var k = 0; k < cells.length; k++) {
+      var r = cells[k];
+      for (var up = 0; up < 6 && r; up++) {
+        r = r.parentElement;
+        if (!r) break;
+        var cbs = r.querySelectorAll("input[type=checkbox]");
+        if (!cbs.length) continue;
+        return cbs[ordered ? pos : 0] || null;
+      }
+    }
+    return null;
+  }
+  // チェックを押す所: 見えている label → チェックそのもの → 親
+  function boxSpot(cb) {
+    var lab = cb.id ? document.querySelector("label[for=\"" + cb.id.replace(/"/g, "\\\"") + "\"]") : null;
+    if (lab && visible(lab)) return lab;
+    var wrap = cb.closest ? cb.closest("label") : null;
+    if (wrap && visible(wrap)) return wrap;
+    if (visible(cb)) return cb;
+    return cb.parentElement;
+  }
+
   var ORDERED = /^(馬単|3連単|３連単)$/.test(B.type) && B.method === "通常";
   var label = B.venue + "(" + B.dow + ") " + B.rno + "R " + B.type + " " + B.method + " " +
     (B.method === "ながし" ? "軸" + B.axis + " 相手" + (B.aite || []).join(",") : B.combo.join(ORDERED ? "→" : "-"));
@@ -63,41 +161,23 @@
     return out("login", "ログインしてください(ログインすると続きを自動で進めます)");
   // 投票一覧(前の買い目をセットしたあと): 続けて入れる
   if (/投票一覧/.test(body) && /場名から続けて入力/.test(body)) return clickText("list", /^場名から続けて入力$/, "場名から続けて入力");
-  // 馬番(枠番)を選ぶ
+  // 馬番(枠番)を選ぶ: 1回に1つずつ押す
   if (/選択してください/.test(body) && /金額入力画面へ/.test(body)) {
     if (B.method === "ながし" || B.method === "フォーメーション")
       return out("final", B.method + "の画面まで進めました。馬番を選んで「金額入力画面へ」を押してください");
-    return once("horses", function () {
-      var miss = [];
-      B.combo.forEach(function (u, pos) {
-        var cells = Array.prototype.filter.call(document.querySelectorAll("td,th,span,div,p,label,b,strong"), function (e) {
-          var t = txt(e);
-          return visible(e) && e.children.length === 0 && (t === String(u) || t === z2(u));
-        });
-        var done = false;
-        for (var k = 0; k < cells.length && !done; k++) {
-          var r = cells[k];
-          for (var up = 0; up < 6 && r && !done; up++) {
-            r = r.parentElement;
-            if (!r) break;
-            var cbs = r.querySelectorAll("input[type=checkbox]");
-            if (!cbs.length) continue;
-            // 馬単・3連単の通常は 1着・2着・3着 の列。それ以外は1列
-            var cb = cbs[ORDERED ? pos : 0];
-            if (!cb) break;
-            if (!cb.checked) {
-              var lab = cb.id ? document.querySelector("label[for='" + cb.id + "']") : null;
-              (lab || cb).click();
-            }
-            done = true;
-          }
-        }
-        if (!done) miss.push(u);
+    var name = B.type === "枠連" ? "枠番 " : "馬番 ";
+    var miss = [];
+    for (var pos = 0; pos < B.combo.length; pos++) {
+      var u = B.combo[pos], cb = boxFor(u, pos, ORDERED);
+      if (!cb) { miss.push(u); continue; }
+      if (cb.checked) continue;
+      var tgt = boxSpot(cb), what = name + u + (ORDERED ? "(" + (pos + 1) + "着)" : "") + " を選ぶ";
+      return once("cb" + pos + "-" + u, function () {
+        return tapOn(tgt, what) || out("error", what + "ところを押せません。手で選んでください", {info: describe(tgt)});
       });
-      if (miss.length) return out("error", (B.type === "枠連" ? "枠番 " : "馬番 ") + miss.join("・") + " を選べませんでした。手で選んでください");
-      setTimeout(function () { var e = find(/^金額入力画面へ$/); if (e) tap(e); }, 700);
-      return out("step", B.combo.join(ORDERED ? "→" : "-") + " を選びました");
-    });
+    }
+    if (miss.length) return out("error", name + miss.join("・") + " を選べませんでした。手で選んでください");
+    return clickText("next", /^金額入力画面へ$/, "金額入力画面へ");
   }
   // 方式
   if (/フォーメーション/.test(body) && /ボックス/.test(body)) return clickText("houshiki", new RegExp("^" + esc(B.method) + "$"), "方式: " + B.method);
@@ -115,7 +195,7 @@
   // 競馬場
   if (/競馬場名/.test(body)) {
     var vre = new RegExp("^" + esc(B.venue) + "\\s*[(（]" + esc(B.dow) + "[)）]$");
-    if (!find(vre)) return out("error", B.venue + "(" + B.dow + ") がまだ発売されていません(または見つかりません)");
+    if (!findAll(vre).length) return out("error", B.venue + "(" + B.dow + ") がまだ発売されていません(または見つかりません)");
     return clickText("venue", vre, B.venue + "(" + B.dow + ")");
   }
   // 購入限度額が 0 のときの注意: このまま進む(入金は自分で)
@@ -123,6 +203,6 @@
     return clickText("caution", /^このまま進む$/, "購入限度額が0円です(投票の前に入金が必要)。入力は進めます");
   // トップメニュー
   if (/通常投票/.test(body) && /照会メニュー/.test(body)) return clickText("top", /^通常投票$/, "通常投票");
-  if (!STARTED && find(/^トップメニュー$/)) return clickText("tomenu", /^トップメニュー$/, "トップメニューに戻ります");
+  if (!STARTED && findAll(/^トップメニュー$/).length) return clickText("tomenu", /^トップメニュー$/, "トップメニューに戻ります");
   return out("unknown", "この画面は分かりません。トップメニューに戻ると続きを進めます(" + label + ")");
 })
