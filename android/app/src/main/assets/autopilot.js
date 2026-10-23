@@ -187,10 +187,21 @@
     }
     return xs.join(" / ") || "なし";
   }
+  // 灰色で押せないボタン(IPAT は a に disabled の class が付く)
+  function disabledEl(e) {
+    for (var x = e, i = 0; x && i < 3; x = x.parentElement, i++) {
+      if (x.disabled || x.getAttribute && x.getAttribute("aria-disabled") === "true") return true;
+      if (/(^|\s)(ui-)?(state-)?disabled(\s|$)/.test(typeof x.className === "string" ? x.className : "")) return true;
+    }
+    return !!(e.querySelector && e.querySelector("a.disabled, a.ui-disabled"));
+  }
   function clickText(key, re, msg, loose) {
     var es = findAll(re);
     if (!es.length) return out("error", msg + " が見つかりません。手で続けてください",
       {info: loose ? "似た所 " + near(loose) : "ボタン " + buttons()});
+    var live = es.filter(function (e) { return !disabledEl(e); });
+    if (!live.length) return missWait(key, msg + "(灰色で押せない状態です)", es[0]);
+    es = live;
     var cands = [];
     es.forEach(function (e) { spots(e).forEach(function (el) { if (cands.indexOf(el) < 0) cands.push(el); }); });
     return press(key, cands, msg, es[0]);
@@ -221,7 +232,7 @@
       return e.tagName + "." + cls + x;
     }).join("|");
   }
-  // 行の中で押してみる所(この順): 右のチェックの四角 → 行のリンク → 行の真ん中 → 馬番の枠
+  // 行の中で押してみる所(この順): 行のリンク(IPAT はここを押すと a に selected が付く) → 右のチェックの四角 → 行の真ん中 → 馬番の枠
   function rowSpots(rf) {
     var rr = rf.row.getBoundingClientRect(), box = null;
     Array.prototype.forEach.call(rf.row.querySelectorAll("*"), function (e) {
@@ -229,7 +240,7 @@
       var square = r.width >= 14 && r.width <= 64 && Math.abs(r.width - r.height) <= 8 && r.right > rr.right - 90;
       if (!box && (square || /check|chk|cbox/i.test(typeof e.className === "string" ? e.className : "")) && visible(e)) box = e;
     });
-    return [box, rf.row.querySelector("a[data-value]") || rf.row.querySelector("a"), rf.row, rf.num]
+    return [rf.row.querySelector("a[data-value]") || rf.row.querySelector("a"), box, rf.row, rf.num]
       .filter(function (el, i, a) { return el && a.indexOf(el) === i; });
   }
 
@@ -290,8 +301,10 @@
   if (/投票一覧/.test(body) && /場名から続けて入力/.test(body)) return clickText("list", /^場名から続けて入力$/, "場名から続けて入力");
   // 馬番(枠番)を選ぶ画面(フォーメーションの 1頭目・2頭目・3頭目 / 1着・2着・3着、単勝・複勝は1画面)
   if (/(金額入力画面へ|次へ)/.test(body) && /(全選択|選択してください)/.test(body)) {
-    var hm = heading().match(/([1-3])\s*(?:頭目|着)/);
-    var ci = hm ? +hm[1] - 1 : 0, want = COLS[ci] || [];
+    var pm = (pageEl().id || "").match(/^uma([1-3])$/);
+    var h1 = pageEl().querySelector("[data-role=header] h1, .ui-header h1, .ui-title");
+    var hm = (h1 ? txt(h1) : heading()).match(/([1-3])\s*(?:頭目|着)/);
+    var ci = pm ? +pm[1] - 1 : hm ? +hm[1] - 1 : 0, want = COLS[ci] || [];
     var name = B.type === "枠連" ? "枠番 " : "馬番 ", miss = [];
     if (!settled()) return waitMove();
     // 行は押すたびに選ぶ・外すが入れ替わる。1頭ずつ押して、行の形が変わったら選べたことにする。
@@ -301,6 +314,13 @@
       if (!rf) { miss.push(v); continue; }
       if (d && d.ok) continue;
       var cands = rowSpots(rf), now = shape(rf.row);
+      var picked = !!rf.row.querySelector("a.selected") || /(^|\s)selected(\s|$)/.test(rf.row.className || "");
+      if (picked && !(d && d.ok)) {
+        SEL[key] = {ok: true};
+        window.__kbPickAt = Date.now();
+        addLog(colName(ci) + v + " 選ばれている");
+        continue;
+      }
       // 押す前: 行を画面に出して1回待ち、形が落ち着いてから押す(画面に出したときに変わる所を、押して変わったと見ないように)
       if (!d || d.prep != null) {
         if (!d) { point(rf.row); SEL[key] = {prep: now, k: 0}; return out("wait", wt + "(準備)"); }
@@ -310,6 +330,7 @@
       if (d.shape != null) {
         if (now !== d.shape) {
           d.ok = true;
+          window.__kbPickAt = Date.now();
           addLog(colName(ci) + v + " 選べた: " + diff(d.shape, now) + " 押した所 " + d.el);
           continue;
         }
@@ -329,8 +350,9 @@
     }
     if (miss.length) return out("error", colName(ci) + " " + name + miss.join("・") + " が見つかりません。手で選んでください",
       {info: "似た所 " + near(new RegExp("^0?" + miss[0] + "$"))});
+    if (Date.now() - (window.__kbPickAt || 0) < 1200) return out("wait", colName(ci) + "を選びました");
     if (ci < COLS.length - 1 && findAll(/^次へ$/).length) return clickText("next" + ci, /^次へ$/, colName(ci) + "を選びました。次へ");
-    return clickText("next" + ci, /^金額入力画面へ$/, "金額入力画面へ");
+    return clickText("kingaku" + ci, /^金額入力画面へ$/, "金額入力画面へ");
   }
   // 方式: 2頭以上の券種はフォーメーション
   if (/フォーメーション/.test(body) && /ボックス/.test(body)) return clickText("houshiki", new RegExp("^" + HOUSHIKI + "$"), "方式: " + HOUSHIKI);
