@@ -109,6 +109,7 @@
     if (!ok.length) return null;
     var el = ok[(n - 1) % ok.length], p = point(el);
     if (!p) return null;
+    window.__kbTapped = short(el);
     window.__kbInfo = n + "回目 " + location.pathname + " | 押した所 " + short(el) + " 候補" + ok.length + "/" + cands.length +
       " | 画面 " + innerWidth + "x" + innerHeight + " | " + describe(el);
     return out("tap", msg, {x: p.x, y: p.y, info: window.__kbInfo});
@@ -119,7 +120,7 @@
     var n = window.__kbN = window.__kbKey === key ? (window.__kbN || 0) + 1 : 1;
     if (n > 4)
       return out("error", "押す所を変えて4回押しても画面が変わりません。手で押して進むか確かめてください",
-        {info: (window.__kbInfo || "") + " | 届いたタッチ " + (window.__kbSaw || "なし")});
+        {info: (window.__kbInfo || "") + " | 届いたタッチ " + (window.__kbSaw || "なし") + " | " + logText()});
     window.__kbKey = key; window.__kbAt = Date.now();
     window.__kbSaw = "";
     return fn(n);
@@ -133,6 +134,15 @@
     var hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
     return out("error", msg + " を押せる場所が見つかりません。手で続けてください", {info: short(el) + " | 真ん中にある物 " +
       (hit ? short(hit) + " " + describe(hit) : "なし") + " | 画面 " + innerWidth + "x" + innerHeight + " | " + describe(el)});
+  }
+  // 馬番を選んだときの記録(行のどこが変わったか)。止めたときの情報に入れる
+  function addLog(t) { var l = window.__kbLog = window.__kbLog || []; l.push(t); if (l.length > 6) l.shift(); }
+  function logText() { return "記録 " + ((window.__kbLog || []).join(" / ") || "なし"); }
+  function diff(a, b) {
+    var x = a.split("|"), y = b.split("|"), d = [];
+    for (var i = 0; i < Math.max(x.length, y.length) && d.length < 3; i++)
+      if (x[i] !== y[i]) d.push((x[i] || "なし") + "→" + (y[i] || "なし"));
+    return d.join(" ; ").slice(0, 300) || "?";
   }
   // 画面(ページ)の名前と見出し。切り替わったばかり(1秒以内・切り替えの動きの途中)なら押さずに待つ
   function pageEl() { return document.querySelector(".ui-page-active") || document.body; }
@@ -251,6 +261,7 @@
   var sortN = function (xs) { return xs.slice().sort(function (a, b) { return a - b; }).join(","); };
 
   // 選んだ馬の記録。新しい買い目では使わない。IPAT は画面ごと読み直すこと(通常投票のあとなど)があり、そのときは消えている
+  if (!STARTED) window.__kbLog = [];
   if (!STARTED || !window.__kbSel) window.__kbSel = {};
   var SEL = window.__kbSel;
 
@@ -289,20 +300,31 @@
       var v = want[j], rf = rowFor(v), key = ci + ":" + v, d = SEL[key], wt = colName(ci) + " " + name + v + " を選ぶ";
       if (!rf) { miss.push(v); continue; }
       if (d && d.ok) continue;
-      var cands = rowSpots(rf);
-      if (d) {
-        if (shape(rf.row) !== d.shape) { d.ok = true; continue; }
+      var cands = rowSpots(rf), now = shape(rf.row);
+      // 押す前: 行を画面に出して1回待ち、形が落ち着いてから押す(画面に出したときに変わる所を、押して変わったと見ないように)
+      if (!d || d.prep != null) {
+        if (!d) { point(rf.row); SEL[key] = {prep: now, k: 0}; return out("wait", wt + "(準備)"); }
+        if (now !== d.prep && d.k < 3) { d.prep = now; d.k++; return out("wait", wt + "(準備)"); }
+        d = SEL[key] = {n: 0};
+      }
+      if (d.shape != null) {
+        if (now !== d.shape) {
+          d.ok = true;
+          addLog(colName(ci) + v + " 選べた: " + diff(d.shape, now) + " 押した所 " + d.el);
+          continue;
+        }
         if (Date.now() - d.at < 2500) return out("wait", colName(ci) + " " + name + v + " が選ばれるのを待っています");
+        addLog(colName(ci) + v + " " + d.n + "回目は変わらず(押した所 " + d.el + ")");
         if (d.n >= cands.length) {
           var kids = Array.prototype.slice.call(rf.row.querySelectorAll("*"), 0, 10).map(short).join(" ");
           return out("error", colName(ci) + " " + name + v + " を押しても選べませんでした。手で選んでください",
-            {info: (window.__kbInfo || "") + " | 届いたタッチ " + (window.__kbSaw || "なし") + " | 行 " + describe(rf.row) + " | 行の中 " + kids});
+            {info: (window.__kbInfo || "") + " | 届いたタッチ " + (window.__kbSaw || "なし") + " | 行 " + describe(rf.row) + " | 行の中 " + kids + " | " + logText()});
         }
       }
-      var n = d ? d.n + 1 : 1, before = shape(rf.row), res = tapAny(cands, n, wt);
+      var n = d.n + 1, res = tapAny(cands, n, wt);
       if (!res) return missWait("row" + key, wt, rf.num);
       window.__kbSaw = "";
-      SEL[key] = {shape: before, at: Date.now(), n: n};
+      SEL[key] = {shape: now, at: Date.now(), n: n, el: window.__kbTapped || "?"};
       return res;
     }
     if (miss.length) return out("error", colName(ci) + " " + name + miss.join("・") + " が見つかりません。手で選んでください",

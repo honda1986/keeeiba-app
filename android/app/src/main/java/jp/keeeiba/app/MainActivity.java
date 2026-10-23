@@ -64,6 +64,7 @@ public class MainActivity extends Activity {
     String phase = "off";
     long lastAt = 0;
     String lastMsg = "", lastInfo = "", tapInfo = "";   // 止まったときにコピーする手がかり(最後の画面・様子・押した所)
+    final java.util.ArrayDeque<String> history = new java.util.ArrayDeque<>();   // 最近の様子(同じものは続けて入れない)
     String autopilot;
 
     @Override
@@ -206,6 +207,7 @@ public class MainActivity extends Activity {
         lastMsg = "";
         lastInfo = "";
         tapInfo = "";
+        history.clear();
         phase = "run";
         lastAt = System.currentTimeMillis();
         setBar("自動入力を始めます");
@@ -260,6 +262,11 @@ public class MainActivity extends Activity {
             String st = o.optString("st"), msg = o.optString("msg"), info = o.optString("info");
             if (!"wait".equals(st) || !msg.isEmpty()) lastMsg = msg;
             if ("tap".equals(st)) tapInfo = info;
+            String h = st + " " + msg;
+            if (!h.equals(history.peekLast())) {
+                history.addLast(h);
+                if (history.size() > 10) history.removeFirst();
+            }
             lastInfo = "画面 " + o.optString("page") + " | " + (info.isEmpty() ? "最後に押した所 " + tapInfo : info);
             if ("tap".equals(st) || "login".equals(st)) {       // 進んだ(ログイン中も)ら、止めるまでの時間を延ばす
                 lastAt = System.currentTimeMillis();
@@ -297,7 +304,8 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             // 無視
         }
-        copy(head + "\n" + lastInfo + "\n買い目 " + (task == null ? "" : task.toString()) + "\nアプリ " + v);
+        copy(head + "\n" + lastInfo + "\n流れ " + String.join(" → ", history)
+                + "\n買い目 " + (task == null ? "" : task.toString()) + "\nアプリ " + v);
     }
 
     /** IPAT の画面を、画面に対する割合 (fx, fy) の所で指で押したのと同じように押す */
