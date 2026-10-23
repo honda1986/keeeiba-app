@@ -8,8 +8,10 @@
 (function (B, STARTED) {
   var txt = function (e) { return ((e.innerText || e.textContent || "") + "").replace(/\s+/g, " ").trim(); };
   var body = txt(document.body || document.documentElement);
+  // page … 今の画面の名前(IPAT の画面の id)。止まったときに、どの画面だったか分かるように毎回付ける
   var out = function (st, msg, extra) {
-    var o = {st: st, msg: msg || ""};
+    var pg = document.querySelector(".ui-page-active");
+    var o = {st: st, msg: msg || "", page: (pg && (pg.id || pg.getAttribute("data-url"))) || location.pathname};
     for (var k in extra || {}) o[k] = extra[k];
     return JSON.stringify(o);
   };
@@ -135,9 +137,28 @@
     if (!cands.some(function (c) { return !!point(c); })) return missWait(key, msg, el);
     return once(key, function (n) { return tapAny(cands, n, msg) || missWait(key, msg, el); });
   }
-  function clickText(key, re, msg) {
+  // 文字に loose が入っている、見えている短い物(見つからないときの手がかり。最大6つ)
+  function near(loose) {
+    var xs = [], els = document.querySelectorAll("a,button,input[type=button],input[type=submit],li,td,span,p,label");
+    for (var i = 0; i < els.length && xs.length < 6; i++) {
+      var e = els[i], t = e.tagName === "INPUT" ? (e.value || "") : txt(e);
+      if (visible(e) && t.length <= 40 && loose.test(t)) xs.push(short(e) + "「" + t + "」");
+    }
+    return xs.join(" / ") || "なし";
+  }
+  // 見えているボタン・リンクの文字(分からない画面の手がかり。最大12個)
+  function buttons() {
+    var xs = [], els = document.querySelectorAll("a,button,input[type=button],input[type=submit]");
+    for (var i = 0; i < els.length && xs.length < 12; i++) {
+      var e = els[i], t = e.tagName === "INPUT" ? (e.value || "") : txt(e);
+      if (visible(e) && t) xs.push(t.slice(0, 20));
+    }
+    return xs.join(" / ") || "なし";
+  }
+  function clickText(key, re, msg, loose) {
     var es = findAll(re);
-    if (!es.length) return out("error", msg + " が見つかりません。手で続けてください");
+    if (!es.length) return out("error", msg + " が見つかりません。手で続けてください",
+      {info: loose ? "似た所 " + near(loose) : "ボタン " + buttons()});
     var cands = [];
     es.forEach(function (e) { spots(e).forEach(function (el) { if (cands.indexOf(el) < 0) cands.push(el); }); });
     return press(key, cands, msg, es[0]);
@@ -210,7 +231,12 @@
       var tgts = boxSpots(cb), what = name + u + (ORDERED ? "(" + (pos + 1) + "着)" : "") + " を選ぶ";
       return press("cb" + pos + "-" + u, tgts, what, cb);
     }
-    if (miss.length) return out("error", name + miss.join("・") + " を選べませんでした。手で選んでください");
+    if (miss.length) {
+      var cbAll = document.querySelectorAll("input[type=checkbox]");
+      return out("error", name + miss.join("・") + " を選べませんでした。手で選んでください", {info: "チェック" + cbAll.length + "個 value " +
+        Array.prototype.slice.call(cbAll, 0, 4).map(function (c) { return c.value; }).join(",") +
+        " | 似た所 " + near(new RegExp("^0?" + miss[0] + "$")) + (cbAll[0] ? " | " + describe(cbAll[0]) : "")});
+    }
     return clickText("next", /^金額入力画面へ$/, "金額入力画面へ");
   }
   // 方式
@@ -218,18 +244,21 @@
   // 式別(3連複・3連単は全角の数字のこともある)
   if (/枠連/.test(body) && /(3|３)連単/.test(body)) {
     var t = B.type.replace(/^3/, "[3３]");
-    return clickText("shiki", new RegExp("^" + t + "$"), "式別: " + B.type);
+    return clickText("shiki", new RegExp("^" + t + "$"), "式別: " + B.type, new RegExp(t));
   }
   // レース
   if (/締切時刻/.test(body)) {
     var vh = new RegExp(esc(B.venue) + "\\s*[(（]" + esc(B.dow) + "[)）]");
     if (!vh.test(body)) return clickText("back", /^競馬場名$/, "競馬場を選び直します");
-    return clickText("race", new RegExp("^" + B.rno + "R(\\s|$)"), B.rno + "R");
+    // 「11R」「11R 15:30」「11R15:30」「１１Ｒ」など(1R が 11R に合わないよう、数字のすぐ後に R)
+    var zen = String(B.rno).replace(/\d/g, function (d) { return String.fromCharCode(0xFF10 + +d); });
+    return clickText("race", new RegExp("^\\s*(" + B.rno + "|" + zen + ")\\s*[RＲ]"), B.rno + "R", /[RＲ]/);
   }
   // 競馬場
   if (/競馬場名/.test(body)) {
     var vre = new RegExp("^" + esc(B.venue) + "\\s*[(（]" + esc(B.dow) + "[)）]$");
-    if (!findAll(vre).length) return out("error", B.venue + "(" + B.dow + ") がまだ発売されていません(または見つかりません)");
+    if (!findAll(vre).length) return out("error", B.venue + "(" + B.dow + ") がまだ発売されていません(または見つかりません)",
+      {info: "似た所 " + near(new RegExp(esc(B.venue) + "|[(（][土日月][)）]"))});
     return clickText("venue", vre, B.venue + "(" + B.dow + ")");
   }
   // 購入限度額が 0 のときの注意: このまま進む(入金は自分で)
@@ -238,5 +267,5 @@
   // トップメニュー
   if (/通常投票/.test(body) && /照会メニュー/.test(body)) return clickText("top", /^通常投票$/, "通常投票");
   if (!STARTED && findAll(/^トップメニュー$/).length) return clickText("tomenu", /^トップメニュー$/, "トップメニューに戻ります");
-  return out("unknown", "この画面は分かりません。トップメニューに戻ると続きを進めます(" + label + ")");
+  return out("unknown", "この画面は分かりません。トップメニューに戻ると続きを進めます(" + label + ")", {info: "ボタン " + buttons()});
 })

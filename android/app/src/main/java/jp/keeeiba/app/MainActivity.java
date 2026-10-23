@@ -63,6 +63,7 @@ public class MainActivity extends Activity {
     int steps = 0;
     String phase = "off";
     long lastAt = 0;
+    String lastMsg = "", lastInfo = "";       // 止まったときにコピーする手がかり(最後の画面と様子)
     String autopilot;
 
     @Override
@@ -89,6 +90,10 @@ public class MainActivity extends Activity {
         betBar.setPadding(dp(14), dp(10), dp(14), dp(10));
         betBar.setVisibility(View.GONE);
         betBar.setOnClickListener(v -> {
+            if ("run".equals(phase)) {           // 動いている途中で止めたら、その時の様子をコピーしておく
+                report("手で止めた所: " + lastMsg);
+                toast("止めました(止めた所の情報をコピーしました)");
+            }
             stopTask();
             betBar.setVisibility(View.GONE);
         });
@@ -198,6 +203,8 @@ public class MainActivity extends Activity {
         task = t;
         taskText = text;
         steps = 0;
+        lastMsg = "";
+        lastInfo = "";
         phase = "run";
         lastAt = System.currentTimeMillis();
         setBar("自動入力を始めます");
@@ -224,7 +231,8 @@ public class MainActivity extends Activity {
             if (!"run".equals(phase) || task == null) return;
             if (System.currentTimeMillis() - lastAt > LIMIT_MS) {
                 stopTask();
-                setBar("時間がかかりすぎたので止めました。手で続けてください");
+                report("時間切れ: " + lastMsg);
+                setBar("時間がかかりすぎたので止めました。手で続けてください\n(止めた所の情報をコピーしました。困ったら貼り付けて送ってください)");
                 return;
             }
             if (ipatBox.getVisibility() != View.VISIBLE) {           // 予想を見ているあいだは待つ
@@ -245,7 +253,9 @@ public class MainActivity extends Activity {
             // evaluateJavascript は JSON の文字列を、さらに文字列として返す
             String s = new JSONArray("[" + raw + "]").getString(0);
             JSONObject o = new JSONObject(s);
-            String st = o.optString("st"), msg = o.optString("msg");
+            String st = o.optString("st"), msg = o.optString("msg"), info = o.optString("info");
+            if (!"wait".equals(st) || !msg.isEmpty()) lastMsg = msg;
+            lastInfo = "画面 " + o.optString("page") + (info.isEmpty() ? "" : " | " + info);
             if ("tap".equals(st) || "login".equals(st)) {       // 進んだ(ログイン中も)ら、止めるまでの時間を延ばす
                 lastAt = System.currentTimeMillis();
             }
@@ -262,12 +272,8 @@ public class MainActivity extends Activity {
                 return;
             } else if ("error".equals(st)) {
                 stopTask();
-                String info = o.optString("info");
-                if (!info.isEmpty()) {          // 押そうとした所の形(画面の文字は入っていない)。送ってもらって直す
-                    copy(info);
-                    msg += "\n(押そうとした所の情報をコピーしました。困ったら貼り付けて送ってください)";
-                }
-                setBar("止めました: " + msg);
+                report("止めた所: " + msg);
+                setBar("止めました: " + msg + "\n(止めた所の情報をコピーしました。困ったら貼り付けて送ってください)");
                 return;
             } else if (!"wait".equals(st)) {
                 setBar(msg);
@@ -276,6 +282,17 @@ public class MainActivity extends Activity {
             setBar("画面を読めませんでした。手で続けてください");
         }
         if ("run".equals(phase)) handler.postDelayed(tick, TICK_MS);
+    }
+
+    /** 止まった所の手がかり(画面の名前・押そうとした所の形。お金や個人の情報は入れない)をコピーする */
+    void report(String head) {
+        String v = "";
+        try {
+            v = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            // 無視
+        }
+        copy(head + "\n" + lastInfo + "\n買い目 " + (task == null ? "" : task.toString()) + "\nアプリ " + v);
     }
 
     /** IPAT の画面を、画面に対する割合 (fx, fy) の所で指で押したのと同じように押す */
