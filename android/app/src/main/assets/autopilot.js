@@ -45,9 +45,8 @@
     hits.sort(function (a, b) { return a.n - b.n || a.i - b.i; });
     return hits.map(function (h) { return h.e; });
   }
-  // 要素の真ん中が画面の中にあって、ほかの物に隠れていなければ、その場所(画面に対する割合)
+  // 要素の真ん中が画面の中にあって、ほかの物に隠れていなければ、その場所(画面に対する割合)。画面は動かさない
   function point(el) {
-    try { el.scrollIntoView({block: "center"}); } catch (x) { /* 無視 */ }
     var r = el.getBoundingClientRect();
     if (!r.width || !r.height) return null;
     var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
@@ -103,27 +102,33 @@
     }
     return s.join(" < ").slice(0, 1200);
   }
-  // cands の中で押せる(画面の中にあって隠れていない)ものの、n 回目なら n 番目を押す(前の所で進まなかったら次を試す)
-  function tapAny(cands, n, msg) {
-    var ok = cands.filter(function (el) { return !!point(el); });
-    if (!ok.length) return null;
-    var el = ok[(n - 1) % ok.length], p = point(el);
-    if (!p) return null;
-    window.__kbTapped = short(el);
-    window.__kbInfo = n + "回目 " + location.pathname + " | 押した所 " + short(el) + " 候補" + ok.length + "/" + cands.length +
-      " | 画面 " + innerWidth + "x" + innerHeight + " | " + describe(el);
-    return out("tap", msg, {x: p.x, y: p.y, info: window.__kbInfo});
+  // 画面の中に全部見えているか
+  function inView(el) {
+    var r = el.getBoundingClientRect();
+    return r.height > 0 && r.top >= 0 && r.bottom <= innerHeight && r.left >= -1 && r.right <= innerWidth + 1;
   }
-  // 同じ画面で続けて押さない(画面が変わるまで 4 秒は待つ)。同じボタンを続けて4回(押す所を変えて)押しても変わらなければ止める
-  function once(key, fn) {
-    if (window.__kbKey === key && Date.now() - (window.__kbAt || 0) < 4000) return out("wait", "画面が変わるのを待っています");
-    var n = window.__kbN = window.__kbKey === key ? (window.__kbN || 0) + 1 : 1;
-    if (n > 4)
-      return out("error", "押す所を変えて4回押しても画面が変わりません。手で押して進むか確かめてください",
-        {info: (window.__kbInfo || "") + " | 届いたタッチ " + (window.__kbSaw || "なし") + " | 選ばれている " + (selNums().join(",") || "なし") + " | " + logText()});
-    window.__kbKey = key; window.__kbAt = Date.now();
-    window.__kbSaw = "";
-    return fn(n);
+  // 画面に出す。IPAT(jQuery Mobile)は画面が動いている最中のタッチを無視するので、動かしたらその回は押さない
+  function bringIntoView(el) {
+    try { el.scrollIntoView({block: "center"}); } catch (x) { /* 無視 */ }
+    window.__kbScrollAt = Date.now();
+  }
+  // cands の n 番目(押せなければその次…)を押す所に決める。{el, p} / 画面を動かした {scroll} / 押せる所が無い null
+  function aim(cands, n) {
+    for (var k = 0; k < cands.length; k++) {
+      var el = cands[(n - 1 + k) % cands.length];
+      if (!visible(el)) continue;
+      if (!inView(el)) { bringIntoView(el); return {scroll: true}; }
+      if (Date.now() - (window.__kbScrollAt || 0) < 600) return {scroll: true};
+      var p = point(el);
+      if (p) return {el: el, p: p};
+    }
+    return null;
+  }
+  function tapOut(a, n, total, msg) {
+    window.__kbTapped = short(a.el);
+    window.__kbInfo = n + "回目 " + location.pathname + " | 押した所 " + short(a.el) + " 候補" + total +
+      " | 画面 " + innerWidth + "x" + innerHeight + " | " + describe(a.el);
+    return out("tap", msg, {x: a.p.x, y: a.p.y, info: window.__kbInfo});
   }
   // 押せる所が無い(画面が切り替わる途中など)ときは少し待つ。6秒ほど待っても無ければ止める
   function missWait(key, msg, el) {
@@ -164,10 +169,21 @@
     return t > 1000 && (!moving || t > 2500);
   }
   var waitMove = function () { return out("wait", "画面が切り替わるのを待っています", {info: window.__kbSettle}); };
+  // ボタンを押す。同じボタンは4秒あけ、押す所を変えて4回まで。画面を動かしただけの回は数えない
   function press(key, cands, msg, el) {
     if (!settled()) return waitMove();
-    if (!cands.some(function (c) { return !!point(c); })) return missWait(key, msg, el);
-    return once(key, function (n) { return tapAny(cands, n, msg) || missWait(key, msg, el); });
+    if (window.__kbKey === key && Date.now() - (window.__kbAt || 0) < 4000) return out("wait", "画面が変わるのを待っています");
+    var n = window.__kbKey === key ? (window.__kbN || 0) + 1 : 1;
+    if (n > 4)
+      return out("error", "押す所を変えて4回押しても画面が変わりません。手で押して進むか確かめてください",
+        {info: (window.__kbInfo || "") + " | 届いたタッチ " + (window.__kbSaw || "なし") + " | 選ばれている " + (selNums().join(",") || "なし") +
+          " | 候補 " + cands.map(short).join(" ") + " | " + logText()});
+    var a = aim(cands, n);
+    if (!a) return missWait(key, msg, el);
+    if (a.scroll) return out("wait", msg + "(画面を動かしました)");
+    window.__kbKey = key; window.__kbAt = Date.now(); window.__kbN = n;
+    window.__kbSaw = "";
+    return tapOut(a, n, cands.length, msg);
   }
   // 文字に loose が入っている、見えている短い物(見つからないときの手がかり。最大6つ)
   function near(loose) {
@@ -350,7 +366,7 @@
       var cands = rowSpots(rf), now = shape(rf.row);
       // 押す前: 行を画面に出して1回待ち、形が落ち着いてから押す(画面に出したときに変わる所を、押して変わったと見ないように)
       if (!d || d.prep != null) {
-        if (!d) { point(rf.row); SEL[key] = {prep: now, k: 0}; return out("wait", wt + "(準備)"); }
+        if (!d) { if (!inView(rf.row)) bringIntoView(rf.row); SEL[key] = {prep: now, k: 0}; return out("wait", wt + "(準備)"); }
         if (now !== d.prep && d.k < 3) { d.prep = now; d.k++; return out("wait", wt + "(準備)"); }
         d = SEL[key] = {n: 0, flips: 0};
       }
@@ -383,9 +399,11 @@
           }
         }
       }
-      var n = d.n + 1, res = tapAny(cands, n, wt);
-      if (!res) return missWait("row" + key, wt, rf.num);
+      var n = d.n + 1, a = aim(cands, n);
+      if (!a) return missWait("row" + key, wt, rf.num);
+      if (a.scroll) return out("wait", wt + "(画面を動かしました)");
       window.__kbSaw = "";
+      var res = tapOut(a, n, cands.length, wt);
       SEL[key] = {shape: now, was: sel, at: Date.now(), n: n, el: window.__kbTapped || "?", flips: d.flips || 0};
       return res;
     }
