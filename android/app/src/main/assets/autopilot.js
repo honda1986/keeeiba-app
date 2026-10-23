@@ -51,8 +51,10 @@
     if (cx < 0 || cy < 0 || cx > innerWidth || cy > innerHeight) return null;
     var hit = document.elementFromPoint(cx, cy);
     if (!hit) return null;
-    var ok = hit === el || el.contains(hit) ||
-      (hit.contains(el) && hit !== document.body && hit !== document.documentElement);
+    // 押す物そのもの・その中・それを囲む物、または同じ行(li・tr)の中の物(行全体に重ねて押せるようにした作りがある)
+    var top = hit === document.body || hit === document.documentElement;
+    var row = el.closest ? el.closest("li,tr") : null;
+    var ok = hit === el || el.contains(hit) || (!top && hit.contains(el)) || (!top && row && row.contains(hit));
     if (!ok) return null;
     var vv = window.visualViewport;
     var ox = vv ? vv.offsetLeft : 0, oy = vv ? vv.offsetTop : 0;
@@ -119,15 +121,26 @@
     window.__kbSaw = "";
     return fn(n);
   }
+  // 押せる所が無い(画面が切り替わる途中など)ときは少し待つ。6秒ほど待っても無ければ止める
+  function missWait(key, msg, el) {
+    window.__kbMiss = window.__kbMissKey === key ? (window.__kbMiss || 0) + 1 : 1;
+    window.__kbMissKey = key;
+    if (window.__kbMiss < 8) return out("wait", msg + " を押せるようになるのを待っています");
+    var r = el.getBoundingClientRect();
+    var hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return out("error", msg + " を押せる場所が見つかりません。手で続けてください", {info: short(el) + " | 真ん中にある物 " +
+      (hit ? short(hit) + " " + describe(hit) : "なし") + " | 画面 " + innerWidth + "x" + innerHeight + " | " + describe(el)});
+  }
+  function press(key, cands, msg, el) {
+    if (!cands.some(function (c) { return !!point(c); })) return missWait(key, msg, el);
+    return once(key, function (n) { return tapAny(cands, n, msg) || missWait(key, msg, el); });
+  }
   function clickText(key, re, msg) {
-    return once(key, function (n) {
-      var es = findAll(re);
-      if (!es.length) return out("error", msg + " が見つかりません。手で続けてください");
-      var cands = [];
-      es.forEach(function (e) { spots(e).forEach(function (el) { if (cands.indexOf(el) < 0) cands.push(el); }); });
-      return tapAny(cands, n, msg) ||
-        out("error", msg + " を押せる場所が見つかりません。手で続けてください", {info: short(es[0]) + " | " + describe(es[0])});
-    });
+    var es = findAll(re);
+    if (!es.length) return out("error", msg + " が見つかりません。手で続けてください");
+    var cands = [];
+    es.forEach(function (e) { spots(e).forEach(function (el) { if (cands.indexOf(el) < 0) cands.push(el); }); });
+    return press(key, cands, msg, es[0]);
   }
   // 馬番(枠番) u のチェック。馬単・3連単の通常は 1着・2着・3着 の列(pos 番目)、それ以外は1列
   function boxFor(u, pos, ordered) {
@@ -195,9 +208,7 @@
       if (!cb) { miss.push(u); continue; }
       if (cb.checked) continue;
       var tgts = boxSpots(cb), what = name + u + (ORDERED ? "(" + (pos + 1) + "着)" : "") + " を選ぶ";
-      return once("cb" + pos + "-" + u, function (n) {
-        return tapAny(tgts, n, what) || out("error", what + "ところを押せません。手で選んでください", {info: describe(cb)});
-      });
+      return press("cb" + pos + "-" + u, tgts, what, cb);
     }
     if (miss.length) return out("error", name + miss.join("・") + " を選べませんでした。手で選んでください");
     return clickText("next", /^金額入力画面へ$/, "金額入力画面へ");
