@@ -63,7 +63,7 @@ public class MainActivity extends Activity {
     int steps = 0;
     String phase = "off";
     long lastAt = 0;
-    String lastMsg = "", lastInfo = "";       // 止まったときにコピーする手がかり(最後の画面と様子)
+    String lastMsg = "", lastInfo = "", tapInfo = "";   // 止まったときにコピーする手がかり(最後の画面・様子・押した所)
     String autopilot;
 
     @Override
@@ -205,6 +205,7 @@ public class MainActivity extends Activity {
         steps = 0;
         lastMsg = "";
         lastInfo = "";
+        tapInfo = "";
         phase = "run";
         lastAt = System.currentTimeMillis();
         setBar("自動入力を始めます");
@@ -255,7 +256,8 @@ public class MainActivity extends Activity {
             JSONObject o = new JSONObject(s);
             String st = o.optString("st"), msg = o.optString("msg"), info = o.optString("info");
             if (!"wait".equals(st) || !msg.isEmpty()) lastMsg = msg;
-            lastInfo = "画面 " + o.optString("page") + (info.isEmpty() ? "" : " | " + info);
+            if ("tap".equals(st)) tapInfo = info;
+            lastInfo = "画面 " + o.optString("page") + " | " + (info.isEmpty() ? "最後に押した所 " + tapInfo : info);
             if ("tap".equals(st) || "login".equals(st)) {       // 進んだ(ログイン中も)ら、止めるまでの時間を延ばす
                 lastAt = System.currentTimeMillis();
             }

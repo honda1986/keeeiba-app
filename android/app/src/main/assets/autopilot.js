@@ -110,7 +110,7 @@
     if (!p) return null;
     window.__kbInfo = n + "回目 " + location.pathname + " | 押した所 " + short(el) + " 候補" + ok.length + "/" + cands.length +
       " | 画面 " + innerWidth + "x" + innerHeight + " | " + describe(el);
-    return out("tap", msg, {x: p.x, y: p.y});
+    return out("tap", msg, {x: p.x, y: p.y, info: window.__kbInfo});
   }
   // 同じ画面で続けて押さない(画面が変わるまで 4 秒は待つ)。同じボタンを続けて4回(押す所を変えて)押しても変わらなければ止める
   function once(key, fn) {
@@ -242,7 +242,8 @@
     var name = B.type === "枠連" ? "枠番 " : "馬番 ";
     var miss = [];
     if (!document.querySelectorAll("input[type=checkbox]").length) {
-      // 行を押して選ぶ作り。押すたびに選ぶ・外すが入れ替わるので、1頭1回だけ押し、画面が変わったら選べたことにする
+      // 行を押して選ぶ作り。押すたびに選ぶ・外すが入れ替わるので、1頭1回だけ押し、画面が変わったら選べたことにする。
+      // 変わらなければ押し直さずに止める(選べていたのに押し直すと外れてしまう)
       if (ORDERED)
         return out("final", B.type + "の着順の選び方はまだ分からないので、馬番の画面で止めました。" + B.combo.join("→") + " を手で選んでください");
       var pg = document.querySelector(".ui-page-active") || document.body;
@@ -253,14 +254,17 @@
         if (d && d.ok) continue;
         if (d) {
           if (sig(pg) !== d.sig) { d.ok = true; continue; }
-          if (Date.now() - d.at < 2500) return out("wait", name + v + " が選ばれるのを待っています");
-          if (d.n >= 3) return out("error", name + v + " を押しても選ばれません。手で選んでください", {info: window.__kbInfo || ""});
+          if (Date.now() - d.at < 3000) return out("wait", name + v + " が選ばれるのを待っています");
+          var kids = Array.prototype.slice.call(rf.row.querySelectorAll("*"), 0, 10).map(short).join(" ");
+          return out("error", name + v + " を押しましたが、選べたか分かりません。画面を見て、選ばれていなければ手で選んでください",
+            {info: (window.__kbInfo || "") + " | 届いたタッチ " + (window.__kbSaw || "なし") + " | 行 " + describe(rf.row) + " | 行の中 " + kids});
         }
         var cands = [rf.row.querySelector("a[data-value]"), rf.num.closest ? rf.num.closest("a") : null, rf.num, rf.row]
           .filter(function (el, i, a) { return el && a.indexOf(el) === i; });
-        var n = d ? d.n + 1 : 1, before = sig(pg), res = tapAny(cands, n, wt);
+        var before = sig(pg), res = tapAny(cands, 1, wt);
         if (!res) return missWait("row" + v, wt, rf.num);
-        done[v] = {sig: before, at: Date.now(), n: n};
+        window.__kbSaw = "";
+        done[v] = {sig: before, at: Date.now()};
         return res;
       }
       if (miss.length) return out("error", name + miss.join("・") + " が見つかりません。手で選んでください",

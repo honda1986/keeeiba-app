@@ -1076,7 +1076,7 @@ function renderVote() {
   el.querySelectorAll("[data-go]").forEach(a => a.onclick = e => { e.preventDefault(); openDay(d.date, a.dataset.go); });
   el.querySelectorAll("[data-mi]").forEach(b => b.onclick = () => {
     const x = items[+b.dataset.mi];
-    if (x.t) openBuilder({rid: x.r.id, type: x.t.type, method: x.t.method, sel: x.t.sel, axis: x.t.axis, unit: x.t.unit, edit: x.t.id});
+    if (x.t) openBuilder({rid: x.r.id, type: x.t.type, method: x.t.method, sel: x.t.sel, axis: x.t.axis, cols: x.t.cols, unit: x.t.unit, edit: x.t.id});
     else openBuilder({rid: x.r.id, type: x.type, sel: x.c});
   });
   el.querySelectorAll("[data-vote]").forEach(b => b.onclick = () => {
@@ -1133,16 +1133,25 @@ const WAKU_C = [null, ["#fff", "#222"], ["#222", "#fff"], ["#e8382f", "#fff"], [
                 ["#f5d000", "#222"], ["#2e9e4f", "#fff"], ["#f08a1c", "#fff"], ["#f39ac0", "#222"]];
 const dowOf = d => "日月火水木金土"[toDate(d).getDay()];
 const byNum = (a, b) => a - b;
-const ticketId = t => `${t.rid}|${t.type}|${t.method}|${t.axis ?? ""}|${t.sel.join(",")}`;
+const colsText = (t, sep) => (t.cols || []).slice(0, NEED[t.type]).map(c => c.join(",") || "?").join(sep);
+const ticketId = t => `${t.rid}|${t.type}|${t.method}|${t.axis ?? ""}|${t.method === "フォーメーション" ? colsText(t, "/") : t.sel.join(",")}`;
 const tKey = (t, c) => t.id + "#" + c.join("-");
 // xs から k 個の組(順番なし)・並び(順番あり)
 const combos = (xs, k) => k === 0 ? [[]] : xs.flatMap((x, i) => combos(xs.slice(i + 1), k - 1).map(c => [x, ...c]));
 const perms = (xs, k) => k === 0 ? [[]] : xs.flatMap((x, i) => perms(xs.filter((_, j) => j !== i), k - 1).map(c => [x, ...c]));
-// 買い目 t = {type, method, sel, axis} を1点ずつの組にする(馬単・3連単は着順のまま、ほかは小さい順)
+// 買い目 t = {type, method, sel, axis, cols} を1点ずつの組にする(馬単・3連単は着順のまま、ほかは小さい順)
+// フォーメーションは列(1頭目・2頭目・3頭目。馬単・3連単は1着・2着・3着)ごとに選んだ馬の組み合わせ(同じ馬は入れない)
 function expand(t) {
   const k = NEED[t.type], ord = ORDERED_T.includes(t.type);
   let cs = [];
   if (k === 1) cs = t.sel.map(u => [u]);
+  else if (t.method === "フォーメーション") {
+    const cols = (t.cols || []).slice(0, k);
+    let acc = cols.length === k ? [[]] : [];
+    for (const c of cols) acc = acc.flatMap(a => c.filter(u => !a.includes(u)).map(u => [...a, u]));
+    const seen = new Set();
+    cs = acc.filter(c => { const key = (ord ? c : [...c].sort(byNum)).join("-"); return !seen.has(key) && seen.add(key); });
+  }
   else if (t.method === "通常") cs = t.sel.length === k ? [t.sel] : [];
   else if (t.method === "ボックス") cs = (ord ? perms : combos)([...t.sel].sort(byNum), k);
   else if (t.method === "ながし" && t.axis != null)          // 馬単・3連単は軸が1着
@@ -1150,6 +1159,7 @@ function expand(t) {
   return cs.map(c => ord ? c : [...c].sort(byNum));
 }
 function selText(t) {
+  if (t.method === "フォーメーション") return colsText(t, ORDERED_T.includes(t.type) ? "→" : "-");
   if (t.method === "ながし") return `軸${t.axis ?? "?"}${ORDERED_T.includes(t.type) ? "→" : "-"}${t.sel.join(",") || "?"}`;
   if (t.method === "通常" && NEED[t.type] > 1) return comboText(t.type, t.sel);
   return t.sel.join(",");
@@ -1159,12 +1169,24 @@ function ticketText(d, r, t) {
   return `${+d.slice(4, 6)}/${+d.slice(6, 8)} ${r.venue}${r.rno}R ${t.type}${t.method !== "通常" ? " " + t.method : ""} ${selText(t)} ` +
     (n > 1 ? `各${t.unit}円(${n}点 ${t.unit * n}円)` : `${t.unit}円`);
 }
+// どの買い方も、フォーメーションの列にすると同じ形になる(通常=1頭ずつ、ボックス=全部の列に全部、ながし=軸と相手)
+function toCols(t) {
+  const k = NEED[t.type];
+  if (k === 1) return [t.sel];
+  if (t.method === "フォーメーション") return (t.cols || []).slice(0, k);
+  if (t.method === "ボックス") return Array.from({length: k}, () => [...t.sel]);
+  if (t.method === "ながし") return [[t.axis], ...Array.from({length: k - 1}, () => [...t.sel])];
+  return t.sel.map(u => [u]);
+}
 // アプリが IPAT の画面を進めるときの買い目(枠連は枠番)
 const ipatBet = (d, r, t) => ({venue: r.venue, dow: dowOf(d), rno: r.rno, type: t.type, method: t.method,
-  combo: t.method === "ながし" ? [t.axis, ...t.sel] : t.sel, axis: t.axis, aite: t.method === "ながし" ? t.sel : []});
+  combo: t.method === "ながし" ? [t.axis, ...t.sel] : t.method === "フォーメーション" ? [...new Set(toCols(t).flat())] : t.sel,
+  axis: t.axis, aite: t.method === "ながし" ? t.sel : [], cols: toCols(t)});
 function saveTicket(b) {
   const t = {d: b.d, rid: b.rid, type: b.type, method: b.method, axis: b.method === "ながし" ? b.axis : null,
-             sel: b.method === "通常" && ORDERED_T.includes(b.type) ? [...b.sel] : [...b.sel].sort(byNum), unit: b.unit};
+             sel: b.method === "フォーメーション" ? [] : b.method === "通常" && ORDERED_T.includes(b.type) ? [...b.sel] : [...b.sel].sort(byNum),
+             unit: b.unit};
+  if (b.method === "フォーメーション") t.cols = b.cols.slice(0, NEED[b.type]).map(c => [...c].sort(byNum));
   t.id = ticketId(t);
   const ts = loadTickets();
   if (b.edit && b.edit !== t.id) delete ts[b.edit];          // 「直す」で開いたときは置き換える
@@ -1187,7 +1209,8 @@ function openBuilder(o) {
   if (!d || !rs.length) { alert("出馬表が出ているレースがありません"); return; }
   const r = rs.find(x => x.id === o.rid) || rs.find(x => !x.result && (untilClose(d.date, x) ?? 1) > 0) || rs[0];
   bst = {d: d.date, rid: r.id, type: o.type || "ワイド", method: o.method || "通常", sel: [...(o.sel || [])], axis: o.axis ?? null,
-         mode: o.axis != null ? "aite" : "axis", unit: o.unit || +store.get("keiba-unit") || 100, edit: o.edit};
+         mode: o.axis != null ? "aite" : "axis", unit: o.unit || +store.get("keiba-unit") || 100, edit: o.edit,
+         cols: o.cols ? o.cols.map(c => [...c]).concat([[], [], []]).slice(0, 3) : [[], [], []], col: 0};
   drawBuilder();
   $("#betdlg").showModal();
 }
@@ -1199,7 +1222,8 @@ function drawBuilder() {
   const rs = allRaces().filter(x => x.horses && x.horses.length);
   const k = NEED[b.type], ord = ORDERED_T.includes(b.type), waku = b.type === "枠連";
   if (k === 1) b.method = "通常";
-  const t = () => ({type: b.type, method: b.method, sel: b.sel, axis: b.method === "ながし" ? b.axis : null, unit: b.unit});
+  const t = () => ({type: b.type, method: b.method, sel: b.sel, axis: b.method === "ながし" ? b.axis : null, unit: b.unit, cols: b.cols});
+  const colName = i => ord ? `${i + 1}着` : `${i + 1}頭目`;
   const cs = expand(t());
   const closed = !!r.result || (untilClose(b.d, r) ?? 1) <= 0;
   const marks = {};
@@ -1208,14 +1232,18 @@ function drawBuilder() {
   const opts = waku
     ? [...new Set(live.map(h => h.waku))].sort(byNum).map(w => ({u: w, w, nm: live.filter(h => h.waku === w).map(h => h.umaban).join("・") + "番"}))
     : r.horses.map(h => ({u: h.umaban, w: h.waku, nm: h.name || "", mk: marks[h.umaban] || "", off: h.scratched}));
-  const on = u => b.method === "ながし" ? (u === b.axis || b.sel.includes(u)) : b.sel.includes(u);
+  const on = u => b.method === "フォーメーション" ? b.cols[b.col].includes(u)
+    : b.method === "ながし" ? (u === b.axis || b.sel.includes(u)) : b.sel.includes(u);
   const badge = u => {
+    if (b.method === "フォーメーション")
+      return b.cols.slice(0, k).map((c, i) => c.includes(u) ? i + 1 : 0).filter(Boolean).join("・");
     if (b.method === "ながし") return u === b.axis ? "軸" : b.sel.includes(u) ? "相手" : "";
     const i = b.sel.indexOf(u);
     return i < 0 ? "" : ord && b.method === "通常" ? `${i + 1}着` : "✓";
   };
   const what = waku ? "枠" : "馬";
-  const hint = b.method === "ながし" ? (b.mode === "axis" ? `軸の${what}を1つ選ぶ${ord ? "(1着に固定)" : ""}` : `相手の${what}を選ぶ(いくつでも)`)
+  const hint = b.method === "フォーメーション" ? `${colName(b.col)}の${what}を選ぶ(いくつでも。列を切り替えて全部の列を選ぶ)`
+    : b.method === "ながし" ? (b.mode === "axis" ? `軸の${what}を1つ選ぶ${ord ? "(1着に固定)" : ""}` : `相手の${what}を選ぶ(いくつでも)`)
     : b.method === "ボックス" ? `${what}を${k}つ以上選ぶ`
     : k === 1 ? `${what}を選ぶ(いくつでも。1つ1点)` : ord ? `${what}を1着から順に${k}つ選ぶ` : `${what}を${k}つ選ぶ`;
   const sum = () => cs.length ? `<b>${cs.length}点 · ${yen(cs.length * b.unit)}</b>(1点${b.unit}円)<br>
@@ -1231,7 +1259,9 @@ function drawBuilder() {
     <div class="bsec">券種</div>
     <div class="chips">${TYPES.map(x => `<button class="chip" data-bt="${x}" aria-pressed="${x === b.type}">${x}</button>`).join("")}</div>
     ${k > 1 ? `<div class="bsec">方式</div>
-      <div class="chips">${["通常", "ボックス", "ながし"].map(x => `<button class="chip" data-bm="${x}" aria-pressed="${x === b.method}">${x}</button>`).join("")}</div>` : ""}
+      <div class="chips">${["通常", "ボックス", "ながし", "フォーメーション"].map(x => `<button class="chip" data-bm="${x}" aria-pressed="${x === b.method}">${x}</button>`).join("")}</div>` : ""}
+    ${b.method === "フォーメーション" ? `<div class="chips">${b.cols.slice(0, k).map((c, i) =>
+      `<button class="chip" data-bc="${i}" aria-pressed="${b.col === i}">${colName(i)}<b>${c.length}</b></button>`).join("")}</div>` : ""}
     ${b.method === "ながし" ? `<div class="chips">${[["axis", "軸を選ぶ"], ["aite", "相手を選ぶ"]].map(([m, l]) =>
       `<button class="chip" data-bn="${m}" aria-pressed="${b.mode === m}">${l}</button>`).join("")}</div>` : ""}
     <div class="bsec">${esc(hint)}</div>
@@ -1248,29 +1278,40 @@ function drawBuilder() {
       <button class="btn" id="bDone" ${cs.length ? "" : "disabled"}>買った</button>
     </div>
     <p class="legendnote">${closed ? "このレースは締切済みです(「買った」の記録だけ付けられます)。" : ""}
-      ${window.KeibaApp ? `「IPATで入力」はIPATの画面を${b.method === "ながし" ? "馬番を選ぶ画面" : "金額入力の画面"}まで自動で進めます。金額・セット・投票は自分で。` : ""}
+      ${window.KeibaApp ? `「IPATで入力」はIPATの画面を${["ながし", "フォーメーション"].includes(b.method) ? "馬番を選ぶ画面" : "金額入力の画面"}まで自動で進めます。金額・セット・投票は自分で。` : ""}
       作った買い目は投票タブに入ります。</p>`;
   box.querySelector(".bgrid").scrollTop = sc;
-  $("#bRace").onchange = e => { b.rid = e.target.value; b.sel = []; b.axis = null; b.mode = "axis"; drawBuilder(); };
+  const clear = () => { b.sel = []; b.axis = null; b.mode = "axis"; b.cols = [[], [], []]; b.col = 0; };
+  $("#bRace").onchange = e => { b.rid = e.target.value; clear(); drawBuilder(); };
   box.querySelectorAll("[data-bt]").forEach(x => x.onclick = () => {
     const nt = x.dataset.bt;
-    if ((nt === "枠連") !== waku) { b.sel = []; b.axis = null; b.mode = "axis"; }       // 枠番と馬番は別
+    if ((nt === "枠連") !== waku) clear();       // 枠番と馬番は別
+    if (b.col >= NEED[nt]) b.col = 0;
     b.type = nt;
     if (b.method === "通常" && NEED[nt] > 1) b.sel = b.sel.slice(0, NEED[nt]);
     drawBuilder();
   });
   box.querySelectorAll("[data-bm]").forEach(x => x.onclick = () => {
     const nm = x.dataset.bm;
-    if (nm === "ながし" && b.method !== "ながし") { b.axis = b.sel[0] ?? null; b.sel = b.sel.slice(1); b.mode = b.axis == null ? "axis" : "aite"; }
+    if (b.method === "フォーメーション" && nm !== "フォーメーション") b.sel = [...new Set(b.cols.slice(0, k).flat())];
+    if (nm === "フォーメーション" && b.method !== "フォーメーション") {      // 今の選び方を列に移す
+      b.cols = toCols(t()).map(c => c.filter(u => u != null)).concat([[], [], []]).slice(0, 3);
+      b.col = 0; b.sel = []; b.axis = null;
+    }
+    else if (nm === "ながし" && b.method !== "ながし") { b.axis = b.sel[0] ?? null; b.sel = b.sel.slice(1); b.mode = b.axis == null ? "axis" : "aite"; }
     else if (nm !== "ながし" && b.method === "ながし") { if (b.axis != null) b.sel = [b.axis, ...b.sel]; b.axis = null; }
     b.method = nm;
     if (nm === "通常") b.sel = b.sel.slice(0, k);
     drawBuilder();
   });
   box.querySelectorAll("[data-bn]").forEach(x => x.onclick = () => { b.mode = x.dataset.bn; drawBuilder(); });
+  box.querySelectorAll("[data-bc]").forEach(x => x.onclick = () => { b.col = +x.dataset.bc; drawBuilder(); });
   box.querySelectorAll("[data-bu]").forEach(x => x.onclick = () => {
     const u = +x.dataset.bu;
-    if (b.method === "ながし") {
+    if (b.method === "フォーメーション") {
+      const c = b.cols[b.col];
+      b.cols[b.col] = c.includes(u) ? c.filter(v => v !== u) : [...c, u];
+    } else if (b.method === "ながし") {
       if (b.mode === "axis") { b.axis = b.axis === u ? null : u; b.sel = b.sel.filter(v => v !== u); if (b.axis != null) b.mode = "aite"; }
       else if (u === b.axis) { b.axis = null; b.mode = "axis"; }
       else b.sel = b.sel.includes(u) ? b.sel.filter(v => v !== u) : [...b.sel, u];
