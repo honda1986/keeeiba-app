@@ -367,8 +367,8 @@ def fetch_odds(rid):
     return out
 
 
-PAY = {"Tansho": ("単勝", 1), "Umaren": ("馬連", 2), "Wide": ("ワイド", 2), "Umatan": ("馬単", 2),
-       "Fuku3": ("3連複", 3), "Tan3": ("3連単", 3)}
+PAY = {"Tansho": ("単勝", 1), "Fukusho": ("複勝", 1), "Wakuren": ("枠連", 2), "Umaren": ("馬連", 2),
+       "Wide": ("ワイド", 2), "Umatan": ("馬単", 2), "Fuku3": ("3連複", 3), "Tan3": ("3連単", 3)}
 ORDERED = ("馬単", "3連単")      # 着順どおりの組で払い戻す券種
 
 

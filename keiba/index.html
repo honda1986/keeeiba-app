@@ -144,6 +144,26 @@ details>summary::-webkit-details-marker{display:none}
 .vrow .what .st{font-size:12px;color:var(--muted)}
 .vrow .act{flex:none;display:flex;flex-direction:column;gap:6px;align-items:stretch}
 .vrow .go{color:inherit;text-decoration:none}
+.vrow .tag{margin-left:2px}
+.lnk{color:var(--accent);font-size:12px;font-weight:700;padding:0;margin-left:6px}
+.mkrow{padding:8px 14px;border-top:1px solid var(--line)}
+.bets .mkrow{padding:8px 0 0;border-top:0}
+#betdlg{max-height:calc(100vh - 24px);overflow-y:auto}
+#betdlg h3{margin:0 0 6px;font-size:15px}
+#betdlg select,#betdlg input{width:100%;background:var(--surface);color:var(--ink);border:1px solid var(--line2);border-radius:10px;padding:8px 10px;font:inherit;font-size:14px}
+#betdlg .chips{margin:0 0 4px}
+.bsec{font-size:11px;color:var(--muted);font-weight:700;margin:10px 0 4px}
+.bgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:5px;max-height:34vh;overflow-y:auto}
+.hb{display:flex;align-items:center;gap:5px;padding:6px;border-radius:9px;border:1px solid var(--line2);background:var(--surface);color:var(--ink);font-size:12.5px;text-align:left;min-width:0}
+.hb .u{flex:none;min-width:22px;height:22px;border-radius:6px;display:grid;place-items:center;font-weight:800;font-size:12px;border:1px solid var(--line2)}
+.hb .nm{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.hb .o{flex:none;font-size:11px;font-weight:800}
+.hb[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.hb:disabled{opacity:.35;text-decoration:line-through}
+.bsum{font-size:13px;margin:10px 0 8px;padding:8px 10px;border-radius:10px;background:var(--surface2);word-break:break-all}
+.bact{display:flex;gap:8px;flex-wrap:wrap}
+.bact .btn{flex:1;text-align:center;min-width:90px}
+.btn:disabled{opacity:.4;cursor:default}
 .datenav .d{width:auto;flex:1;font-weight:700}
 .datenav .d small{font-weight:600;color:var(--muted);margin-left:4px}
 .srcnote{font-size:12px;color:var(--ink2);background:var(--accent-bg);border:1px solid var(--accent-line);border-radius:10px;padding:8px 12px;margin-bottom:10px}
@@ -222,6 +242,8 @@ dialog.sheet .close{display:block;width:100%;margin-top:10px;padding:9px;border-
 </div>
 <dialog id="caldlg" class="sheet" aria-label="日付を選ぶ"><div id="calbox"></div>
   <button class="close" id="calclose">閉じる</button></dialog>
+<dialog id="betdlg" class="sheet" aria-label="買い目を作る"><div id="betbox"></div>
+  <button class="close" id="betclose">閉じる</button></dialog>
 <nav class="tabbar"><div class="in" role="tablist">
   <button role="tab" data-v="race" aria-selected="true">レース</button>
   <button role="tab" data-v="money" aria-selected="false">収支・分析</button>
@@ -498,6 +520,7 @@ function drawList() {
   }
   flush();
   box.innerHTML = html;
+  box.querySelectorAll("[data-mk]").forEach(b => b.onclick = () => openBuilder({rid: b.dataset.mk}));
   box.querySelectorAll(".oddsb").forEach(b => b.onclick = () => {
     const c = b.closest(".card,.skipd"); c.classList.toggle("showodds");
     b.textContent = c.classList.contains("showodds") ? "人気・オッズを隠す" : "人気・オッズを見る(最後に)";
@@ -553,7 +576,8 @@ function card(r) {
     ${p.notes && p.notes.length ? `<div class="note">${p.notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
     ${courseBox(p.course)}
     <div class="bets">${bets}
-      <div class="total"><span>${p.points}点</span><span>${yen(p.stake)}</span></div></div>
+      <div class="total"><span>${p.points}点</span><span>${yen(p.stake)}</span></div>
+      <div class="mkrow"><button class="btn sm" data-mk="${esc(r.id)}">ほかの買い目を作る</button></div></div>
     ${res && res.order ? `<div class="res">結果 <b class="num">${res.order.slice(0,3).join("-")}</b>
       ${s ? ` · ◎${s.honmei_rank ?? "-"}着 ○${s.taikou_rank ?? "-"}着 · ${s.hit ? `<b class="good">的中 ${yen(s.ret)}</b>` : `<span class="neg">不的中</span>`}` : ""}
       ${altLine(r)}</div>` : ""}
@@ -619,6 +643,7 @@ function skipRow(r) {
   return `<details class="skipd more" id="r-${esc(r.id)}" style="border-top:0;border-bottom:1px solid var(--line)"><summary class="skip">
     <b>${head(r)}</b><span class="r">${esc(r.pred.reason)}</span>${rs}</summary>
     ${skipRes(r)}
+    <div class="mkrow"><button class="btn sm" data-mk="${esc(r.id)}">買い目を作る</button></div>
     <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${r.pred.horses.length ? table(r) + `<button class="oddsb">人気・オッズを見る(最後に)</button>` : ""}</details>`;
 }
 
@@ -927,8 +952,9 @@ function untilClose(d, r) {
 function voteRet(r, type, c, unit) {
   const pay = r && r.result && r.result.payout;
   if (!pay) return null;
+  if (!pay[type]) return null;                 // 払戻表にその券種が無い(古いデータは複勝・枠連が無い)
   const key = ORDERED_T.includes(type) ? c.join("-") : [...c].sort((a, b) => a - b).join("-");
-  return ((pay[type] || {})[key] || 0) * unit / 100;
+  return (pay[type][key] || 0) * unit / 100;
 }
 async function copyText(t, btn) {
   try { await navigator.clipboard.writeText(t); }
@@ -948,7 +974,7 @@ function renderVote() {
   const el = $("#v-vote"), d = state.day;
   if (!el) return;
   if (!d) { el.innerHTML = `<div class="empty">まだデータがありません。</div>`; return; }
-  const votes = loadVotes();
+  const votes = loadVotes(), tickets = loadTickets();
   const items = [];
   for (const r of races()) {
     const p = r.pred;
@@ -956,20 +982,36 @@ function renderVote() {
     for (const b of p.bets) for (const c of b.combos)
       items.push({r, type: b.type, c, unit: b.unit, verdict: p.verdict, id: voteId(r.id, b.type, c)});
   }
+  // 自分で作った買い目(予想に無いレース・券種も)
+  for (const t of Object.values(tickets)) {
+    const r = (d.races || {})[t.rid];
+    if (t.d === d.date && r) items.push({r, t, type: t.type, unit: t.unit, id: t.id, cs: expand(t)});
+  }
   // 買った印があるのに今の買い目に無いもの(印を付けたあとで予想が変わった)も出す
   for (const [id, v] of Object.entries(votes)) {
-    if (v.d !== d.date || items.some(x => x.id === id)) continue;
+    if (v.d !== d.date || v.t || items.some(x => x.id === id)) continue;
     const r = (d.races || {})[v.rid];
     if (r) items.push({r, type: v.type, c: v.combo, unit: v.unit, verdict: "", id, old: true});
   }
-  items.sort((a, b) => (a.r.start || "99").localeCompare(b.r.start || "99") || a.r.id.localeCompare(b.r.id));
-  const open = items.filter(x => !x.old && !x.r.result && (untilClose(d.date, x.r) ?? 1) > 0);
-  const mine = items.filter(x => votes[x.id]);
-  const mineSet = mine.map(x => ({x, ret: voteRet(x.r, x.type, x.c, votes[x.id].unit)})).filter(z => z.ret != null);
-  const mSt = mineSet.reduce((a, z) => a + votes[z.x.id].unit, 0), mRt = mineSet.reduce((a, z) => a + z.ret, 0);
+  items.sort((a, b) => (a.r.start || "99").localeCompare(b.r.start || "99") || a.r.id.localeCompare(b.r.id) || !!a.t - !!b.t);
+  const bought = x => x.t ? x.cs.length > 0 && x.cs.every(c => votes[tKey(x.t, c)]) : !!votes[x.id];
+  const retOf = x => {
+    if (!x.t) return voteRet(x.r, x.type, x.c, x.unit);
+    const rs = x.cs.map(c => voteRet(x.r, x.type, c, x.unit));
+    return rs.some(v => v == null) ? null : rs.reduce((a, v) => a + v, 0);
+  };
+  const textOf = x => x.t ? ticketText(d.date, x.r, x.t) : betText(d.date, x.r, x.type, x.c, x.unit);
+  const betOf = x => ipatBet(d.date, x.r, x.t || {type: x.type, method: "通常", sel: x.c, axis: null});
+  const closed = x => !!x.r.result || (untilClose(d.date, x.r) ?? 1) <= 0;
+  const open = items.filter(x => !x.old && !closed(x));
+  // この日の「買った」(予想の買い目も自分の買い目も)
+  const mine = Object.values(votes).filter(v => v.d === d.date);
+  const mineSet = mine.map(v => ({v, ret: voteRet((d.races || {})[v.rid], v.type, v.combo, v.unit)})).filter(z => z.ret != null);
+  const mSt = mineSet.reduce((a, z) => a + z.v.unit, 0), mRt = mineSet.reduce((a, z) => a + z.ret, 0);
+  const nPts = items.filter(x => !x.old).reduce((a, x) => a + (x.t ? x.cs.length : 1), 0);
   const i = state.days.indexOf(d.date);
   const status = x => {
-    const ret = voteRet(x.r, x.type, x.c, x.unit);
+    const ret = retOf(x);
     if (ret != null) return ret > 0 ? `<b class="good">的中 ${yen(ret)}</b>` : `<span class="neg">外れ</span>`;
     const m = untilClose(d.date, x.r);
     if (m == null) return "発走時刻まだ";
@@ -977,19 +1019,24 @@ function renderVote() {
     return m >= 120 ? `締切 ${esc(x.r.start ? (() => { const t = +x.r.start.slice(0, 2) * 60 + +x.r.start.slice(3, 5) - 2;
       return String(Math.floor(t / 60)).padStart(2, "0") + ":" + String(t % 60).padStart(2, "0"); })() : "")}` : `<b>締切まで ${m}分</b>`;
   };
-  const rows = items.map(x => {
-    const v = votes[x.id];
-    const done = x.r.result || (untilClose(d.date, x.r) ?? 1) <= 0;
+  const rows = items.map((x, n) => {
+    const v = bought(x), done = closed(x);
+    const tag = x.t ? `<span class="tag o">自分で</span>`
+      : x.verdict ? `<span class="badge ${x.verdict}" style="display:inline-grid;min-width:22px;height:20px;font-size:12px;border-radius:6px;vertical-align:1px">${x.verdict}</span>` : "";
+    const what = x.t ? `${esc(x.type)}${x.t.method !== "通常" ? " " + esc(x.t.method) : ""} <b>${esc(selText(x.t))}</b>
+        ${x.cs.length > 1 ? `${x.cs.length}点×${x.unit}円` : x.unit + "円"}`
+      : `${esc(x.type)} <b>${esc(comboText(x.type, x.c))}</b> ${x.unit}円`;
+    const mk = (!done && !x.old && !v ? `<button class="lnk" data-mi="${n}">${x.t ? "直す" : "ほかの買い方"} ›</button>` : "")
+      + (x.t && !v ? `<button class="lnk" data-del="${esc(x.id)}">消す</button>` : "");
     return `<div class="vrow ${done && !v ? "done" : ""}">
       <div class="when">${esc(x.r.start || "")}</div>
       <div class="what"><a class="go" href="#d=${esc(d.date)}&r=${esc(x.r.id)}" data-go="${esc(x.r.id)}">
-        <div class="l1">${esc(x.r.venue)} ${x.r.rno}R ${x.verdict ? `<span class="badge ${x.verdict}" style="display:inline-grid;min-width:22px;height:20px;font-size:12px;border-radius:6px;vertical-align:1px">${x.verdict}</span>` : ""}</div>
-        <div class="l2">${esc(x.type)} <b>${esc(comboText(x.type, x.c))}</b> ${x.unit}円</div></a>
-        <div class="st">${status(x)}${x.old ? " · 予想が変わったので今の買い目には無い" : ""}</div></div>
+        <div class="l1">${esc(x.r.venue)} ${x.r.rno}R ${tag}</div>
+        <div class="l2">${what}</div></a>
+        <div class="st">${status(x)}${x.old ? " · 予想が変わったので今の買い目には無い" : ""}${mk}</div></div>
       <div class="act">
-        ${!done && window.KeibaApp ? `<button class="btn sm on" data-buy="${esc(JSON.stringify({text: betText(d.date, x.r, x.type, x.c, x.unit),
-          rid: x.r.id, date: d.date, venue: x.r.venue, rno: x.r.rno, type: x.type, combo: x.c, unit: x.unit}))}">IPATで買う</button>` : ""}
-        ${!done ? `<button class="btn sm" data-copy="${esc(betText(d.date, x.r, x.type, x.c, x.unit))}">コピー</button>` : ""}
+        ${!done && window.KeibaApp ? `<button class="btn sm on" data-buy="${esc(JSON.stringify({text: textOf(x), bet: betOf(x)}))}">IPATで入力</button>` : ""}
+        ${!done ? `<button class="btn sm" data-copy="${esc(textOf(x))}">コピー</button>` : ""}
         <button class="btn sm ${v ? "on" : ""}" data-vote="${esc(x.id)}" aria-pressed="${v ? "true" : "false"}">${v ? "買った ✓" : "買った"}</button>
       </div></div>`;
   }).join("");
@@ -1000,35 +1047,50 @@ function renderVote() {
       <button id="vnext" aria-label="次の日" ${i < 0 || i >= state.days.length - 1 ? "disabled" : ""}>▶</button>
     </div>
     <div class="sum">
-      <div class="tile"><div class="k">買い目</div><div class="v num">${items.filter(x => !x.old).length}点</div></div>
+      <div class="tile"><div class="k">買い目</div><div class="v num">${nPts}点</div></div>
       <div class="tile"><div class="k">買った</div><div class="v num">${mine.length}点</div></div>
       <div class="tile"><div class="k">${mineSet.length ? "自分の収支 " + pct(mRt, mSt) : "自分の収支"}</div>
         <div class="v num ${mineSet.length ? (mRt >= mSt ? "good" : "neg") : ""}">${mineSet.length ? yen(mRt - mSt) : "-"}</div></div>
     </div>
     <div class="vtools">
-      ${open.length ? `<button class="btn" id="vcopyall">発走前の${open.length}点をまとめてコピー</button>` : ""}
+      <button class="btn on" id="vmake">買い目を作る</button>
+      ${open.length ? `<button class="btn" id="vcopyall">発走前の${open.length}件をまとめてコピー</button>` : ""}
       <a class="btn" href="${IPAT_URL}" target="_blank" rel="noopener" id="vipat">${window.KeibaApp ? "IPATを開く" : "即PAT・A-PATを開く"}</a>
     </div>
-    ${items.length ? `<div class="vlist">${rows}</div>` : `<div class="empty">この日に買うレースはありません。</div>`}
+    ${items.length ? `<div class="vlist">${rows}</div>` : `<div class="empty">この日に買うレースはありません。<br>「買い目を作る」で、見送りのレースや好きな券種も買えます。</div>`}
     <p class="legendnote">買い目は予想の更新(発走まで)で変わることがあります。自分で買ったら「買った」を押すと、結果が出たあと自分の収支に入ります。
+      「買い目を作る」で、予想に無いレース・券種(単勝〜3連単、ボックス・ながし)も入れられます。
       締切は発走2分前の目安。記録はこの端末${window.KeibaApp ? "(アプリ)" : "のブラウザ"}にだけ残ります(自動では買いません)。
-      ${window.KeibaApp ? "「IPATで買う」は買い目をコピーしてIPATの画面に切り替えます。買ったらここに戻って「買った」を押してください。" : ""}</p>
+      ${window.KeibaApp ? "「IPATで入力」はIPATの画面を金額入力まで自動で進めます(ながしは馬番を選ぶ画面まで)。金額・セット・投票は自分で入れてください。" : ""}</p>
     <div class="sec">自分の収支(この端末で「買った」にしたもの)</div>
     <div id="mytotal" class="muted" style="font-size:13px">集計中…</div>`;
   $("#vprev").onclick = () => voteGo(-1);
   $("#vnext").onclick = () => voteGo(1);
+  $("#vmake").onclick = () => openBuilder({});
   const all = $("#vcopyall");
-  if (all) all.onclick = () => copyText(open.map(x => betText(d.date, x.r, x.type, x.c, x.unit)).join("\n"), all);
+  if (all) all.onclick = () => copyText(open.map(textOf).join("\n"), all);
   el.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => copyText(b.dataset.copy, b));
-  // Androidアプリの中では、IPATの画面に切り替えて買い目を上に出す(アプリが KeibaApp を用意する)
+  // Androidアプリの中では、IPATの画面を金額入力まで進める(アプリが KeibaApp を用意する)
   el.querySelectorAll("[data-buy]").forEach(b => b.onclick = () => window.KeibaApp.buy(b.dataset.buy));
   if (window.KeibaApp) $("#vipat").onclick = e => { e.preventDefault(); window.KeibaApp.openIpat(); };
   el.querySelectorAll("[data-go]").forEach(a => a.onclick = e => { e.preventDefault(); openDay(d.date, a.dataset.go); });
+  el.querySelectorAll("[data-mi]").forEach(b => b.onclick = () => {
+    const x = items[+b.dataset.mi];
+    if (x.t) openBuilder({rid: x.r.id, type: x.t.type, method: x.t.method, sel: x.t.sel, axis: x.t.axis, unit: x.t.unit, edit: x.t.id});
+    else openBuilder({rid: x.r.id, type: x.type, sel: x.c});
+  });
   el.querySelectorAll("[data-vote]").forEach(b => b.onclick = () => {
     const vs = loadVotes(), id = b.dataset.vote, x = items.find(z => z.id === id);
-    if (vs[id]) delete vs[id];
-    else if (x) vs[id] = {d: d.date, rid: x.r.id, type: x.type, combo: x.c, unit: x.unit, at: new Date().toISOString()};
+    if (!x) return;
+    if (x.t) markTicket(vs, x.t, !bought(x));
+    else if (vs[id]) delete vs[id];
+    else vs[id] = {d: d.date, rid: x.r.id, type: x.type, combo: x.c, unit: x.unit, at: new Date().toISOString()};
     saveVotes(vs); renderVote();
+  });
+  el.querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
+    const ts = loadTickets();
+    delete ts[b.dataset.del];
+    saveTickets(ts); renderVote();
   });
   myTotal(votes);
 }
@@ -1058,6 +1120,181 @@ async function myTotal(votes) {
     : `結果待ち ${wait}点`;
 }
 setInterval(() => { if (!$("#v-vote").hidden) renderVote(); }, 60000);
+
+// ---------------------------------------------------------------- 買い目を作る
+// 予想に無いレースや券種も、自分で買い目を作って投票タブに入れる(この端末にだけ残る)
+const TICKET_KEY = "keiba-tickets";
+const loadTickets = () => { try { return JSON.parse(store.get(TICKET_KEY) || "{}") || {}; } catch (e) { return {}; } };
+const saveTickets = v => store.set(TICKET_KEY, JSON.stringify(v));
+const TYPES = ["単勝", "複勝", "枠連", "馬連", "ワイド", "馬単", "3連複", "3連単"];
+const NEED = {"単勝": 1, "複勝": 1, "枠連": 2, "馬連": 2, "ワイド": 2, "馬単": 2, "3連複": 3, "3連単": 3};
+// 枠の色(背景, 文字)
+const WAKU_C = [null, ["#fff", "#222"], ["#222", "#fff"], ["#e8382f", "#fff"], ["#2f6fd6", "#fff"],
+                ["#f5d000", "#222"], ["#2e9e4f", "#fff"], ["#f08a1c", "#fff"], ["#f39ac0", "#222"]];
+const dowOf = d => "日月火水木金土"[toDate(d).getDay()];
+const byNum = (a, b) => a - b;
+const ticketId = t => `${t.rid}|${t.type}|${t.method}|${t.axis ?? ""}|${t.sel.join(",")}`;
+const tKey = (t, c) => t.id + "#" + c.join("-");
+// xs から k 個の組(順番なし)・並び(順番あり)
+const combos = (xs, k) => k === 0 ? [[]] : xs.flatMap((x, i) => combos(xs.slice(i + 1), k - 1).map(c => [x, ...c]));
+const perms = (xs, k) => k === 0 ? [[]] : xs.flatMap((x, i) => perms(xs.filter((_, j) => j !== i), k - 1).map(c => [x, ...c]));
+// 買い目 t = {type, method, sel, axis} を1点ずつの組にする(馬単・3連単は着順のまま、ほかは小さい順)
+function expand(t) {
+  const k = NEED[t.type], ord = ORDERED_T.includes(t.type);
+  let cs = [];
+  if (k === 1) cs = t.sel.map(u => [u]);
+  else if (t.method === "通常") cs = t.sel.length === k ? [t.sel] : [];
+  else if (t.method === "ボックス") cs = (ord ? perms : combos)([...t.sel].sort(byNum), k);
+  else if (t.method === "ながし" && t.axis != null)          // 馬単・3連単は軸が1着
+    cs = (ord ? perms : combos)(t.sel.filter(u => u !== t.axis).sort(byNum), k - 1).map(c => [t.axis, ...c]);
+  return cs.map(c => ord ? c : [...c].sort(byNum));
+}
+function selText(t) {
+  if (t.method === "ながし") return `軸${t.axis ?? "?"}${ORDERED_T.includes(t.type) ? "→" : "-"}${t.sel.join(",") || "?"}`;
+  if (t.method === "通常" && NEED[t.type] > 1) return comboText(t.type, t.sel);
+  return t.sel.join(",");
+}
+function ticketText(d, r, t) {
+  const n = expand(t).length;
+  return `${+d.slice(4, 6)}/${+d.slice(6, 8)} ${r.venue}${r.rno}R ${t.type}${t.method !== "通常" ? " " + t.method : ""} ${selText(t)} ` +
+    (n > 1 ? `各${t.unit}円(${n}点 ${t.unit * n}円)` : `${t.unit}円`);
+}
+// アプリが IPAT の画面を進めるときの買い目(枠連は枠番)
+const ipatBet = (d, r, t) => ({venue: r.venue, dow: dowOf(d), rno: r.rno, type: t.type, method: t.method,
+  combo: t.method === "ながし" ? [t.axis, ...t.sel] : t.sel, axis: t.axis, aite: t.method === "ながし" ? t.sel : []});
+function saveTicket(b) {
+  const t = {d: b.d, rid: b.rid, type: b.type, method: b.method, axis: b.method === "ながし" ? b.axis : null,
+             sel: b.method === "通常" && ORDERED_T.includes(b.type) ? [...b.sel] : [...b.sel].sort(byNum), unit: b.unit};
+  t.id = ticketId(t);
+  const ts = loadTickets();
+  if (b.edit && b.edit !== t.id) delete ts[b.edit];          // 「直す」で開いたときは置き換える
+  if (b.edit) b.edit = t.id;
+  ts[t.id] = Object.assign({at: new Date().toISOString()}, ts[t.id] || {}, t);
+  saveTickets(ts);
+  return t;
+}
+// 自分の買い目の「買った」: 1点ずつ記録する(収支の集計は予想の買い目と同じ)
+function markTicket(vs, t, on) {
+  for (const [k, v] of Object.entries(vs)) if (v.t === t.id) delete vs[k];
+  if (on) for (const c of expand(t))
+    vs[tKey(t, c)] = {d: t.d, rid: t.rid, type: t.type, combo: c, unit: t.unit, at: new Date().toISOString(), t: t.id};
+}
+
+let bst = null;
+function openBuilder(o) {
+  const d = state.day;
+  const rs = allRaces().filter(r => r.horses && r.horses.length);
+  if (!d || !rs.length) { alert("出馬表が出ているレースがありません"); return; }
+  const r = rs.find(x => x.id === o.rid) || rs.find(x => !x.result && (untilClose(d.date, x) ?? 1) > 0) || rs[0];
+  bst = {d: d.date, rid: r.id, type: o.type || "ワイド", method: o.method || "通常", sel: [...(o.sel || [])], axis: o.axis ?? null,
+         mode: o.axis != null ? "aite" : "axis", unit: o.unit || +store.get("keiba-unit") || 100, edit: o.edit};
+  drawBuilder();
+  $("#betdlg").showModal();
+}
+$("#betclose").onclick = () => $("#betdlg").close();
+$("#betdlg").addEventListener("close", () => { if (!$("#v-vote").hidden) renderVote(); });
+
+function drawBuilder() {
+  const b = bst, d = state.day, r = d.races[b.rid];
+  const rs = allRaces().filter(x => x.horses && x.horses.length);
+  const k = NEED[b.type], ord = ORDERED_T.includes(b.type), waku = b.type === "枠連";
+  if (k === 1) b.method = "通常";
+  const t = () => ({type: b.type, method: b.method, sel: b.sel, axis: b.method === "ながし" ? b.axis : null, unit: b.unit});
+  const cs = expand(t());
+  const closed = !!r.result || (untilClose(b.d, r) ?? 1) <= 0;
+  const marks = {};
+  for (const h of (r.pred || {}).horses || []) if (h.mark && h.mark !== "×") marks[h.umaban] = h.mark;
+  const live = r.horses.filter(h => !h.scratched);
+  const opts = waku
+    ? [...new Set(live.map(h => h.waku))].sort(byNum).map(w => ({u: w, w, nm: live.filter(h => h.waku === w).map(h => h.umaban).join("・") + "番"}))
+    : r.horses.map(h => ({u: h.umaban, w: h.waku, nm: h.name || "", mk: marks[h.umaban] || "", off: h.scratched}));
+  const on = u => b.method === "ながし" ? (u === b.axis || b.sel.includes(u)) : b.sel.includes(u);
+  const badge = u => {
+    if (b.method === "ながし") return u === b.axis ? "軸" : b.sel.includes(u) ? "相手" : "";
+    const i = b.sel.indexOf(u);
+    return i < 0 ? "" : ord && b.method === "通常" ? `${i + 1}着` : "✓";
+  };
+  const what = waku ? "枠" : "馬";
+  const hint = b.method === "ながし" ? (b.mode === "axis" ? `軸の${what}を1つ選ぶ${ord ? "(1着に固定)" : ""}` : `相手の${what}を選ぶ(いくつでも)`)
+    : b.method === "ボックス" ? `${what}を${k}つ以上選ぶ`
+    : k === 1 ? `${what}を選ぶ(いくつでも。1つ1点)` : ord ? `${what}を1着から順に${k}つ選ぶ` : `${what}を${k}つ選ぶ`;
+  const sum = () => cs.length ? `<b>${cs.length}点 · ${yen(cs.length * b.unit)}</b>(1点${b.unit}円)<br>
+      ${esc(cs.slice(0, 20).map(c => comboText(b.type, c)).join("  "))}${cs.length > 20 ? " …" : ""}` : `<span class="muted">${esc(hint)}</span>`;
+  const box = $("#betbox");
+  const sc = box.querySelector(".bgrid")?.scrollTop || 0;
+  box.innerHTML = `
+    <h3>買い目を作る</h3>
+    <select id="bRace" aria-label="レース">${rs.map(x => {
+      const cl = !!x.result || (untilClose(b.d, x) ?? 1) <= 0;
+      return `<option value="${esc(x.id)}" ${x.id === b.rid ? "selected" : ""}>${esc(x.venue)} ${x.rno}R ${esc(x.start || "")} ${esc(x.name || "")}${cl ? "(締切)" : ""}</option>`;
+    }).join("")}</select>
+    <div class="bsec">券種</div>
+    <div class="chips">${TYPES.map(x => `<button class="chip" data-bt="${x}" aria-pressed="${x === b.type}">${x}</button>`).join("")}</div>
+    ${k > 1 ? `<div class="bsec">方式</div>
+      <div class="chips">${["通常", "ボックス", "ながし"].map(x => `<button class="chip" data-bm="${x}" aria-pressed="${x === b.method}">${x}</button>`).join("")}</div>` : ""}
+    ${b.method === "ながし" ? `<div class="chips">${[["axis", "軸を選ぶ"], ["aite", "相手を選ぶ"]].map(([m, l]) =>
+      `<button class="chip" data-bn="${m}" aria-pressed="${b.mode === m}">${l}</button>`).join("")}</div>` : ""}
+    <div class="bsec">${esc(hint)}</div>
+    <div class="bgrid">${opts.map(o => { const c = WAKU_C[o.w] || ["var(--surface2)", "var(--ink)"];
+      return `<button class="hb" data-bu="${o.u}" aria-pressed="${on(o.u)}" ${o.off ? "disabled" : ""}>
+        <span class="u" style="background:${c[0]};color:${c[1]}">${o.u}</span>
+        <span class="nm">${o.mk ? `<b>${esc(o.mk)}</b>` : ""}${esc(o.nm)}</span><span class="o">${badge(o.u)}</span></button>`; }).join("")}</div>
+    <div class="bsec">1点の金額(円)</div>
+    <input id="bUnit" type="number" inputmode="numeric" min="100" step="100" value="${b.unit}" aria-label="1点の金額(円)">
+    <div class="bsum" id="bSum">${sum()}</div>
+    <div class="bact">
+      ${window.KeibaApp ? `<button class="btn on" id="bIpat" ${cs.length && !closed ? "" : "disabled"}>IPATで入力</button>` : ""}
+      <button class="btn ${window.KeibaApp ? "" : "on"}" id="bCopy" ${cs.length ? "" : "disabled"}>コピー</button>
+      <button class="btn" id="bDone" ${cs.length ? "" : "disabled"}>買った</button>
+    </div>
+    <p class="legendnote">${closed ? "このレースは締切済みです(「買った」の記録だけ付けられます)。" : ""}
+      ${window.KeibaApp ? `「IPATで入力」はIPATの画面を${b.method === "ながし" ? "馬番を選ぶ画面" : "金額入力の画面"}まで自動で進めます。金額・セット・投票は自分で。` : ""}
+      作った買い目は投票タブに入ります。</p>`;
+  box.querySelector(".bgrid").scrollTop = sc;
+  $("#bRace").onchange = e => { b.rid = e.target.value; b.sel = []; b.axis = null; b.mode = "axis"; drawBuilder(); };
+  box.querySelectorAll("[data-bt]").forEach(x => x.onclick = () => {
+    const nt = x.dataset.bt;
+    if ((nt === "枠連") !== waku) { b.sel = []; b.axis = null; b.mode = "axis"; }       // 枠番と馬番は別
+    b.type = nt;
+    if (b.method === "通常" && NEED[nt] > 1) b.sel = b.sel.slice(0, NEED[nt]);
+    drawBuilder();
+  });
+  box.querySelectorAll("[data-bm]").forEach(x => x.onclick = () => {
+    const nm = x.dataset.bm;
+    if (nm === "ながし" && b.method !== "ながし") { b.axis = b.sel[0] ?? null; b.sel = b.sel.slice(1); b.mode = b.axis == null ? "axis" : "aite"; }
+    else if (nm !== "ながし" && b.method === "ながし") { if (b.axis != null) b.sel = [b.axis, ...b.sel]; b.axis = null; }
+    b.method = nm;
+    if (nm === "通常") b.sel = b.sel.slice(0, k);
+    drawBuilder();
+  });
+  box.querySelectorAll("[data-bn]").forEach(x => x.onclick = () => { b.mode = x.dataset.bn; drawBuilder(); });
+  box.querySelectorAll("[data-bu]").forEach(x => x.onclick = () => {
+    const u = +x.dataset.bu;
+    if (b.method === "ながし") {
+      if (b.mode === "axis") { b.axis = b.axis === u ? null : u; b.sel = b.sel.filter(v => v !== u); if (b.axis != null) b.mode = "aite"; }
+      else if (u === b.axis) { b.axis = null; b.mode = "axis"; }
+      else b.sel = b.sel.includes(u) ? b.sel.filter(v => v !== u) : [...b.sel, u];
+    } else if (b.sel.includes(u)) b.sel = b.sel.filter(v => v !== u);
+    else if (b.method === "通常" && k > 1 && b.sel.length >= k) return;        // 足りている(外してから選び直す)
+    else b.sel = [...b.sel, u];
+    drawBuilder();
+  });
+  // 金額は打つたびに合計だけ直す(描き直すと、続けて押したボタンが効かなくなる)
+  $("#bUnit").oninput = e => { b.unit = Math.max(100, Math.round((+e.target.value || 100) / 100) * 100); $("#bSum").innerHTML = sum(); };
+  $("#bUnit").onchange = e => { e.target.value = b.unit; store.set("keiba-unit", String(b.unit)); };
+  const ip = $("#bIpat");
+  if (ip) ip.onclick = () => {
+    const tk = saveTicket(b);
+    $("#betdlg").close();
+    window.KeibaApp.buy(JSON.stringify({text: ticketText(b.d, r, tk), bet: ipatBet(b.d, r, tk)}));
+  };
+  $("#bCopy").onclick = () => { const tk = saveTicket(b); copyText(ticketText(b.d, r, tk), $("#bCopy")); };
+  $("#bDone").onclick = () => {
+    const tk = saveTicket(b), vs = loadVotes();
+    markTicket(vs, tk, true); saveVotes(vs);
+    $("#betdlg").close(); showTab("vote"); scrollTo(0, 0);
+  };
+}
 
 function renderRule() {
   $("#v-rule").innerHTML = `

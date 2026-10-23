@@ -10,6 +10,8 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -26,17 +28,22 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 
 /**
  * 2強レース(個人用)。下の切り替えで「予想」(GitHub Pages のアプリ)と「IPAT」(JRA のネット投票)を行き来する。
- * 馬券は IPAT の画面で自分で買う(自動では買わない)。ログイン情報はこのアプリでは持たず、IPAT の画面に入れる。
- * 予想の投票タブで「IPATで買う」を押すと、買い目をコピーして IPAT に切り替え、上に買い目を出しておく。
+ * 予想の「IPATで買う」を押すと、IPAT の画面を順に押して「金額入力」の画面まで進める(assets/autopilot.js)。
+ * 金額・セット・投票は自分で入れる。ログイン情報はこのアプリでは持たず、IPAT の画面に入れる。
  */
 public class MainActivity extends Activity {
     static final String APP_URL = "https://honda1986.github.io/keeeiba-app/keiba/?app=1";
     static final String IPAT_SP = "https://www.ipat.jra.go.jp/sp/";
     static final String IPAT_PC = "https://www.ipat.jra.go.jp/";
+    static final long TICK_MS = 800, LIMIT_MS = 3 * 60 * 1000;   // 3分進まなければ止める
 
     WebView web, ipat;
     FrameLayout ipatBox;
@@ -45,11 +52,21 @@ public class MainActivity extends Activity {
     SharedPreferences prefs;
     boolean ipatLoaded = false;
 
+    // 自動入力: task = 1点分の買い目, steps = 押した数, phase = run / final / off
+    final Handler handler = new Handler(Looper.getMainLooper());
+    JSONObject task;
+    String taskText = "";
+    int steps = 0;
+    String phase = "off";
+    long lastAt = 0;
+    String autopilot;
+
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         prefs = getSharedPreferences("keiba", MODE_PRIVATE);
         CookieManager.getInstance().setAcceptCookie(true);
+        autopilot = readAsset("autopilot.js");
 
         web = newWebView();
         web.addJavascriptInterface(new Bridge(), "KeibaApp");
@@ -59,7 +76,7 @@ public class MainActivity extends Activity {
         WebSettings is = ipat.getSettings();
         is.setUserAgentString(is.getUserAgentString().replace("; wv", "").replaceAll("Version/[0-9.]+ ", ""));
 
-        // IPAT の上に出す買い目(押すと消える、長押しでもう一度コピー)
+        // IPAT の上に出す買い目と、自動入力の様子(押すと止めて消える、長押しでもう一度コピー)
         betBar = new TextView(this);
         betBar.setTextSize(15);
         betBar.setTypeface(Typeface.DEFAULT_BOLD);
@@ -67,9 +84,12 @@ public class MainActivity extends Activity {
         betBar.setBackgroundColor(0xFF1F6FEB);
         betBar.setPadding(dp(14), dp(10), dp(14), dp(10));
         betBar.setVisibility(View.GONE);
-        betBar.setOnClickListener(v -> betBar.setVisibility(View.GONE));
+        betBar.setOnClickListener(v -> {
+            stopTask();
+            betBar.setVisibility(View.GONE);
+        });
         betBar.setOnLongClickListener(v -> {
-            copy(String.valueOf(betBar.getTag()));
+            copy(taskText);
             return true;
         });
 
@@ -101,7 +121,7 @@ public class MainActivity extends Activity {
             ipat.loadUrl(pc ? IPAT_PC : IPAT_SP);
             ipatLoaded = true;
             show(true);
-            toast(pc ? "IPAT を PC版で開きます" : "IPAT をスマホ版で開きます");
+            toast(pc ? "IPAT を PC版で開きます(自動入力はスマホ版だけ)" : "IPAT をスマホ版で開きます");
             return true;
         });
 
@@ -113,7 +133,8 @@ public class MainActivity extends Activity {
 
         if (saved != null) {
             web.restoreState(saved);
-            ipat.restoreState(saved.getBundle("ipat") != null ? saved.getBundle("ipat") : new Bundle());
+            Bundle ib = saved.getBundle("ipat");
+            if (ib != null && ipat.restoreState(ib) != null) ipatLoaded = true;
         }
         if (web.getUrl() == null) web.loadUrl(APP_URL);
         show(false);
@@ -168,10 +189,96 @@ public class MainActivity extends Activity {
         tabIpat.setAlpha(showIpat ? 1f : 0.6f);
     }
 
+    // ---------------------------------------------------------------- 自動入力
+    void startTask(JSONObject t, String text) {
+        task = t;
+        taskText = text;
+        steps = 0;
+        phase = "run";
+        lastAt = System.currentTimeMillis();
+        setBar("自動入力を始めます");
+        copy(text);
+        show(true);
+        handler.removeCallbacks(tick);
+        handler.postDelayed(tick, TICK_MS);
+    }
+
+    void stopTask() {
+        phase = "off";
+        handler.removeCallbacks(tick);
+    }
+
+    void setBar(String status) {
+        betBar.setText("買い目  " + taskText + "\n" + status + "\n(押すと止める・長押しで買い目をコピー)");
+        betBar.setBackgroundColor("final".equals(phase) ? 0xFF1A7F37 : 0xFF1F6FEB);
+        betBar.setVisibility(View.VISIBLE);
+    }
+
+    final Runnable tick = new Runnable() {
+        @Override
+        public void run() {
+            if (!"run".equals(phase) || task == null) return;
+            if (System.currentTimeMillis() - lastAt > LIMIT_MS) {
+                stopTask();
+                setBar("時間がかかりすぎたので止めました。手で続けてください");
+                return;
+            }
+            if (ipatBox.getVisibility() != View.VISIBLE) {           // 予想を見ているあいだは待つ
+                handler.postDelayed(this, TICK_MS);
+                return;
+            }
+            String js = autopilot + "(" + task.toString() + "," + (steps > 0) + ")";
+            ipat.evaluateJavascript(js, MainActivity.this::onStep);
+        }
+    };
+
+    void onStep(String raw) {
+        if (raw == null || "null".equals(raw)) {                       // 画面の読み込み中
+            if ("run".equals(phase)) handler.postDelayed(tick, TICK_MS);
+            return;
+        }
+        try {
+            // evaluateJavascript は JSON の文字列を、さらに文字列として返す
+            String s = new JSONArray("[" + raw + "]").getString(0);
+            JSONObject o = new JSONObject(s);
+            String st = o.optString("st"), msg = o.optString("msg");
+            if ("step".equals(st) || "login".equals(st)) {      // 進んだ(ログイン中も)ら、止めるまでの時間を延ばす
+                if ("step".equals(st)) steps++;
+                lastAt = System.currentTimeMillis();
+            }
+            if ("final".equals(st)) {          // 金額入力の画面に着いた: ここで止まる
+                handler.removeCallbacks(tick);
+                phase = "final";
+                setBar(msg + "\n買ったら予想の投票タブで「買った」を押してください");
+                return;
+            } else if ("error".equals(st)) {
+                stopTask();
+                setBar("止めました: " + msg);
+                return;
+            } else if (!"wait".equals(st)) {
+                setBar(msg);
+            }
+        } catch (Exception e) {
+            setBar("画面を読めませんでした。手で続けてください");
+        }
+        if ("run".equals(phase)) handler.postDelayed(tick, TICK_MS);
+    }
+
+    String readAsset(String name) {
+        try (InputStream in = getAssets().open(name)) {
+            ByteArrayOutputStream b = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) b.write(buf, 0, n);
+            return b.toString("UTF-8");
+        } catch (Exception e) {
+            return "(function(){return JSON.stringify({st:'error',msg:'自動入力を読めません'})})";
+        }
+    }
+
     void copy(String text) {
         ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         cm.setPrimaryClip(ClipData.newPlainText("買い目", text));
-        toast("コピーしました: " + text);
     }
 
     void toast(String s) {
@@ -184,17 +291,13 @@ public class MainActivity extends Activity {
 
     /** 予想アプリ(Web)から呼ばれる */
     class Bridge {
+        /** json = {text, bet: {venue, dow, rno, type, method, combo}} */
         @JavascriptInterface
         public void buy(String json) {
             runOnUiThread(() -> {
                 try {
                     JSONObject o = new JSONObject(json);
-                    String text = o.optString("text");
-                    betBar.setTag(text);
-                    betBar.setText("買い目  " + text + "\n(押すと消える・長押しでもう一度コピー)");
-                    betBar.setVisibility(View.VISIBLE);
-                    copy(text);
-                    show(true);
+                    startTask(o.getJSONObject("bet"), o.optString("text"));
                 } catch (Exception e) {
                     toast("買い目を読めません");
                 }
@@ -218,11 +321,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        WebView w = ipatBox.getVisibility() == View.VISIBLE ? ipat : web;
-        if (w.canGoBack()) {
-            w.goBack();
-        } else if (w == ipat) {
-            show(false);
+        if (ipatBox.getVisibility() == View.VISIBLE) {
+            show(false);      // IPAT は「戻る」を使わないように、と案内しているので、IPAT では予想に切り替えるだけ
+        } else if (web.canGoBack()) {
+            web.goBack();
         } else {
             super.onBackPressed();
         }

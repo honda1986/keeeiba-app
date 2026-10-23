@@ -251,7 +251,11 @@ PAST_HTML = """<table class="Shutuba_Past5_Table"><tr class="HorseList">
 RESULT_HTML = """<table class="RaceTable01"><tr class="HorseList"><td><div class="Rank">1</div></td>
 <td>2</td><td>3</td><td class="Odds Txt_C">8</td><td class="Odds Txt_R">15.8</td></tr><tr class="HorseList"><td>2</td><td>1</td><td>1</td></tr>
 <tr class="HorseList"><td>3</td><td>5</td><td>9</td></tr></table>
-<table class="Payout_Detail_Table"><tr class="Umaren"><th>馬連</th>
+<table class="Payout_Detail_Table"><tr class="Fukusho"><th>複勝</th><td class="Result"><div><span>3</span></div>
+<div><span>1</span></div><div><span>9</span></div></td><td class="Payout"><span>170円<br>120円<br>310円</span></td></tr>
+<tr class="Wakuren"><th>枠連</th><td class="Result"><ul><li><span>1</span></li><li><span>2</span></li></ul></td>
+<td class="Payout"><span>560円</span></td></tr>
+<tr class="Umaren"><th>馬連</th>
 <td class="Result"><ul><li><span>1</span></li><li><span>3</span></li></ul></td>
 <td class="Payout"><span>1,230円</span></td></tr>
 <tr class="Wide"><th>ワイド</th><td class="Result"><ul><li><span>1</span></li><li><span>3</span></li></ul>
@@ -322,6 +326,8 @@ class Parse(unittest.TestCase):
         self.assertEqual(r["payout"]["ワイド"], {"1-3": 400, "3-9": 900, "1-9": 700})
         self.assertEqual(r["payout"]["3連単"], {"3-1-9": 12340})
         self.assertEqual(r["payout"]["馬単"], {"3-1": 2560})                 # 馬単は着順どおり
+        self.assertEqual(r["payout"]["複勝"], {"3": 170, "1": 120, "9": 310})   # 自分で買った券種の収支に使う
+        self.assertEqual(r["payout"]["枠連"], {"1-2": 560})
         # ほかの買い方(参考): ◎3 ○1 なら馬連・馬単は的中、単勝は払戻表に無いので None
         self.assertEqual(K.alt_bets({"honmei": 3, "taikou": 1}, r), {"ワイド": 400, "馬連": 1230, "馬単": 2560, "単勝": None})
         self.assertEqual(K.alt_bets({"honmei": 1, "taikou": 3}, r)["馬単"], 0)  # 逆の順は外れ
