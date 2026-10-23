@@ -120,7 +120,7 @@
     var n = window.__kbN = window.__kbKey === key ? (window.__kbN || 0) + 1 : 1;
     if (n > 4)
       return out("error", "押す所を変えて4回押しても画面が変わりません。手で押して進むか確かめてください",
-        {info: (window.__kbInfo || "") + " | 届いたタッチ " + (window.__kbSaw || "なし") + " | " + logText()});
+        {info: (window.__kbInfo || "") + " | 届いたタッチ " + (window.__kbSaw || "なし") + " | 選ばれている " + (selNums().join(",") || "なし") + " | " + logText()});
     window.__kbKey = key; window.__kbAt = Date.now();
     window.__kbSaw = "";
     return fn(n);
@@ -215,7 +215,30 @@
     var score = function (e) { return (/waku|umaban|num/i.test(e.className || "") ? 2 : 0) + (e.closest && e.closest("li") ? 1 : 0); };
     cells.sort(function (a, b) { return score(b) - score(a); });
     var c = cells[0];
-    return c ? {num: c, row: (c.closest && c.closest("li,tr")) || c.parentElement} : null;
+    return c ? {num: c, row: rowOf(c)} : null;
+  }
+  // 行 = 馬番の枠から上にたどって、ほかの馬の枠を含まないいちばん大きい所(リスト全体を行と見ないように)
+  function rowOf(c) {
+    var waku = /waku/i.test(typeof c.className === "string" ? c.className : "");
+    var count = function (x) {
+      if (waku) return x.querySelectorAll("[class*=waku]").length;
+      return Array.prototype.filter.call(x.querySelectorAll("*"), function (e) {
+        return e.children.length === 0 && /^\d{1,2}$/.test(txt(e));
+      }).length;
+    };
+    var row = c.parentElement || c, pg = pageEl();
+    for (var x = row.parentElement; x && x !== pg && x !== document.body && count(x) <= 1; x = x.parentElement) row = x;
+    return row;
+  }
+  // 選ばれている(IPAT は行のリンクに selected が付く)
+  function hasSel(row) {
+    return !!row.querySelector("a.selected") || /(^|\s)selected(\s|$)/.test(typeof row.className === "string" ? row.className : "");
+  }
+  // 画面で選ばれている馬番(止めたときの手がかり・前の買い目の残りを外すため)
+  function selNums() {
+    var xs = [];
+    for (var u = 1; u <= 18; u++) { var r = rowFor(u); if (r && hasSel(r.row)) xs.push(u); }
+    return xs;
   }
   // 行の形(タグ・class・画像・選択の属性。文字と、枠の色などの数字の入った class、押した瞬間だけの class は除く)。
   // 押す前と比べて変わったら、選ぶ・外すが入れ替わった(=押せた)ことにする
@@ -307,45 +330,63 @@
     var ci = pm ? +pm[1] - 1 : hm ? +hm[1] - 1 : 0, want = COLS[ci] || [];
     var name = B.type === "枠連" ? "枠番 " : "馬番 ", miss = [];
     if (!settled()) return waitMove();
-    // 行は押すたびに選ぶ・外すが入れ替わる。1頭ずつ押して、行の形が変わったら選べたことにする。
-    // 変わらなければ(押せていない)押す所を変えて押し直す(4か所まで)
-    for (var j = 0; j < want.length; j++) {
-      var v = want[j], rf = rowFor(v), key = ci + ":" + v, d = SEL[key], wt = colName(ci) + " " + name + v + " を選ぶ";
-      if (!rf) { miss.push(v); continue; }
-      if (d && d.ok) continue;
-      var cands = rowSpots(rf), now = shape(rf.row);
-      var picked = !!rf.row.querySelector("a.selected") || /(^|\s)selected(\s|$)/.test(rf.row.className || "");
-      if (picked && !(d && d.ok)) {
-        SEL[key] = {ok: true};
-        window.__kbPickAt = Date.now();
-        addLog(colName(ci) + v + " 選ばれている");
-        continue;
+    // 行は押すたびに選ぶ・外すが入れ替わる。IPAT は選ばれた行のリンクに selected が付くので、押す前と後でそれを見る。
+    // 自分で押していない selected は信じない(押して外れたら、もともと選ばれていたので、もう一度押す)。
+    // selected の無い作りなら、行の形が変わったら選べたことにする。変わらなければ押す所を変えて押し直す(4か所まで)
+    var cur = selNums();
+    if (cur.length) window.__kbSelUI = true;
+    var toSel = want.slice(), toOff = cur.filter(function (u) { return want.indexOf(u) < 0; });
+    var jobs = toSel.map(function (u) { return {u: u, on: true}; }).concat(toOff.map(function (u) { return {u: u, on: false}; }));
+    for (var j = 0; j < jobs.length; j++) {
+      var v = jobs[j].u, on = jobs[j].on, rf = rowFor(v), key = ci + ":" + v + (on ? "" : ":off"), d = SEL[key];
+      var wt = colName(ci) + " " + name + v + (on ? " を選ぶ" : " を外す(前の買い目の残り)");
+      if (!rf) { if (on) miss.push(v); continue; }
+      var sel = hasSel(rf.row);
+      if (d && d.ok) {
+        if (!(on && window.__kbSelUI && !sel)) continue;
+        addLog(colName(ci) + v + " の選択が外れていたので選び直す");
+        d = SEL[key] = null;
       }
+      var cands = rowSpots(rf), now = shape(rf.row);
       // 押す前: 行を画面に出して1回待ち、形が落ち着いてから押す(画面に出したときに変わる所を、押して変わったと見ないように)
       if (!d || d.prep != null) {
         if (!d) { point(rf.row); SEL[key] = {prep: now, k: 0}; return out("wait", wt + "(準備)"); }
         if (now !== d.prep && d.k < 3) { d.prep = now; d.k++; return out("wait", wt + "(準備)"); }
-        d = SEL[key] = {n: 0};
+        d = SEL[key] = {n: 0, flips: 0};
       }
       if (d.shape != null) {
-        if (now !== d.shape) {
+        var changed = now !== d.shape;
+        if (on ? sel && (!d.was || changed) : !sel && d.was) {
           d.ok = true;
           window.__kbPickAt = Date.now();
-          addLog(colName(ci) + v + " 選べた: " + diff(d.shape, now) + " 押した所 " + d.el);
+          addLog(colName(ci) + v + (on ? " 選べた: " : " 外した: ") + diff(d.shape, now) + " 押した所 " + d.el);
           continue;
         }
-        if (Date.now() - d.at < 2500) return out("wait", colName(ci) + " " + name + v + " が選ばれるのを待っています");
-        addLog(colName(ci) + v + " " + d.n + "回目は変わらず(押した所 " + d.el + ")");
-        if (d.n >= cands.length) {
-          var kids = Array.prototype.slice.call(rf.row.querySelectorAll("*"), 0, 10).map(short).join(" ");
-          return out("error", colName(ci) + " " + name + v + " を押しても選べませんでした。手で選んでください",
-            {info: (window.__kbInfo || "") + " | 届いたタッチ " + (window.__kbSaw || "なし") + " | 行 " + describe(rf.row) + " | 行の中 " + kids + " | " + logText()});
+        if (on && !sel && d.was && changed) {
+          // 押したら外れた = もともと選ばれていた。同じ所をもう一度押して選び直す
+          addLog(colName(ci) + v + " はもともと選ばれていた(押して外れた)ので、もう一度押す");
+          if (++d.flips > 2) return out("error", wt + "ところで、選ぶ・外すが繰り返されました。手で選んでください", {info: logText()});
+          d.n--;
+        } else if (on && !window.__kbSelUI && changed) {
+          d.ok = true;
+          window.__kbPickAt = Date.now();
+          addLog(colName(ci) + v + " 選べた(形): " + diff(d.shape, now) + " 押した所 " + d.el);
+          continue;
+        } else {
+          if (Date.now() - d.at < 2500) return out("wait", colName(ci) + " " + name + v + (on ? " が選ばれる" : " が外れる") + "のを待っています");
+          addLog(colName(ci) + v + " " + d.n + "回目は変わらず(押した所 " + d.el + ")");
+          if (d.n >= cands.length) {
+            var kids = Array.prototype.slice.call(rf.row.querySelectorAll("*"), 0, 10).map(short).join(" ");
+            return out("error", colName(ci) + " " + name + v + (on ? " を押しても選べませんでした。手で選んでください" : " を外せませんでした。手で外してください"),
+              {info: (window.__kbInfo || "") + " | 届いたタッチ " + (window.__kbSaw || "なし") + " | 行 " + describe(rf.row) +
+                " | 行の中 " + kids + " | 選ばれている " + (cur.join(",") || "なし") + " | " + logText()});
+          }
         }
       }
       var n = d.n + 1, res = tapAny(cands, n, wt);
       if (!res) return missWait("row" + key, wt, rf.num);
       window.__kbSaw = "";
-      SEL[key] = {shape: now, at: Date.now(), n: n, el: window.__kbTapped || "?"};
+      SEL[key] = {shape: now, was: sel, at: Date.now(), n: n, el: window.__kbTapped || "?", flips: d.flips || 0};
       return res;
     }
     if (miss.length) return out("error", colName(ci) + " " + name + miss.join("・") + " が見つかりません。手で選んでください",
