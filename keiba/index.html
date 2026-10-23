@@ -1059,9 +1059,9 @@ function renderVote() {
     </div>
     ${items.length ? `<div class="vlist">${rows}</div>` : `<div class="empty">この日に買うレースはありません。<br>「買い目を作る」で、見送りのレースや好きな券種も買えます。</div>`}
     <p class="legendnote">買い目は予想の更新(発走まで)で変わることがあります。自分で買ったら「買った」を押すと、結果が出たあと自分の収支に入ります。
-      「買い目を作る」で、予想に無いレース・券種(単勝〜3連単、ボックス・ながし)も入れられます。
+      「買い目を作る」で、予想に無いレース・券種(単勝〜3連単、ボックス・ながし・フォーメーション)も入れられます。
       締切は発走2分前の目安。記録はこの端末${window.KeibaApp ? "(アプリ)" : "のブラウザ"}にだけ残ります(自動では買いません)。
-      ${window.KeibaApp ? "「IPATで入力」はIPATの画面を金額入力まで自動で進めます(ながしは馬番を選ぶ画面まで)。金額・セット・投票は自分で入れてください。" : ""}</p>
+      ${window.KeibaApp ? "「IPATで入力」はIPATの画面を金額入力まで自動で進めます(2頭以上の券種はIPATのフォーメーションで入れ、金額入力の画面で馬番と組数を確かめます)。金額・セット・投票は自分で入れてください。" : ""}</p>
     <div class="sec">自分の収支(この端末で「買った」にしたもの)</div>
     <div id="mytotal" class="muted" style="font-size:13px">集計中…</div>`;
   $("#vprev").onclick = () => voteGo(-1);
@@ -1181,7 +1181,7 @@ function toCols(t) {
 // アプリが IPAT の画面を進めるときの買い目(枠連は枠番)
 const ipatBet = (d, r, t) => ({venue: r.venue, dow: dowOf(d), rno: r.rno, type: t.type, method: t.method,
   combo: t.method === "ながし" ? [t.axis, ...t.sel] : t.method === "フォーメーション" ? [...new Set(toCols(t).flat())] : t.sel,
-  axis: t.axis, aite: t.method === "ながし" ? t.sel : [], cols: toCols(t)});
+  axis: t.axis, aite: t.method === "ながし" ? t.sel : [], cols: toCols(t), n: expand(t).length});
 function saveTicket(b) {
   const t = {d: b.d, rid: b.rid, type: b.type, method: b.method, axis: b.method === "ながし" ? b.axis : null,
              sel: b.method === "フォーメーション" ? [] : b.method === "通常" && ORDERED_T.includes(b.type) ? [...b.sel] : [...b.sel].sort(byNum),
@@ -1278,7 +1278,7 @@ function drawBuilder() {
       <button class="btn" id="bDone" ${cs.length ? "" : "disabled"}>買った</button>
     </div>
     <p class="legendnote">${closed ? "このレースは締切済みです(「買った」の記録だけ付けられます)。" : ""}
-      ${window.KeibaApp ? `「IPATで入力」はIPATの画面を${["ながし", "フォーメーション"].includes(b.method) ? "馬番を選ぶ画面" : "金額入力の画面"}まで自動で進めます。金額・セット・投票は自分で。` : ""}
+      ${window.KeibaApp ? "「IPATで入力」はIPATの画面を金額入力まで自動で進めます(2頭以上の券種はIPATのフォーメーションで入れます)。金額・セット・投票は自分で。" : ""}
       作った買い目は投票タブに入ります。</p>`;
   box.querySelector(".bgrid").scrollTop = sc;
   const clear = () => { b.sel = []; b.axis = null; b.mode = "axis"; b.cols = [[], [], []]; b.col = 0; };
