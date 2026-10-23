@@ -1,4 +1,4 @@
-// IPAT(スマホ版)で、買い目の「金額入力」の画面まで進める。アプリが 0.8 秒ごとに呼ぶ。
+// IPAT(スマホ版)で、買い目の「金額入力」の画面まで進める。アプリが 0.3 秒ごとに呼ぶ。
 //   B … {venue, dow, rno, type, method, combo: [馬番(枠連は枠番)...], axis, aite}
 //       cols … フォーメーションの列(1頭目・2頭目・3頭目、馬単・3連単は1着・2着・3着)。n … 点数(金額入力の組数と見比べる)
 //       2頭以上の券種は、どの買い方も IPAT のフォーメーションで入れる
@@ -118,7 +118,7 @@
       var el = cands[(n - 1 + k) % cands.length];
       if (!visible(el)) continue;
       if (!inView(el)) { bringIntoView(el); return {scroll: true}; }
-      if (Date.now() - (window.__kbScrollAt || 0) < 600) return {scroll: true};
+      if (Date.now() - (window.__kbScrollAt || 0) < 350) return {scroll: true};
       var p = point(el);
       if (p) return {el: el, p: p};
     }
@@ -130,11 +130,10 @@
       " | 画面 " + innerWidth + "x" + innerHeight + " | " + describe(a.el);
     return out("tap", msg, {x: a.p.x, y: a.p.y, info: window.__kbInfo});
   }
-  // 押せる所が無い(画面が切り替わる途中など)ときは少し待つ。6秒ほど待っても無ければ止める
+  // 押せる所が無い(画面が切り替わる途中など)ときは少し待つ。6秒待っても無ければ止める
   function missWait(key, msg, el) {
-    window.__kbMiss = window.__kbMissKey === key ? (window.__kbMiss || 0) + 1 : 1;
-    window.__kbMissKey = key;
-    if (window.__kbMiss < 8) return out("wait", msg + " を押せるようになるのを待っています");
+    if (window.__kbMissKey !== key) { window.__kbMissKey = key; window.__kbMissAt = Date.now(); }
+    if (Date.now() - window.__kbMissAt < 6000) return out("wait", msg + " を押せるようになるのを待っています");
     var r = el.getBoundingClientRect();
     var hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
     return out("error", msg + " を押せる場所が見つかりません。手で続けてください", {info: short(el) + " | 真ん中にある物 " +
@@ -158,7 +157,7 @@
     Array.prototype.forEach.call(c.querySelectorAll("a,button"), function (x) { x.remove(); });   // 「方式」「1頭目」の戻るボタンは除く
     return txt(c);
   }
-  // 画面が変わってから1秒は待つ。切り替えの動きの印(ui-mobile-viewport-transitioning)は、残ったままのことがあるので2.5秒まで
+  // 画面が変わってから0.4秒は待つ。切り替えの動きの印(ui-mobile-viewport-transitioning)は、残ったままのことがあるので1.5秒まで
   function settled() {
     var h1 = pageEl().querySelector("[data-role=header] h1, .ui-header h1, .ui-title");
     var key = (pageEl().id || location.pathname) + "|" + (h1 ? txt(h1) : "");
@@ -166,13 +165,13 @@
     var moving = /ui-mobile-viewport-transitioning/.test(document.documentElement.className + " " + document.body.className);
     var t = Date.now() - window.__kbPkAt;
     window.__kbSettle = "画面 " + key + " " + Math.round(t / 100) / 10 + "秒" + (moving ? " 切り替え中" : "");
-    return t > 1000 && (!moving || t > 2500);
+    return t > 400 && (!moving || t > 1500);
   }
   var waitMove = function () { return out("wait", "画面が切り替わるのを待っています", {info: window.__kbSettle}); };
-  // ボタンを押す。同じボタンは4秒あけ、押す所を変えて4回まで。画面を動かしただけの回は数えない
+  // ボタンを押す。同じボタンは3秒あけ(その間に画面が変われば、次の画面へ進む)、押す所を変えて4回まで。画面を動かしただけの回は数えない
   function press(key, cands, msg, el) {
     if (!settled()) return waitMove();
-    if (window.__kbKey === key && Date.now() - (window.__kbAt || 0) < 4000) return out("wait", "画面が変わるのを待っています");
+    if (window.__kbKey === key && Date.now() - (window.__kbAt || 0) < 3000) return out("wait", "画面が変わるのを待っています");
     var n = window.__kbKey === key ? (window.__kbN || 0) + 1 : 1;
     if (n > 4)
       return out("error", "押す所を変えて4回押しても画面が変わりません。手で押して進むか確かめてください",
@@ -366,7 +365,8 @@
       var cands = rowSpots(rf), now = shape(rf.row);
       // 押す前: 行を画面に出して1回待ち、形が落ち着いてから押す(画面に出したときに変わる所を、押して変わったと見ないように)
       if (!d || d.prep != null) {
-        if (!d) { if (!inView(rf.row)) bringIntoView(rf.row); SEL[key] = {prep: now, k: 0}; return out("wait", wt + "(準備)"); }
+        if (!d && inView(rf.row)) d = {prep: now, k: 0};          // もう画面に出ている(動かさない)ならすぐ押す
+        else if (!d) { bringIntoView(rf.row); SEL[key] = {prep: now, k: 0}; return out("wait", wt + "(準備)"); }
         if (now !== d.prep && d.k < 3) { d.prep = now; d.k++; return out("wait", wt + "(準備)"); }
         d = SEL[key] = {n: 0, flips: 0};
       }
@@ -409,7 +409,7 @@
     }
     if (miss.length) return out("error", colName(ci) + " " + name + miss.join("・") + " が見つかりません。手で選んでください",
       {info: "似た所 " + near(new RegExp("^0?" + miss[0] + "$"))});
-    if (Date.now() - (window.__kbPickAt || 0) < 1200) return out("wait", colName(ci) + "を選びました");
+    if (Date.now() - (window.__kbPickAt || 0) < 400) return out("wait", colName(ci) + "を選びました");
     if (ci < COLS.length - 1 && findAll(/^次へ$/).length) return clickText("next" + ci, /^次へ$/, colName(ci) + "を選びました。次へ");
     return clickText("kingaku" + ci, /^金額入力画面へ$/, "金額入力画面へ");
   }
