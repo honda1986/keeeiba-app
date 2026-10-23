@@ -16,7 +16,15 @@
   var visible = function (e) { return !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length); };
   var esc = function (s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); };
   var z2 = function (u) { return (u < 10 ? "0" : "") + u; };
-  var CLICKABLE = "a,button,input,label,li,[onclick],[ng-click],[role=button]";
+  var CLICKABLE = "a,button,input,label,[onclick],[ng-click],[role=button],[data-role=button]";
+  // 押したタッチが画面に届いたか(届いた所の形)を残す。うまく進まないときの手がかり
+  if (!window.__kbHook) {
+    window.__kbHook = 1;
+    document.addEventListener("touchstart", function (e) {
+      var t = e.touches && e.touches[0];
+      window.__kbSaw = short(e.target) + (t ? "@" + Math.round(t.clientX) + "," + Math.round(t.clientY) : "");
+    }, true);
+  }
 
   // 文字が合う、見えている要素(文字の短い順。画像は alt の文字)
   function findAll(re) {
@@ -29,6 +37,8 @@
       if (!t || t.length > 80) continue;
       if (re.test(t)) hits.push({e: e, n: t.length, i: i});
     }
+    // 同じ文字の入れ子(li の中の a の中の span など)は、いちばん内側だけ
+    hits = hits.filter(function (h) { return !hits.some(function (o) { return o !== h && o.n === h.n && h.e.contains(o.e); }); });
     hits.sort(function (a, b) { return a.n - b.n || a.i - b.i; });
     return hits.map(function (h) { return h.e; });
   }
@@ -50,18 +60,28 @@
     var x = (cx - ox) / w, y = (cy - oy) / h;
     return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? {x: x, y: y} : null;
   }
-  // 押す所: 押せる親(リンク・ボタンなど)が小さければその真ん中、大きければ文字の真ん中
-  function spot(e) {
+  // 押してみる所(この順に試す): 押せる親(リンク・ボタンなど。小さいとき) → 文字そのもの → 同じ枠の画像 → 枠(li)
+  function spots(e) {
+    var list = [];
+    var add = function (el) { if (el && el !== document.body && list.indexOf(el) < 0) list.push(el); };
     var c = e.closest ? e.closest(CLICKABLE) : null;
     if (c && c !== e) {
       var r = c.getBoundingClientRect();
-      if (r.height < 260 && r.width <= innerWidth + 1) {
-        var p = point(c);
-        if (p) return {p: p, el: c};
-      }
+      if (r.height < 260 && r.width <= innerWidth + 1) add(c);
     }
-    var q = point(e);
-    return q ? {p: q, el: e} : null;
+    add(e);
+    var li = e.closest ? e.closest("li") : null;
+    var box = li || c;
+    if (box && box.querySelector) add(box.querySelector("img"));
+    add(li);
+    return list;
+  }
+  // 要素の短い形(タグ.class と、画面での位置・大きさ)
+  function short(el) {
+    if (!el || !el.tagName) return "?";
+    var r = el.getBoundingClientRect ? el.getBoundingClientRect() : {left: 0, top: 0, width: 0, height: 0};
+    return el.tagName.toLowerCase() + (el.className && typeof el.className === "string" ? "." + el.className.trim().split(/\s+/).slice(0, 3).join(".") : "") +
+      "(" + Math.round(r.left) + "," + Math.round(r.top) + "," + Math.round(r.width) + "x" + Math.round(r.height) + ")";
   }
   // 押そうとした所の形(タグ・class・属性だけ。画面の文字やURLは入れない)。うまく進まないときに送ってもらう
   function describe(el) {
@@ -78,30 +98,35 @@
     }
     return s.join(" < ").slice(0, 1200);
   }
-  function tapOn(el, msg) {
-    var s = spot(el);
-    if (!s) return null;
-    window.__kbInfo = location.pathname + " | " + describe(s.el);
-    return out("tap", msg, {x: s.p.x, y: s.p.y});
+  // cands の中で押せる(画面の中にあって隠れていない)ものの、n 回目なら n 番目を押す(前の所で進まなかったら次を試す)
+  function tapAny(cands, n, msg) {
+    var ok = cands.filter(function (el) { return !!point(el); });
+    if (!ok.length) return null;
+    var el = ok[(n - 1) % ok.length], p = point(el);
+    if (!p) return null;
+    window.__kbInfo = n + "回目 " + location.pathname + " | 押した所 " + short(el) + " 候補" + ok.length + "/" + cands.length +
+      " | 画面 " + innerWidth + "x" + innerHeight + " | " + describe(el);
+    return out("tap", msg, {x: p.x, y: p.y});
   }
-  // 同じ画面で続けて押さない(画面が変わるまで 4 秒は待つ)。同じ所を続けて3回押しても変わらなければ止める
+  // 同じ画面で続けて押さない(画面が変わるまで 4 秒は待つ)。同じボタンを続けて4回(押す所を変えて)押しても変わらなければ止める
   function once(key, fn) {
     if (window.__kbKey === key && Date.now() - (window.__kbAt || 0) < 4000) return out("wait", "画面が変わるのを待っています");
-    window.__kbN = window.__kbKey === key ? (window.__kbN || 0) + 1 : 1;
-    if (window.__kbN > 3)
-      return out("error", "3回押しても画面が変わりません。手で押して進むか確かめてください", {info: window.__kbInfo || ""});
+    var n = window.__kbN = window.__kbKey === key ? (window.__kbN || 0) + 1 : 1;
+    if (n > 4)
+      return out("error", "押す所を変えて4回押しても画面が変わりません。手で押して進むか確かめてください",
+        {info: (window.__kbInfo || "") + " | 届いたタッチ " + (window.__kbSaw || "なし")});
     window.__kbKey = key; window.__kbAt = Date.now();
-    return fn();
+    window.__kbSaw = "";
+    return fn(n);
   }
   function clickText(key, re, msg) {
-    return once(key, function () {
+    return once(key, function (n) {
       var es = findAll(re);
       if (!es.length) return out("error", msg + " が見つかりません。手で続けてください");
-      for (var i = 0; i < es.length; i++) {
-        var r = tapOn(es[i], msg);
-        if (r) return r;
-      }
-      return out("error", msg + " を押せる場所が見つかりません。手で続けてください", {info: describe(es[0])});
+      var cands = [];
+      es.forEach(function (e) { spots(e).forEach(function (el) { if (cands.indexOf(el) < 0) cands.push(el); }); });
+      return tapAny(cands, n, msg) ||
+        out("error", msg + " を押せる場所が見つかりません。手で続けてください", {info: short(es[0]) + " | " + describe(es[0])});
     });
   }
   // 馬番(枠番) u のチェック。馬単・3連単の通常は 1着・2着・3着 の列(pos 番目)、それ以外は1列
@@ -130,14 +155,12 @@
     }
     return null;
   }
-  // チェックを押す所: 見えている label → チェックそのもの → 親
-  function boxSpot(cb) {
+  // チェックを押してみる所(この順に試す): label → チェックそのもの → 親
+  function boxSpots(cb) {
     var lab = cb.id ? document.querySelector("label[for=\"" + cb.id.replace(/"/g, "\\\"") + "\"]") : null;
-    if (lab && visible(lab)) return lab;
-    var wrap = cb.closest ? cb.closest("label") : null;
-    if (wrap && visible(wrap)) return wrap;
-    if (visible(cb)) return cb;
-    return cb.parentElement;
+    return [lab, cb.closest ? cb.closest("label") : null, cb, cb.parentElement].filter(function (el, i, a) {
+      return el && a.indexOf(el) === i;
+    });
   }
 
   var ORDERED = /^(馬単|3連単|３連単)$/.test(B.type) && B.method === "通常";
@@ -171,9 +194,9 @@
       var u = B.combo[pos], cb = boxFor(u, pos, ORDERED);
       if (!cb) { miss.push(u); continue; }
       if (cb.checked) continue;
-      var tgt = boxSpot(cb), what = name + u + (ORDERED ? "(" + (pos + 1) + "着)" : "") + " を選ぶ";
-      return once("cb" + pos + "-" + u, function () {
-        return tapOn(tgt, what) || out("error", what + "ところを押せません。手で選んでください", {info: describe(tgt)});
+      var tgts = boxSpots(cb), what = name + u + (ORDERED ? "(" + (pos + 1) + "着)" : "") + " を選ぶ";
+      return once("cb" + pos + "-" + u, function (n) {
+        return tapAny(tgts, n, what) || out("error", what + "ところを押せません。手で選んでください", {info: describe(cb)});
       });
     }
     if (miss.length) return out("error", name + miss.join("・") + " を選べませんでした。手で選んでください");
