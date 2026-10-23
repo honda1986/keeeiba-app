@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 「2」の字(アイコンの前景。108dp の中央 72dp に収める) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M40,46 C40,37 46,32 54,32 C62,32 68,37 68,45 C68,51 65,55 59,60 L50,68 L69,68 L69,76 L39,76 L39,69 L54,55 C58,51 60,48 60,45 C60,41 57,39 54,39 C50,39 48,42 48,46 Z" />
+</vector>

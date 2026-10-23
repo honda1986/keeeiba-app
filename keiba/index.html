@@ -987,6 +987,8 @@ function renderVote() {
         <div class="l2">${esc(x.type)} <b>${esc(comboText(x.type, x.c))}</b> ${x.unit}円</div></a>
         <div class="st">${status(x)}${x.old ? " · 予想が変わったので今の買い目には無い" : ""}</div></div>
       <div class="act">
+        ${!done && window.KeibaApp ? `<button class="btn sm on" data-buy="${esc(JSON.stringify({text: betText(d.date, x.r, x.type, x.c, x.unit),
+          rid: x.r.id, date: d.date, venue: x.r.venue, rno: x.r.rno, type: x.type, combo: x.c, unit: x.unit}))}">IPATで買う</button>` : ""}
         ${!done ? `<button class="btn sm" data-copy="${esc(betText(d.date, x.r, x.type, x.c, x.unit))}">コピー</button>` : ""}
         <button class="btn sm ${v ? "on" : ""}" data-vote="${esc(x.id)}" aria-pressed="${v ? "true" : "false"}">${v ? "買った ✓" : "買った"}</button>
       </div></div>`;
@@ -1005,11 +1007,12 @@ function renderVote() {
     </div>
     <div class="vtools">
       ${open.length ? `<button class="btn" id="vcopyall">発走前の${open.length}点をまとめてコピー</button>` : ""}
-      <a class="btn" href="${IPAT_URL}" target="_blank" rel="noopener">即PAT・A-PATを開く</a>
+      <a class="btn" href="${IPAT_URL}" target="_blank" rel="noopener" id="vipat">${window.KeibaApp ? "IPATを開く" : "即PAT・A-PATを開く"}</a>
     </div>
     ${items.length ? `<div class="vlist">${rows}</div>` : `<div class="empty">この日に買うレースはありません。</div>`}
     <p class="legendnote">買い目は予想の更新(発走まで)で変わることがあります。自分で買ったら「買った」を押すと、結果が出たあと自分の収支に入ります。
-      締切は発走2分前の目安。記録はこの端末のブラウザにだけ残ります(自動では買いません)。</p>
+      締切は発走2分前の目安。記録はこの端末${window.KeibaApp ? "(アプリ)" : "のブラウザ"}にだけ残ります(自動では買いません)。
+      ${window.KeibaApp ? "「IPATで買う」は買い目をコピーしてIPATの画面に切り替えます。買ったらここに戻って「買った」を押してください。" : ""}</p>
     <div class="sec">自分の収支(この端末で「買った」にしたもの)</div>
     <div id="mytotal" class="muted" style="font-size:13px">集計中…</div>`;
   $("#vprev").onclick = () => voteGo(-1);
@@ -1017,6 +1020,9 @@ function renderVote() {
   const all = $("#vcopyall");
   if (all) all.onclick = () => copyText(open.map(x => betText(d.date, x.r, x.type, x.c, x.unit)).join("\n"), all);
   el.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => copyText(b.dataset.copy, b));
+  // Androidアプリの中では、IPATの画面に切り替えて買い目を上に出す(アプリが KeibaApp を用意する)
+  el.querySelectorAll("[data-buy]").forEach(b => b.onclick = () => window.KeibaApp.buy(b.dataset.buy));
+  if (window.KeibaApp) $("#vipat").onclick = e => { e.preventDefault(); window.KeibaApp.openIpat(); };
   el.querySelectorAll("[data-go]").forEach(a => a.onclick = e => { e.preventDefault(); openDay(d.date, a.dataset.go); });
   el.querySelectorAll("[data-vote]").forEach(b => b.onclick = () => {
     const vs = loadVotes(), id = b.dataset.vote, x = items.find(z => z.id === id);

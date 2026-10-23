@@ -1,0 +1,39 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "jp.keeeiba.app"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "jp.keeeiba.app"
+        minSdk 26
+        targetSdk 34
+        // 版はワークフローが入れる(無ければ 1)
+        versionCode((System.getenv("APP_VERSION_CODE") ?: "1") as int)
+        versionName System.getenv("APP_VERSION_NAME") ?: "dev"
+    }
+
+    signingConfigs {
+        // 自分の端末に入れるだけなので、リポジトリに置いた鍵で署名する(同じ鍵なので上書きで更新できる)
+        personal {
+            storeFile file("../keiba-personal.keystore")
+            storePassword "keiba-personal"
+            keyAlias "keiba"
+            keyPassword "keiba-personal"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.personal
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
