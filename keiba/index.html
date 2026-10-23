@@ -128,6 +128,22 @@ details>summary::-webkit-details-marker{display:none}
 .flow{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px}
 .flow div{padding:4px 0}
 .flow div+div::before{content:"↓ ";color:var(--muted)}
+.vtools{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px}
+.btn{display:inline-block;padding:7px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--surface);
+  font-size:13px;font-weight:700;color:var(--ink);text-decoration:none;white-space:nowrap}
+.btn.sm{padding:5px 9px;font-size:12px;border-radius:8px}
+.btn.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.vlist{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;margin-bottom:12px}
+.vrow{display:flex;gap:10px;align-items:center;padding:10px 12px;border-top:1px solid var(--line)}
+.vrow:first-child{border-top:0}
+.vrow.done{opacity:.6}
+.vrow .when{flex:none;width:44px;font-weight:700;font-variant-numeric:tabular-nums;font-size:13px}
+.vrow .what{flex:1;min-width:0}
+.vrow .what .l1{font-weight:700;font-size:14px}
+.vrow .what .l2{font-size:13px;font-variant-numeric:tabular-nums}
+.vrow .what .st{font-size:12px;color:var(--muted)}
+.vrow .act{flex:none;display:flex;flex-direction:column;gap:6px;align-items:stretch}
+.vrow .go{color:inherit;text-decoration:none}
 .datenav .d{width:auto;flex:1;font-weight:700}
 .datenav .d small{font-weight:600;color:var(--muted);margin-left:4px}
 .srcnote{font-size:12px;color:var(--ink2);background:var(--accent-bg);border:1px solid var(--accent-line);border-radius:10px;padding:8px 12px;margin-bottom:10px}
@@ -202,12 +218,14 @@ dialog.sheet .close{display:block;width:100%;margin-top:10px;padding:9px;border-
   <main id="v-race"></main>
   <main id="v-money" hidden></main>
   <main id="v-rule" hidden></main>
+  <main id="v-vote" hidden></main>
 </div>
 <dialog id="caldlg" class="sheet" aria-label="日付を選ぶ"><div id="calbox"></div>
   <button class="close" id="calclose">閉じる</button></dialog>
 <nav class="tabbar"><div class="in" role="tablist">
   <button role="tab" data-v="race" aria-selected="true">レース</button>
   <button role="tab" data-v="money" aria-selected="false">収支・分析</button>
+  <button role="tab" data-v="vote" aria-selected="false">投票</button>
   <button role="tab" data-v="rule" aria-selected="false">考え方</button>
 </div></nav>
 <script>
@@ -254,7 +272,8 @@ $("#themeb").onclick = () => {
 };
 function showTab(v) {
   document.querySelectorAll(".tabbar button").forEach(x => x.setAttribute("aria-selected", x.dataset.v === v));
-  ["race","money","rule"].forEach(k => $("#v-" + k).hidden = k !== v);
+  ["race","money","vote","rule"].forEach(k => $("#v-" + k).hidden = k !== v);
+  if (v === "vote") renderVote();          // 締切までの時間を出し直す
 }
 document.querySelectorAll(".tabbar button").forEach(b => b.onclick = () => { showTab(b.dataset.v); scrollTo(0, 0); });
 
@@ -285,7 +304,7 @@ async function boot() {
     state.noRace = {today, pick, next: pick > today};
     if (pick) { try { state.day = await loadDay(pick); } catch (e) { /* data.json のまま */ } }
   }
-  renderRace(); renderMoney(); renderRule();
+  renderRace(); renderMoney(); renderRule(); renderVote();
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.get("d") && state.days.includes(h.get("d"))) openDay(h.get("d"), h.get("r"));
 }
@@ -293,7 +312,7 @@ async function boot() {
 // 日付を移る。rid があればそのレースまでスクロール
 async function openDay(d, rid) {
   try { state.day = await loadDay(d); } catch (e) { return; }
-  renderRace(); showTab("race");
+  renderRace(); renderVote(); showTab("race");
   if (rid && allRaces().some(r => r.id === rid)) jumpRace(rid, false);
   else { scrollTo(0, 0); setHash(d); }
 }
@@ -886,6 +905,153 @@ async function modelBox() {
       3年そろった傾向は「冬(1〜2月)・寒い日は悪い」だけ。
       週に1回、新しい結果で学び直す。</p>`;
 }
+
+// ---------------------------------------------------------------- 投票
+// 自分で買うときの買い目の一覧と、買った記録(自動では買わない)。記録はこの端末のブラウザにだけ残る
+const VOTE_KEY = "keiba-votes";
+const IPAT_URL = "https://www.ipat.jra.go.jp/";
+const loadVotes = () => { try { return JSON.parse(store.get(VOTE_KEY) || "{}") || {}; } catch (e) { return {}; } };
+const saveVotes = v => store.set(VOTE_KEY, JSON.stringify(v));
+const ORDERED_T = ["馬単", "3連単"];
+const voteId = (rid, type, c) => `${rid}|${type}|${c.join("-")}`;
+const comboText = (type, c) => c.join(ORDERED_T.includes(type) ? "→" : "-");
+const betText = (d, r, type, c, unit) =>
+  `${+d.slice(4, 6)}/${+d.slice(6, 8)} ${r.venue}${r.rno}R ${type} ${comboText(type, c)} ${unit}円`;
+// 締切(発走2分前)までの分。時刻は日本時間で数える
+function untilClose(d, r) {
+  if (!r.start) return null;
+  const t = Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8), +r.start.slice(0, 2) - 9, +r.start.slice(3, 5) - 2);
+  return Math.floor((t - Date.now()) / 60000);
+}
+// 払戻(結果が出ていなければ null、外れは 0)
+function voteRet(r, type, c, unit) {
+  const pay = r && r.result && r.result.payout;
+  if (!pay) return null;
+  const key = ORDERED_T.includes(type) ? c.join("-") : [...c].sort((a, b) => a - b).join("-");
+  return ((pay[type] || {})[key] || 0) * unit / 100;
+}
+async function copyText(t, btn) {
+  try { await navigator.clipboard.writeText(t); }
+  catch (e) {
+    const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta);
+    ta.select(); try { document.execCommand("copy"); } catch (e2) { /* 無視 */ } ta.remove();
+  }
+  if (btn) { const o = btn.textContent; btn.textContent = "コピーした"; setTimeout(() => { btn.textContent = o; }, 1200); }
+}
+async function voteGo(step) {
+  const i = state.days.indexOf(state.day?.date) + step;
+  if (i < 0 || i >= state.days.length) return;
+  try { state.day = await loadDay(state.days[i]); } catch (e) { return; }
+  renderRace(); renderVote(); scrollTo(0, 0);
+}
+function renderVote() {
+  const el = $("#v-vote"), d = state.day;
+  if (!el) return;
+  if (!d) { el.innerHTML = `<div class="empty">まだデータがありません。</div>`; return; }
+  const votes = loadVotes();
+  const items = [];
+  for (const r of races()) {
+    const p = r.pred;
+    if (p.verdict === "見送り") continue;
+    for (const b of p.bets) for (const c of b.combos)
+      items.push({r, type: b.type, c, unit: b.unit, verdict: p.verdict, id: voteId(r.id, b.type, c)});
+  }
+  // 買った印があるのに今の買い目に無いもの(印を付けたあとで予想が変わった)も出す
+  for (const [id, v] of Object.entries(votes)) {
+    if (v.d !== d.date || items.some(x => x.id === id)) continue;
+    const r = (d.races || {})[v.rid];
+    if (r) items.push({r, type: v.type, c: v.combo, unit: v.unit, verdict: "", id, old: true});
+  }
+  items.sort((a, b) => (a.r.start || "99").localeCompare(b.r.start || "99") || a.r.id.localeCompare(b.r.id));
+  const open = items.filter(x => !x.old && !x.r.result && (untilClose(d.date, x.r) ?? 1) > 0);
+  const mine = items.filter(x => votes[x.id]);
+  const mineSet = mine.map(x => ({x, ret: voteRet(x.r, x.type, x.c, votes[x.id].unit)})).filter(z => z.ret != null);
+  const mSt = mineSet.reduce((a, z) => a + votes[z.x.id].unit, 0), mRt = mineSet.reduce((a, z) => a + z.ret, 0);
+  const i = state.days.indexOf(d.date);
+  const status = x => {
+    const ret = voteRet(x.r, x.type, x.c, x.unit);
+    if (ret != null) return ret > 0 ? `<b class="good">的中 ${yen(ret)}</b>` : `<span class="neg">外れ</span>`;
+    const m = untilClose(d.date, x.r);
+    if (m == null) return "発走時刻まだ";
+    if (m <= 0) return "締切済み・結果待ち";
+    return m >= 120 ? `締切 ${esc(x.r.start ? (() => { const t = +x.r.start.slice(0, 2) * 60 + +x.r.start.slice(3, 5) - 2;
+      return String(Math.floor(t / 60)).padStart(2, "0") + ":" + String(t % 60).padStart(2, "0"); })() : "")}` : `<b>締切まで ${m}分</b>`;
+  };
+  const rows = items.map(x => {
+    const v = votes[x.id];
+    const done = x.r.result || (untilClose(d.date, x.r) ?? 1) <= 0;
+    return `<div class="vrow ${done && !v ? "done" : ""}">
+      <div class="when">${esc(x.r.start || "")}</div>
+      <div class="what"><a class="go" href="#d=${esc(d.date)}&r=${esc(x.r.id)}" data-go="${esc(x.r.id)}">
+        <div class="l1">${esc(x.r.venue)} ${x.r.rno}R ${x.verdict ? `<span class="badge ${x.verdict}" style="display:inline-grid;min-width:22px;height:20px;font-size:12px;border-radius:6px;vertical-align:1px">${x.verdict}</span>` : ""}</div>
+        <div class="l2">${esc(x.type)} <b>${esc(comboText(x.type, x.c))}</b> ${x.unit}円</div></a>
+        <div class="st">${status(x)}${x.old ? " · 予想が変わったので今の買い目には無い" : ""}</div></div>
+      <div class="act">
+        ${!done ? `<button class="btn sm" data-copy="${esc(betText(d.date, x.r, x.type, x.c, x.unit))}">コピー</button>` : ""}
+        <button class="btn sm ${v ? "on" : ""}" data-vote="${esc(x.id)}" aria-pressed="${v ? "true" : "false"}">${v ? "買った ✓" : "買った"}</button>
+      </div></div>`;
+  }).join("");
+  el.innerHTML = `
+    <div class="datenav">
+      <button id="vprev" aria-label="前の日" ${i <= 0 ? "disabled" : ""}>◀</button>
+      <div class="d">${fmtD(d.date)}</div>
+      <button id="vnext" aria-label="次の日" ${i < 0 || i >= state.days.length - 1 ? "disabled" : ""}>▶</button>
+    </div>
+    <div class="sum">
+      <div class="tile"><div class="k">買い目</div><div class="v num">${items.filter(x => !x.old).length}点</div></div>
+      <div class="tile"><div class="k">買った</div><div class="v num">${mine.length}点</div></div>
+      <div class="tile"><div class="k">${mineSet.length ? "自分の収支 " + pct(mRt, mSt) : "自分の収支"}</div>
+        <div class="v num ${mineSet.length ? (mRt >= mSt ? "good" : "neg") : ""}">${mineSet.length ? yen(mRt - mSt) : "-"}</div></div>
+    </div>
+    <div class="vtools">
+      ${open.length ? `<button class="btn" id="vcopyall">発走前の${open.length}点をまとめてコピー</button>` : ""}
+      <a class="btn" href="${IPAT_URL}" target="_blank" rel="noopener">即PAT・A-PATを開く</a>
+    </div>
+    ${items.length ? `<div class="vlist">${rows}</div>` : `<div class="empty">この日に買うレースはありません。</div>`}
+    <p class="legendnote">買い目は予想の更新(発走まで)で変わることがあります。自分で買ったら「買った」を押すと、結果が出たあと自分の収支に入ります。
+      締切は発走2分前の目安。記録はこの端末のブラウザにだけ残ります(自動では買いません)。</p>
+    <div class="sec">自分の収支(この端末で「買った」にしたもの)</div>
+    <div id="mytotal" class="muted" style="font-size:13px">集計中…</div>`;
+  $("#vprev").onclick = () => voteGo(-1);
+  $("#vnext").onclick = () => voteGo(1);
+  const all = $("#vcopyall");
+  if (all) all.onclick = () => copyText(open.map(x => betText(d.date, x.r, x.type, x.c, x.unit)).join("\n"), all);
+  el.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => copyText(b.dataset.copy, b));
+  el.querySelectorAll("[data-go]").forEach(a => a.onclick = e => { e.preventDefault(); openDay(d.date, a.dataset.go); });
+  el.querySelectorAll("[data-vote]").forEach(b => b.onclick = () => {
+    const vs = loadVotes(), id = b.dataset.vote, x = items.find(z => z.id === id);
+    if (vs[id]) delete vs[id];
+    else if (x) vs[id] = {d: d.date, rid: x.r.id, type: x.type, combo: x.c, unit: x.unit, at: new Date().toISOString()};
+    saveVotes(vs); renderVote();
+  });
+  myTotal(votes);
+}
+// 全部の日の「買った」の収支。結果のある日だけ数える
+async function myTotal(votes) {
+  const box = $("#mytotal");
+  const byDay = {};
+  for (const v of Object.values(votes)) (byDay[v.d] = byDay[v.d] || []).push(v);
+  const ds = Object.keys(byDay).sort();
+  if (!ds.length) { box.textContent = "まだ記録がありません。"; return; }
+  let st = 0, rt = 0, n = 0, hit = 0, wait = 0;
+  for (const d of ds) {
+    let day = null;
+    try { day = await loadDay(d); } catch (e) { /* 読めない日は数えない */ }
+    for (const v of byDay[d]) {
+      const ret = voteRet(day && (day.races || {})[v.rid], v.type, v.combo, v.unit);
+      if (ret == null) { wait++; continue; }
+      n++; st += v.unit; rt += ret; hit += ret > 0 ? 1 : 0;
+    }
+  }
+  if (!$("#mytotal")) return;
+  box.innerHTML = n ? `<table class="tbl"><tbody>
+      <tr><td>買った</td><td>${n}点${wait ? `(結果待ち ${wait}点)` : ""}</td></tr>
+      <tr><td>的中</td><td>${hit}点(${pct(hit, n)})</td></tr>
+      <tr><td>投資 / 払戻</td><td>${yen(st)} / ${yen(rt)}</td></tr>
+      <tr><td>収支</td><td class="${rt >= st ? "good" : "neg"}"><b>${yen(rt - st)}(${pct(rt, st)})</b></td></tr></tbody></table>`
+    : `結果待ち ${wait}点`;
+}
+setInterval(() => { if (!$("#v-vote").hidden) renderVote(); }, 60000);
 
 function renderRule() {
   $("#v-rule").innerHTML = `
