@@ -1182,18 +1182,21 @@ function toCols(t) {
 const ipatBet = (d, r, t) => ({venue: r.venue, dow: dowOf(d), rno: r.rno, type: t.type, method: t.method,
   combo: t.method === "ながし" ? [t.axis, ...t.sel] : t.method === "フォーメーション" ? [...new Set(toCols(t).flat())] : t.sel,
   axis: t.axis, aite: t.method === "ながし" ? t.sel : [], cols: toCols(t), n: expand(t).length});
+// 作った買い目を投票タブに入れて、その買い目(のリスト)を返す。
+// 単勝・複勝は IPAT で1頭ずつしか入れられないので、何頭か選んだときは1頭ずつの買い目にする
 function saveTicket(b) {
-  const t = {d: b.d, rid: b.rid, type: b.type, method: b.method, axis: b.method === "ながし" ? b.axis : null,
-             sel: b.method === "フォーメーション" ? [] : b.method === "通常" && ORDERED_T.includes(b.type) ? [...b.sel] : [...b.sel].sort(byNum),
-             unit: b.unit};
-  if (b.method === "フォーメーション") t.cols = b.cols.slice(0, NEED[b.type]).map(c => [...c].sort(byNum));
-  t.id = ticketId(t);
+  const base = {d: b.d, rid: b.rid, type: b.type, method: b.method, axis: b.method === "ながし" ? b.axis : null,
+                sel: b.method === "フォーメーション" ? [] : b.method === "通常" && ORDERED_T.includes(b.type) ? [...b.sel] : [...b.sel].sort(byNum),
+                unit: b.unit};
+  if (b.method === "フォーメーション") base.cols = b.cols.slice(0, NEED[b.type]).map(c => [...c].sort(byNum));
+  const list = NEED[b.type] === 1 && base.sel.length > 1 ? base.sel.map(u => Object.assign({}, base, {sel: [u]})) : [base];
+  list.forEach(t => { t.id = ticketId(t); });
   const ts = loadTickets();
-  if (b.edit && b.edit !== t.id) delete ts[b.edit];          // 「直す」で開いたときは置き換える
-  if (b.edit) b.edit = t.id;
-  ts[t.id] = Object.assign({at: new Date().toISOString()}, ts[t.id] || {}, t);
+  if (b.edit && !list.some(t => t.id === b.edit)) delete ts[b.edit];          // 「直す」で開いたときは置き換える
+  if (b.edit) b.edit = list[0].id;
+  for (const t of list) ts[t.id] = Object.assign({at: new Date().toISOString()}, ts[t.id] || {}, t);
   saveTickets(ts);
-  return t;
+  return list;
 }
 // 自分の買い目の「買った」: 1点ずつ記録する(収支の集計は予想の買い目と同じ)
 function markTicket(vs, t, on) {
@@ -1278,7 +1281,7 @@ function drawBuilder() {
       <button class="btn" id="bDone" ${cs.length ? "" : "disabled"}>買った</button>
     </div>
     <p class="legendnote">${closed ? "このレースは締切済みです(「買った」の記録だけ付けられます)。" : ""}
-      ${window.KeibaApp ? "「IPATで入力」はIPATの画面を金額入力まで自動で進めます(2頭以上の券種はIPATのフォーメーションで入れます)。金額・セット・投票は自分で。" : ""}
+      ${window.KeibaApp ? "「IPATで入力」はIPATの画面を金額入力まで自動で進めます(2頭以上の券種はIPATのフォーメーションで入れます。単勝・複勝は1頭ずつで、2頭目からは投票タブの「IPATで入力」で)。金額・セット・投票は自分で。" : ""}
       作った買い目は投票タブに入ります。</p>`;
   box.querySelector(".bgrid").scrollTop = sc;
   const clear = () => { b.sel = []; b.axis = null; b.mode = "axis"; b.cols = [[], [], []]; b.col = 0; };
@@ -1325,14 +1328,15 @@ function drawBuilder() {
   $("#bUnit").onchange = e => { e.target.value = b.unit; store.set("keiba-unit", String(b.unit)); };
   const ip = $("#bIpat");
   if (ip) ip.onclick = () => {
-    const tk = saveTicket(b);
+    const [tk] = saveTicket(b);            // 単勝・複勝の2頭目からは、投票タブの「IPATで入力」で1頭ずつ
     $("#betdlg").close();
     window.KeibaApp.buy(JSON.stringify({text: ticketText(b.d, r, tk), bet: ipatBet(b.d, r, tk)}));
   };
-  $("#bCopy").onclick = () => { const tk = saveTicket(b); copyText(ticketText(b.d, r, tk), $("#bCopy")); };
+  $("#bCopy").onclick = () => copyText(saveTicket(b).map(tk => ticketText(b.d, r, tk)).join("\n"), $("#bCopy"));
   $("#bDone").onclick = () => {
-    const tk = saveTicket(b), vs = loadVotes();
-    markTicket(vs, tk, true); saveVotes(vs);
+    const vs = loadVotes();
+    for (const tk of saveTicket(b)) markTicket(vs, tk, true);
+    saveVotes(vs);
     $("#betdlg").close(); showTab("vote"); scrollTo(0, 0);
   };
 }

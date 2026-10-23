@@ -324,12 +324,13 @@
       });
     } else {
       var one = shownNums(/^(馬番|枠番)$/);
-      if (one && sortN(one) !== sortN(B.combo)) bad.push("馬番 " + one.join(","));
+      if (one && sortN(one) !== sortN([(COLS[0] || B.combo)[0]])) bad.push("馬番 " + one.join(",") + "(買い目は " + (COLS[0] || B.combo)[0] + ")");
     }
     var km = body.match(/組数\s*(\d+)/);
+    var rest = K === 1 && B.combo.length > 1 ? "(単勝・複勝は1頭ずつなので、ほかの " + B.combo.slice(1).join(",") + " は別に入れてください)" : "";
     if (B.n && km && +km[1] !== B.n) bad.push("組数 " + km[1] + "(買い目は " + B.n + "点)");
     return out("final", bad.length ? "画面の内容が買い目と違います: " + bad.join("、") + "。直してから金額を入れてください"
-      : "金額入力まで進めました" + (km ? "(組数 " + km[1] + ")" : "") + "。金額を入れて「セット」を押してください");
+      : "金額入力まで進めました" + (km ? "(組数 " + km[1] + ")" : "") + "。金額を入れて「セット」を押してください" + rest);
   }
   if (/合計金額入力/.test(body)) return out("final", "合計金額の画面です。内容を確かめて自分で入れてください");
   // ログイン
@@ -412,6 +413,13 @@
     if (Date.now() - (window.__kbPickAt || 0) < 400) return out("wait", colName(ci) + "を選びました");
     if (ci < COLS.length - 1 && findAll(/^次へ$/).length) return clickText("next" + ci, /^次へ$/, colName(ci) + "を選びました。次へ");
     return clickText("kingaku" + ci, /^金額入力画面へ$/, "金額入力画面へ");
+  }
+  // 単勝・複勝の馬番の画面(「馬番を1頭選択してください」。次へ・金額入力画面へは無く、馬を押すと金額入力へ進む)
+  if (/選択してください/.test(body) && /^uma\d$/.test(pageEl().id || "") && K === 1) {
+    if (!settled()) return waitMove();
+    var u1 = (COLS[0] || B.combo)[0], r1 = rowFor(u1);
+    if (!r1) return out("error", "馬番 " + u1 + " が見つかりません。手で選んでください", {info: "似た所 " + near(new RegExp("^0?" + u1 + "$"))});
+    return press("tan" + u1, rowSpots(r1), "馬番 " + u1 + " を選ぶ", r1.num);
   }
   // 方式: 2頭以上の券種はフォーメーション
   if (/フォーメーション/.test(body) && /ボックス/.test(body)) return clickText("houshiki", new RegExp("^" + HOUSHIKI + "$"), "方式: " + HOUSHIKI);
