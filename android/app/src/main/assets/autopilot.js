@@ -189,6 +189,23 @@
     }
     return null;
   }
+  // チェックが無い作り(IPAT は行を押して選ぶ): 馬番の枠(span.waku6 など)と、その行
+  function rowFor(u) {
+    var cells = Array.prototype.filter.call(document.querySelectorAll("span,div,p,td,b,strong,em,label"), function (e) {
+      var t = txt(e);
+      return visible(e) && e.children.length === 0 && (t === String(u) || t === z2(u));
+    });
+    var score = function (e) { return (/waku|umaban|num/i.test(e.className || "") ? 2 : 0) + (e.closest && e.closest("li") ? 1 : 0); };
+    cells.sort(function (a, b) { return score(b) - score(a); });
+    var c = cells[0];
+    return c ? {num: c, row: (c.closest && c.closest("li,tr")) || c.parentElement} : null;
+  }
+  // 画面の中身の短い印(押したあと画面が変わったか=押せたかを見る)
+  function sig(el) {
+    var h = 0, t = el.innerHTML;
+    for (var i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
+    return h + ":" + t.length;
+  }
   // チェックを押してみる所(この順に試す): label → チェックそのもの → 親
   function boxSpots(cb) {
     var lab = cb.id ? document.querySelector("label[for=\"" + cb.id.replace(/"/g, "\\\"") + "\"]") : null;
@@ -224,6 +241,32 @@
       return out("final", B.method + "の画面まで進めました。馬番を選んで「金額入力画面へ」を押してください");
     var name = B.type === "枠連" ? "枠番 " : "馬番 ";
     var miss = [];
+    if (!document.querySelectorAll("input[type=checkbox]").length) {
+      // 行を押して選ぶ作り。押すたびに選ぶ・外すが入れ替わるので、1頭1回だけ押し、画面が変わったら選べたことにする
+      if (ORDERED)
+        return out("final", B.type + "の着順の選び方はまだ分からないので、馬番の画面で止めました。" + B.combo.join("→") + " を手で選んでください");
+      var pg = document.querySelector(".ui-page-active") || document.body;
+      var done = pg.__kbSel = pg.__kbSel || {};          // 画面(ページ)ごとに覚える。作り直されたら最初から
+      for (var j = 0; j < B.combo.length; j++) {
+        var v = B.combo[j], rf = rowFor(v), d = done[v], wt = name + v + " を選ぶ";
+        if (!rf) { miss.push(v); continue; }
+        if (d && d.ok) continue;
+        if (d) {
+          if (sig(pg) !== d.sig) { d.ok = true; continue; }
+          if (Date.now() - d.at < 2500) return out("wait", name + v + " が選ばれるのを待っています");
+          if (d.n >= 3) return out("error", name + v + " を押しても選ばれません。手で選んでください", {info: window.__kbInfo || ""});
+        }
+        var cands = [rf.row.querySelector("a[data-value]"), rf.num.closest ? rf.num.closest("a") : null, rf.num, rf.row]
+          .filter(function (el, i, a) { return el && a.indexOf(el) === i; });
+        var n = d ? d.n + 1 : 1, before = sig(pg), res = tapAny(cands, n, wt);
+        if (!res) return missWait("row" + v, wt, rf.num);
+        done[v] = {sig: before, at: Date.now(), n: n};
+        return res;
+      }
+      if (miss.length) return out("error", name + miss.join("・") + " が見つかりません。手で選んでください",
+        {info: "似た所 " + near(new RegExp("^0?" + miss[0] + "$"))});
+      return clickText("next", /^金額入力画面へ$/, "金額入力画面へ");
+    }
     for (var pos = 0; pos < B.combo.length; pos++) {
       var u = B.combo[pos], cb = boxFor(u, pos, ORDERED);
       if (!cb) { miss.push(u); continue; }
