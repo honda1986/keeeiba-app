@@ -55,6 +55,9 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new Bridge(), "KeibaApp");
         ipat = newWebView();
         CookieManager.getInstance().setAcceptThirdPartyCookies(ipat, true);
+        // アプリ内の画面(WebView)だと断るサイトがあるので、IPAT にはふつうのスマホのブラウザとして名乗る
+        WebSettings is = ipat.getSettings();
+        is.setUserAgentString(is.getUserAgentString().replace("; wv", "").replaceAll("Version/[0-9.]+ ", ""));
 
         // IPAT の上に出す買い目(押すと消える、長押しでもう一度コピー)
         betBar = new TextView(this);
