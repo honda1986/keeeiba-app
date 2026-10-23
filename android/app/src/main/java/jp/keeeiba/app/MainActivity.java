@@ -240,7 +240,10 @@ public class MainActivity extends Activity {
                 handler.postDelayed(this, TICK_MS);
                 return;
             }
-            String js = autopilot + "(" + task.toString() + "," + (steps > 0) + ")";
+            // 中でエラーが出たら、読み込み中(null)と区別できるように error として返す
+            String js = "(function(){try{return (" + autopilot + "\n)(" + task.toString() + "," + (steps > 0) + ");}"
+                    + "catch(e){return JSON.stringify({st:'error',msg:'自動入力の中でエラーが出ました: '+e.message,"
+                    + "info:String(e.stack||'').slice(0,400)});}})()";
             ipat.evaluateJavascript(js, MainActivity.this::onStep);
         }
     };

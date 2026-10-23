@@ -250,7 +250,9 @@
   }
   var sortN = function (xs) { return xs.slice().sort(function (a, b) { return a - b; }).join(","); };
 
-  if (!STARTED) window.__kbSel = {};          // 新しい買い目: 前に選んだ記録は使わない
+  // 選んだ馬の記録。新しい買い目では使わない。IPAT は画面ごと読み直すこと(通常投票のあとなど)があり、そのときは消えている
+  if (!STARTED || !window.__kbSel) window.__kbSel = {};
+  var SEL = window.__kbSel;
 
   // 金額入力: ここで止まる(金額・セットは自分で)。画面の列の馬番と組数が買い目と合っているかを見る
   if (/金額入力/.test(body) && /セット/.test(body) && !/合計金額入力/.test(body)) {
@@ -284,7 +286,7 @@
     // 行は押すたびに選ぶ・外すが入れ替わる。1頭ずつ押して、行の形が変わったら選べたことにする。
     // 変わらなければ(押せていない)押す所を変えて押し直す(4か所まで)
     for (var j = 0; j < want.length; j++) {
-      var v = want[j], rf = rowFor(v), key = ci + ":" + v, d = window.__kbSel[key], wt = colName(ci) + " " + name + v + " を選ぶ";
+      var v = want[j], rf = rowFor(v), key = ci + ":" + v, d = SEL[key], wt = colName(ci) + " " + name + v + " を選ぶ";
       if (!rf) { miss.push(v); continue; }
       if (d && d.ok) continue;
       var cands = rowSpots(rf);
@@ -300,7 +302,7 @@
       var n = d ? d.n + 1 : 1, before = shape(rf.row), res = tapAny(cands, n, wt);
       if (!res) return missWait("row" + key, wt, rf.num);
       window.__kbSaw = "";
-      window.__kbSel[key] = {shape: before, at: Date.now(), n: n};
+      SEL[key] = {shape: before, at: Date.now(), n: n};
       return res;
     }
     if (miss.length) return out("error", colName(ci) + " " + name + miss.join("・") + " が見つかりません。手で選んでください",
