@@ -143,14 +143,19 @@
     Array.prototype.forEach.call(c.querySelectorAll("a,button"), function (x) { x.remove(); });   // 「方式」「1頭目」の戻るボタンは除く
     return txt(c);
   }
+  // 画面が変わってから1秒は待つ。切り替えの動きの印(ui-mobile-viewport-transitioning)は、残ったままのことがあるので2.5秒まで
   function settled() {
-    var key = (pageEl().id || location.pathname) + "|" + heading();
+    var h1 = pageEl().querySelector("[data-role=header] h1, .ui-header h1, .ui-title");
+    var key = (pageEl().id || location.pathname) + "|" + (h1 ? txt(h1) : "");
     if (window.__kbPk !== key) { window.__kbPk = key; window.__kbPkAt = Date.now(); }
     var moving = /ui-mobile-viewport-transitioning/.test(document.documentElement.className + " " + document.body.className);
-    return !moving && Date.now() - window.__kbPkAt > 1000;
+    var t = Date.now() - window.__kbPkAt;
+    window.__kbSettle = "画面 " + key + " " + Math.round(t / 100) / 10 + "秒" + (moving ? " 切り替え中" : "");
+    return t > 1000 && (!moving || t > 2500);
   }
+  var waitMove = function () { return out("wait", "画面が切り替わるのを待っています", {info: window.__kbSettle}); };
   function press(key, cands, msg, el) {
-    if (!settled()) return out("wait", "画面が切り替わるのを待っています");
+    if (!settled()) return waitMove();
     if (!cands.some(function (c) { return !!point(c); })) return missWait(key, msg, el);
     return once(key, function (n) { return tapAny(cands, n, msg) || missWait(key, msg, el); });
   }
@@ -275,7 +280,7 @@
     var hm = heading().match(/([1-3])\s*(?:頭目|着)/);
     var ci = hm ? +hm[1] - 1 : 0, want = COLS[ci] || [];
     var name = B.type === "枠連" ? "枠番 " : "馬番 ", miss = [];
-    if (!settled()) return out("wait", "画面が切り替わるのを待っています");
+    if (!settled()) return waitMove();
     // 行は押すたびに選ぶ・外すが入れ替わる。1頭ずつ押して、行の形が変わったら選べたことにする。
     // 変わらなければ(押せていない)押す所を変えて押し直す(4か所まで)
     for (var j = 0; j < want.length; j++) {
