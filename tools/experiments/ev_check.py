@@ -1,5 +1,6 @@
-"""ワイドの期待値を、確定オッズ(wide_final)で確かめる(中央、2022年1月〜)
-  python tools/experiments/ev_wide_check.py
+"""単勝・ワイドの期待値を、確定オッズで確かめる(中央、2022年1月〜)
+  python tools/experiments/ev_check.py
+  単勝は結果の確定オッズ(result.odds)、ワイドは wide_final(「過去の日を再現」mode=odds で取る)
   確率はアプリと同じ: 1着 P ∝ q^1.00 × (p3/(1-p3))^0.04(p3 が無い2022・2023年は市場の確率だけ)、
   ワイドは Harville(2着・3着は0.7乗)。期待値 = 確率 × 確定オッズの下限。実際の払戻と比べる"""
 import glob, gzip, json, os
@@ -26,7 +27,7 @@ def pairs(win, g=G):
     return P
 
 
-rows = []
+rows, tans = [], []
 nr = 0
 for f in sorted(glob.glob(R + "/keiba/days/202*.json")):
     d = json.load(open(f))
@@ -35,7 +36,7 @@ for f in sorted(glob.glob(R + "/keiba/days/202*.json")):
         res = r.get("result") or {}
         wfin, od = r.get("wide_final"), res.get("odds") or {}
         pay = (res.get("payout") or {}).get("ワイド") or {}
-        if r.get("center") != "jra" or not wfin or not od or not pay or len(res.get("order") or []) < 3:
+        if r.get("center") != "jra" or not od or not pay or len(res.get("order") or []) < 3:
             continue
         us = [u for u in od if (od[u] or 0) > 1]
         if len(us) < 5:
@@ -45,12 +46,41 @@ for f in sorted(glob.glob(R + "/keiba/days/202*.json")):
         z = {u: (1 / od[u] / inv) ** A * ((min(max(p3.get(u, 0.5), 1e-3), 0.99)) / (1 - min(max(p3.get(u, 0.5), 1e-3), 0.99))) ** B
              for u in us}
         s = sum(z.values()); win = {u: v / s for u, v in z.items()}
+        tp = (res.get("payout") or {}).get("単勝") or {}
+        if p3:                         # 2022・2023年はモデルの確率が無く、期待値がどの馬も払戻率と同じになるので数えない
+            for u in us:
+                tans.append((y, win[u], od[u], tp.get(u, 0)))
+        if not wfin:
+            continue
         P = pairs(win)
         nr += 1
         for k, (lo, hi) in wfin.items():
             if k in P:
                 rows.append((y, P[k], lo, hi, pay.get(k, 0)))
-print("レース", nr, "組", len(rows))
+print("レース", nr, "単勝", len(tans), "頭 / ワイド", len(rows), "組")
+
+
+def table(title, xs, ev, edges):
+    ys = sorted({r[0] for r in xs})
+    print("\n■ " + title + "   " + " ".join(ys) + " | 計")
+    for lo_e, hi_e in zip(edges, edges[1:]):
+        cols, tn, tr = [], 0, 0
+        for y in ys:
+            s = [r for r in xs if r[0] == y and lo_e <= ev(r) < hi_e]
+            cols.append("%4.0f%%" % (sum(r[-1] for r in s) / max(len(s), 1)))
+            tn += len(s); tr += sum(r[-1] for r in s)
+        print("  {:.2f}〜{:<5} {} | {:7d} {:4.0f}%".format(lo_e, hi_e if hi_e < 99 else "", " ".join(cols), tn, tr / max(tn, 1)))
+
+
+table("単勝の期待値(確率×確定オッズ)ごとの、実際の回収率(2024年〜)", tans, lambda r: r[1] * r[2], [0, .5, .6, .7, .75, .8, .85, .9, 1.0, 99])
+print("\n■ 単勝のオッズの帯ごと(2024年〜。期待値の平均 → 実際の回収率)")
+for lo_e, hi_e in ((1, 2), (2, 5), (5, 10), (10, 20), (20, 50), (50, 100), (100, 9999)):
+    s = [r for r in tans if lo_e <= r[2] < hi_e]
+    if s:
+        print("  {:4d}〜{:<4d}倍 {:7d}頭 期待値 {:.2f} → 回収率 {:4.0f}%".format(lo_e, hi_e, len(s), sum(r[1] * r[2] for r in s) / len(s),
+                                                                    sum(r[3] for r in s) / len(s)))
+if not rows:
+    raise SystemExit("ワイドの確定オッズがまだありません(「過去の日を再現」を mode=odds でまわす)")
 YS = sorted({r[0] for r in rows})
 print("\n■ ワイドの期待値(確率×確定オッズの下限)ごとの、実際の回収率   " + " ".join(YS) + " | 計")
 edges = [0, .5, .6, .7, .8, .9, 1.0, 1.1, 1.2, 1.5, 99]
