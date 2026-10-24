@@ -36,6 +36,8 @@ import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 /**
  * 2強レース(個人用)。下の切り替えで「予想」(GitHub Pages のアプリ)と「IPAT」(JRA のネット投票)を行き来する。
@@ -371,6 +373,49 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void openIpat() {
             runOnUiThread(() -> show(true));
+        }
+
+        /**
+         * netkeiba(race.netkeiba.com だけ)のページを取って、文字を予想アプリに返す(window.kbFetched(id, 文字, エラー))。
+         * ブラウザの予想アプリからは別のサイトを読めないので、オッズをその場で取るときにアプリが代わりに取る
+         */
+        @JavascriptInterface
+        public void fetch(String url, String id) {
+            if (url == null || !url.startsWith("https://race.netkeiba.com/")) {
+                fetched(id, null, "このアドレスは取れません");
+                return;
+            }
+            new Thread(() -> {
+                String body = null, err = null;
+                try {
+                    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                    c.setConnectTimeout(10000);
+                    c.setReadTimeout(15000);
+                    c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36");
+                    int code = c.getResponseCode();
+                    if (code >= 400) throw new Exception("HTTP " + code);
+                    ByteArrayOutputStream b = new ByteArrayOutputStream();
+                    try (InputStream in = c.getInputStream()) {
+                        byte[] buf = new byte[8192];
+                        int n;
+                        while ((n = in.read(buf)) > 0) b.write(buf, 0, n);
+                    }
+                    // 文字コード: 返事に書いてあればそれ、無ければ API は UTF-8、ページは EUC-JP(netkeiba)
+                    String ct = c.getContentType() == null ? "" : c.getContentType();
+                    String cs = ct.toLowerCase().contains("charset=") ? ct.substring(ct.toLowerCase().indexOf("charset=") + 8).trim()
+                            : url.contains("/api/") ? "UTF-8" : "EUC-JP";
+                    body = b.toString(cs.split(";")[0].replace("\"", "").trim());
+                } catch (Exception e) {
+                    err = e.toString();
+                }
+                fetched(id, body, err);
+            }).start();
+        }
+
+        void fetched(String id, String body, String err) {
+            String js = "window.kbFetched&&window.kbFetched(" + JSONObject.quote(id) + "," + (body == null ? "null" : JSONObject.quote(body))
+                    + "," + JSONObject.quote(err == null ? "" : err) + ")";
+            runOnUiThread(() -> web.evaluateJavascript(js, null));
         }
 
         @JavascriptInterface

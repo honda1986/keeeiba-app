@@ -163,6 +163,8 @@ details>summary::-webkit-details-marker{display:none}
 .btn:disabled{opacity:.4;cursor:default}
 .datenav .d{width:auto;flex:1;font-weight:700}
 .datenav .d small{font-weight:600;color:var(--muted);margin-left:4px}
+.oddsbar{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin:-4px 0 10px}
+.oddsbar .btn{margin-left:auto}
 .srcnote{font-size:12px;color:var(--ink2);background:var(--accent-bg);border:1px solid var(--accent-line);border-radius:10px;padding:8px 12px;margin-bottom:10px}
 .card.flash,.skipd.flash,.waitr.flash{outline:2px solid var(--pos);outline-offset:2px}
 /* 場×レース番号の表(v24 と同じ考え方。押すとそのレースへ飛ぶ) */
@@ -324,6 +326,7 @@ async function boot() {
     if (pick) { try { state.day = await loadDay(pick); } catch (e) { /* data.json のまま */ } }
   }
   renderRace(); renderMoney(); renderRule(); renderVote();
+  autoOdds();
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.get("d") && state.days.includes(h.get("d"))) openDay(h.get("d"), h.get("r"));
 }
@@ -332,6 +335,7 @@ async function boot() {
 async function openDay(d, rid) {
   try { state.day = await loadDay(d); } catch (e) { return; }
   renderRace(); renderVote(); showTab("race");
+  autoOdds();
   if (rid && allRaces().some(r => r.id === rid)) jumpRace(rid, false);
   else { scrollTo(0, 0); setHash(d); }
 }
@@ -467,6 +471,7 @@ function renderRace() {
       <button class="d" id="pick" aria-haspopup="dialog">${fmtD(d.date)}<small>📅</small></button>
       <button id="next" aria-label="次の日" ${i < 0 || i >= state.days.length - 1 ? "disabled" : ""}>▶</button>
     </div>
+    <div class="oddsbar" id="oddsbar"></div>
     ${state.noRace && d.date === state.noRace.pick ? `<div class="srcnote">今日 ${fmtD(state.noRace.today).slice(5)} は中央の開催がありません。
       ${state.noRace.next ? "次の開催の予想を出しています(出馬表は土曜分が木曜、日曜分が金曜に出ます)。" : "最後の開催を出しています。"}</div>` : ""}
     ${nback ? `<div class="srcnote">${nback === all.length ? "この日" : nback + "レース"}は<b>後から再現した予想</b>です。
@@ -489,6 +494,7 @@ function renderRace() {
     <div id="rlist"></div>`;
   $("#prev").onclick = () => goDay(-1);
   $("#next").onclick = () => goDay(1);
+  drawOddsBar();
   $("#pick").onclick = () => { state.calMonth = d.date.slice(0, 6); openCalendar(); };
   el.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { state.filter = b.dataset.f; saveRace(); renderRace(); });
   el.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { state.center = b.dataset.c; saveRace(); renderRace(); });
@@ -648,6 +654,7 @@ function skipHead(rs) {
     ${refs.length}レース 的中${hit} 回収率${pct(ret, refs.length * 100)}(参考)</span>`;
 }
 
+const oddsCell = ho => `${ho.ninki ? ho.ninki + "人" : "-"}<br><span class="muted">${ho.odds ?? ""}</span>`;
 function table(r) {
   const p = r.pred;
   const rows = p.horses.map(h => {
@@ -656,11 +663,11 @@ function table(r) {
       + h.plus.map(m => `<span class="tag p">${esc(m.t)} +${m.p}</span>`).join("")
       + (h.axis_ng.length && !h.cut ? `<span class="tag o">軸不可: ${esc(h.axis_ng.join("・"))}</span>` : "")
       + (h.cut ? `<span class="tag m"><b>消し</b> ${esc(h.cut_reason)}</span>` : "");
-    return `<tr class="${h.cut ? "cut" : ""}"><td class="mk">${h.mark || ""}</td>
+    return `<tr class="${h.cut ? "cut" : ""}" data-u="${h.umaban}"><td class="mk">${h.mark || ""}</td>
       <td class="num">${h.umaban}</td>
       <td><b>${esc(ho.name)}</b> <span class="muted">${esc(h.style || "")}</span><br>${tags}</td>
       <td class="sc num">${h.p3 != null ? Math.round(h.p3 * 100) + "%" : h.score}</td>
-      <td class="odds num" style="text-align:right">${ho.ninki ? ho.ninki + "人" : "-"}<br><span class="muted">${ho.odds ?? ""}</span>
+      <td class="odds num" style="text-align:right"><span class="oc">${oddsCell(ho)}</span>
         ${h.odds_note ? `<br><span class="tag o">${esc(h.odds_note)}</span>` : ""}</td></tr>`;
   }).join("");
   return `<div style="overflow-x:auto;padding:0 8px"><table class="hs"><thead><tr><th></th><th>番</th><th>馬 / 減点・加点</th>
@@ -1112,6 +1119,116 @@ async function myTotal(votes) {
     : `結果待ち ${wait}点`;
 }
 setInterval(() => { if (!$("#v-vote").hidden) renderVote(); }, 60000);
+
+// ---------------------------------------------------------------- オッズ(アプリでその場で取る)
+// Androidアプリは netkeiba から直接オッズを取れる(KeibaApp.fetch)。開いたとき・「オッズ更新」で、発走前のレースを取り直す。
+// ブラウザでは GitHub の更新(開催日は10分ごと)のときのオッズのまま
+const canLive = () => !!(window.KeibaApp && typeof window.KeibaApp.fetch === "function");
+const fetchWait = {};
+let fetchSeq = 0;
+window.kbFetched = (id, text, err) => { const f = fetchWait[id]; if (f) { delete fetchWait[id]; f(text, err); } };
+function appFetch(url) {
+  return new Promise((ok, ng) => {
+    const id = "f" + (++fetchSeq);
+    const t = setTimeout(() => { delete fetchWait[id]; ng(new Error("時間切れ")); }, 20000);
+    fetchWait[id] = (text, err) => { clearTimeout(t); text == null ? ng(new Error(err || "取れない")) : ok(text); };
+    window.KeibaApp.fetch(url, id);
+  });
+}
+// 馬番 -> [単勝オッズ, 人気]。発売前は空。netkeiba の API(JSON)→ 単勝オッズのページ の順に試す(keiba.py の fetch_odds と同じ)
+async function liveOdds(rid) {
+  const out = {};
+  try {
+    const j = JSON.parse(await appFetch("https://race.netkeiba.com/api/api_get_jra_odds.html?pid=api_get_jra_odds&input=UTF-8" +
+      "&output=json&race_id=" + rid + "&type=1&action=init&compress=0"));
+    for (const [k, v] of Object.entries(((j.data || {}).odds || {})["1"] || {})) {
+      const od = parseFloat(v[0]), nk = parseInt(v[2], 10);
+      if (od > 0) out[+k] = [od, nk || null];
+    }
+  } catch (e) { /* 次の方法で */ }
+  if (!Object.keys(out).length) {
+    try {
+      const doc = new DOMParser().parseFromString(await appFetch("https://race.netkeiba.com/odds/odds_get_form.html?type=b1&race_id=" + rid), "text/html");
+      for (const tr of doc.querySelectorAll("tr")) {
+        let um = null, nk = null, od = null;
+        const tds = [...tr.querySelectorAll("td")], tx = td => td.textContent.trim().normalize("NFKC");
+        for (const td of tds) {                  // 馬番は馬名の前にある最後の数字の列
+          if (td.classList.contains("Horse_Name")) break;
+          if (td.classList.contains("Ninki")) nk = parseInt(tx(td), 10) || null;
+          else if (/^\d{1,2}$/.test(tx(td))) um = +tx(td);
+        }
+        for (const td of tds) {
+          if (td.classList.contains("Odds") && /^\d+\.\d$/.test(tx(td))) od = parseFloat(tx(td));
+          else if (td.classList.contains("Ninki") || td.classList.contains("Popular_Ninki")) nk = parseInt(tx(td), 10) || nk;
+        }
+        if (um && od) out[um] = [od, nk];
+      }
+    } catch (e) { /* 取れなかった */ }
+  }
+  const us = Object.keys(out).map(Number);          // 人気が無ければオッズの低い順
+  if (us.length && !us.every(u => out[u][1])) us.sort((a, b) => out[a][0] - out[b][0]).forEach((u, i) => { out[u][1] = i + 1; });
+  return out;
+}
+const oddsState = {at: 0, day: "", busy: false, ok: 0, ng: 0};
+const hm = t => `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+function drawOddsBar() {
+  const el = $("#oddsbar");
+  if (!el || !state.day) return;
+  const d = state.day;
+  let t;
+  if (oddsState.busy) t = "オッズを取っています…";
+  else if (oddsState.at && oddsState.day === d.date)
+    t = `オッズ ${hm(new Date(oddsState.at))} にアプリで取得` + (oddsState.ng ? `(${oddsState.ok}R。${oddsState.ng}Rは発売前か取れず)` : `(${oddsState.ok}R)`);
+  else {
+    const at = Object.values(d.races || {}).map(r => r.odds_at || "").sort().pop();
+    t = at ? `オッズ ${+at.slice(5, 7)}/${+at.slice(8, 10)} ${at.slice(11, 16)} の分` : "オッズ まだ";
+  }
+  el.innerHTML = `<span>${esc(t)}</span>` +
+    (canLive() ? `<button class="btn sm" id="oddsupd" ${oddsState.busy ? "disabled" : ""}>オッズ更新</button>` : "");
+  if (canLive()) $("#oddsupd").onclick = () => refreshOdds(true);
+}
+// 表の人気・オッズだけ書き換える(開いている表を閉じないように、描き直さない)
+function updateOddsDom(r) {
+  const box = document.getElementById("r-" + r.id);
+  if (!box) return;
+  box.querySelectorAll("tr[data-u]").forEach(tr => {
+    const ho = r.horses.find(h => h.umaban === +tr.dataset.u), c = tr.querySelector(".oc");
+    if (ho && c) c.innerHTML = oddsCell(ho);
+  });
+}
+async function refreshOdds(manual) {
+  if (!canLive() || oddsState.busy || !state.day) return;
+  const d = state.day;
+  const todo = allRaces().filter(r => r.horses && r.horses.length && !r.result && (untilClose(d.date, r) ?? 1) > -2);
+  if (!todo.length) {
+    if (manual) { const el = $("#oddsbar span"); if (el) el.textContent = "発走前のレースがありません"; }
+    return;
+  }
+  oddsState.busy = true; drawOddsBar();
+  let ok = 0, ng = 0;
+  const q = todo.slice();
+  await Promise.all([0, 1, 2, 3].map(async () => {          // 4つずつ並べて取る
+    while (q.length) {
+      const r = q.shift();
+      const o = await liveOdds(r.id).catch(() => ({}));
+      if (!Object.keys(o).length) { ng++; continue; }
+      ok++;
+      for (const h of r.horses) if (o[h.umaban]) { h.odds = o[h.umaban][0]; h.ninki = o[h.umaban][1]; }
+      updateOddsDom(r);
+    }
+  }));
+  Object.assign(oddsState, {at: Date.now(), day: d.date, busy: false, ok, ng});
+  drawOddsBar();
+}
+// 今日・これからの日を開いたとき、最後に取ってから3分たっていれば取り直す
+function autoOdds() {
+  if (!canLive() || !state.day) return;
+  const now = new Date(Date.now() + 9 * 3600e3), today = now.toISOString().slice(0, 10).replace(/-/g, "");
+  if (state.day.date < today) return;
+  if (oddsState.day === state.day.date && Date.now() - oddsState.at < 3 * 60e3) return;
+  refreshOdds(false);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) autoOdds(); });
 
 // ---------------------------------------------------------------- 買い目を作る
 // 予想に無いレースや券種も、自分で買い目を作って投票タブに入れる(この端末にだけ残る)
