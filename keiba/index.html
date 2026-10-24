@@ -223,6 +223,11 @@ dialog.sheet .close{display:block;width:100%;margin-top:10px;padding:9px;border-
 .tbl tr.link{cursor:pointer}
 .tbl tr.link:hover td,.tbl tr.link:focus-visible td{background:var(--surface2)}
 .legendnote{font-size:12px;color:var(--muted);margin:6px 2px 0}
+.nextb{display:flex;gap:10px;align-items:center;width:100%;text-align:left;background:var(--accent-bg);border:1px solid var(--accent-line);
+  border-radius:12px;padding:9px 12px;margin-bottom:10px;font-size:14px}
+.nextb .badge{min-width:28px;height:28px;font-size:13px}
+.nextb .t{flex:1;min-width:0}
+.nextb .k{display:block;font-size:11px;font-weight:700;color:var(--accent)}
 .cbox>summary{font-size:12.5px}
 .cbox .tag{margin-left:2px}
 </style>
@@ -472,6 +477,7 @@ function renderRace() {
       <button id="next" aria-label="次の日" ${i < 0 || i >= state.days.length - 1 ? "disabled" : ""}>▶</button>
     </div>
     <div class="oddsbar" id="oddsbar"></div>
+    <div id="nextbuy"></div>
     ${state.noRace && d.date === state.noRace.pick ? `<div class="srcnote">今日 ${fmtD(state.noRace.today).slice(5)} は中央の開催がありません。
       ${state.noRace.next ? "次の開催の予想を出しています(出馬表は土曜分が木曜、日曜分が金曜に出ます)。" : "最後の開催を出しています。"}</div>` : ""}
     ${nback ? `<div class="srcnote">${nback === all.length ? "この日" : nback + "レース"}は<b>後から再現した予想</b>です。
@@ -495,6 +501,7 @@ function renderRace() {
   $("#prev").onclick = () => goDay(-1);
   $("#next").onclick = () => goDay(1);
   drawOddsBar();
+  drawNextBuy();
   $("#pick").onclick = () => { state.calMonth = d.date.slice(0, 6); openCalendar(); };
   el.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { state.filter = b.dataset.f; saveRace(); renderRace(); });
   el.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { state.center = b.dataset.c; saveRace(); renderRace(); });
@@ -504,7 +511,7 @@ function renderRace() {
   drawList();
 }
 
-// 発走順に並べる。買うレースはカード、見送り・予想前は1行(続く行は1つの枠にまとめる)
+// 買うレース(カード)を先に、見送り・予想前(1行ずつ、1つの枠にまとめる)を後に。どちらも発走順
 function drawList() {
   const box = $("#rlist");
   if (!box) return;
@@ -513,21 +520,35 @@ function drawList() {
     box.innerHTML = `<div class="empty">${allRaces().length ? "この条件に合うレースはありません。" : "この日は中央の開催がありません。"}</div>`;
     return;
   }
-  const skips = shown.filter(r => ["skip", "ref"].includes(raceKind(r)));
-  let html = skips.length ? `<div class="sec">${skipHead(skips)}</div>` : "", group = "";
-  const flush = () => { if (group) { html += `<div class="card">${group}</div>`; group = ""; } };
-  for (const r of shown) {
-    const k = raceKind(r);
-    if (["buy", "hit", "lose"].includes(k)) { flush(); html += card(r); }
-    else group += k === "wait" ? waitRow(r) : skipRow(r);
+  const isBuy = r => ["buy", "hit", "lose"].includes(raceKind(r));
+  const buys = shown.filter(isBuy), rest = shown.filter(r => !isBuy(r));
+  const skips = rest.filter(r => ["skip", "ref"].includes(raceKind(r)));
+  let html = buys.length ? `<div class="sec">買うレース ${buys.length}</div>` + buys.map(card).join("") : "";
+  if (rest.length) {
+    const nw = rest.length - skips.length;
+    html += `<div class="sec">${skips.length ? skipHead(skips) + (nw ? ` · 予想前 ${nw}` : "") : `予想前 ${nw}`}</div>`
+      + `<div class="card">${rest.map(r => raceKind(r) === "wait" ? waitRow(r) : skipRow(r)).join("")}</div>`;
   }
-  flush();
   box.innerHTML = html;
   box.querySelectorAll("[data-mk]").forEach(b => b.onclick = () => openBuilder({rid: b.dataset.mk}));
 }
 
 function waitRow(r) {
   return `<div class="waitr" id="r-${esc(r.id)}"><b>${head(r)}</b><span class="r">予想前(出馬表・馬柱を取っているところ)</span></div>`;
+}
+
+// 締切前でいちばん早い買うレース。押すとそのレースへ飛ぶ
+function drawNextBuy() {
+  const el = $("#nextbuy"), d = state.day;
+  if (!el || !d) return;
+  const r = races().filter(x => centerOkR(x) && x.pred.verdict !== "見送り" && !x.result && (untilClose(d.date, x) ?? -1) > 0)[0];
+  if (!r) { el.innerHTML = ""; return; }
+  const m = untilClose(d.date, r), p = r.pred;
+  const bet = p.bets.map(b => `${b.type} ${b.combos.map(c => comboText(b.type, c)).join(",")}`).join(" / ");
+  el.innerHTML = `<button class="nextb" data-rid="${esc(r.id)}"><span class="badge ${p.verdict}">${p.verdict}</span>
+    <span class="t"><span class="k">次の買い${m < 120 ? ` · <b>締切まで ${m}分</b>` : ""}</span>
+    <b>${head(r)}</b> <span class="num">${esc(bet)}</span></span><span class="muted">›</span></button>`;
+  el.querySelector("button").onclick = () => jumpRace(r.id);
 }
 
 // 表のマスから、そのレースへ飛ぶ(絞り込みで隠れていたら外してから開く)
@@ -1110,7 +1131,7 @@ async function myTotal(votes) {
       <tr><td>収支</td><td class="${rt >= st ? "good" : "neg"}"><b>${yen(rt - st)}(${pct(rt, st)})</b></td></tr></tbody></table>`
     : `結果待ち ${wait}点`;
 }
-setInterval(() => { if (!$("#v-vote").hidden) renderVote(); }, 60000);
+setInterval(() => { if (!$("#v-vote").hidden) renderVote(); if (!$("#v-race").hidden) drawNextBuy(); }, 60000);
 
 // ---------------------------------------------------------------- オッズ(アプリでその場で取る)
 // Androidアプリは netkeiba から直接オッズを取れる(KeibaApp.fetch)。開いたとき・「オッズ更新」で、発走前のレースを取り直す。
