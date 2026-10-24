@@ -933,7 +933,6 @@ async function modelBox() {
 // ---------------------------------------------------------------- 投票
 // 自分で買うときの買い目の一覧と、買った記録(自動では買わない)。記録はこの端末のブラウザにだけ残る
 const VOTE_KEY = "keiba-votes";
-const IPAT_URL = "https://www.ipat.jra.go.jp/";
 const loadVotes = () => { try { return JSON.parse(store.get(VOTE_KEY) || "{}") || {}; } catch (e) { return {}; } };
 const saveVotes = v => store.set(VOTE_KEY, JSON.stringify(v));
 const ORDERED_T = ["馬単", "3連単"];
@@ -1000,7 +999,6 @@ function renderVote() {
     return rs.some(v => v == null) ? null : rs.reduce((a, v) => a + v, 0);
   };
   const textOf = x => x.t ? ticketText(d.date, x.r, x.t) : betText(d.date, x.r, x.type, x.c, x.unit);
-  const betOf = x => ipatBet(d.date, x.r, x.t || {type: x.type, method: "通常", sel: x.c, axis: null});
   const closed = x => !!x.r.result || (untilClose(d.date, x.r) ?? 1) <= 0;
   const open = items.filter(x => !x.old && !closed(x));
   // この日の「買った」(予想の買い目も自分の買い目も)
@@ -1034,7 +1032,6 @@ function renderVote() {
         <div class="l2">${what}</div></a>
         <div class="st">${status(x)}${x.old ? " · 予想が変わったので今の買い目には無い" : ""}${mk}</div></div>
       <div class="act">
-        ${!done && window.KeibaApp ? `<button class="btn sm on" data-buy="${esc(JSON.stringify({text: textOf(x), bet: betOf(x)}))}">IPATで入力</button>` : ""}
         ${!done ? `<button class="btn sm" data-copy="${esc(textOf(x))}">コピー</button>` : ""}
         <button class="btn sm ${v ? "on" : ""}" data-vote="${esc(x.id)}" aria-pressed="${v ? "true" : "false"}">${v ? "買った ✓" : "買った"}</button>
       </div></div>`;
@@ -1054,13 +1051,11 @@ function renderVote() {
     <div class="vtools">
       <button class="btn on" id="vmake">買い目を作る</button>
       ${open.length ? `<button class="btn" id="vcopyall">発走前の${open.length}件をまとめてコピー</button>` : ""}
-      <a class="btn" href="${IPAT_URL}" target="_blank" rel="noopener" id="vipat">${window.KeibaApp ? "IPATを開く" : "即PAT・A-PATを開く"}</a>
     </div>
     ${items.length ? `<div class="vlist">${rows}</div>` : `<div class="empty">この日に買うレースはありません。<br>「買い目を作る」で、見送りのレースや好きな券種も買えます。</div>`}
     <p class="legendnote">買い目は予想の更新(発走まで)で変わることがあります。自分で買ったら「買った」を押すと、結果が出たあと自分の収支に入ります。
       「買い目を作る」で、予想に無いレース・券種(単勝〜3連単、ボックス・ながし・フォーメーション)も入れられます。
-      締切は発走2分前の目安。記録はこの端末${window.KeibaApp ? "(アプリ)" : "のブラウザ"}にだけ残ります(自動では買いません)。
-      ${window.KeibaApp ? "「IPATで入力」はIPATの画面を金額入力まで自動で進めます(2頭以上の券種はIPATのフォーメーションで入れ、金額入力の画面で馬番と組数を確かめます)。金額・セット・投票は自分で入れてください。" : ""}</p>
+      締切は発走2分前の目安。記録はこの端末${window.KeibaApp ? "(アプリ)" : "のブラウザ"}にだけ残ります。</p>
     <div class="sec">自分の収支(この端末で「買った」にしたもの)</div>
     <div id="mytotal" class="muted" style="font-size:13px">集計中…</div>`;
   $("#vprev").onclick = () => voteGo(-1);
@@ -1069,9 +1064,6 @@ function renderVote() {
   const all = $("#vcopyall");
   if (all) all.onclick = () => copyText(open.map(textOf).join("\n"), all);
   el.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => copyText(b.dataset.copy, b));
-  // Androidアプリの中では、IPATの画面を金額入力まで進める(アプリが KeibaApp を用意する)
-  el.querySelectorAll("[data-buy]").forEach(b => b.onclick = () => window.KeibaApp.buy(b.dataset.buy));
-  if (window.KeibaApp) $("#vipat").onclick = e => { e.preventDefault(); window.KeibaApp.openIpat(); };
   el.querySelectorAll("[data-go]").forEach(a => a.onclick = e => { e.preventDefault(); openDay(d.date, a.dataset.go); });
   el.querySelectorAll("[data-mi]").forEach(b => b.onclick = () => {
     const x = items[+b.dataset.mi];
@@ -1287,12 +1279,7 @@ function toCols(t) {
   if (t.method === "ながし") return [[t.axis], ...Array.from({length: k - 1}, () => [...t.sel])];
   return t.sel.map(u => [u]);
 }
-// アプリが IPAT の画面を進めるときの買い目(枠連は枠番)
-const ipatBet = (d, r, t) => ({venue: r.venue, dow: dowOf(d), rno: r.rno, type: t.type, method: t.method,
-  combo: t.method === "ながし" ? [t.axis, ...t.sel] : t.method === "フォーメーション" ? [...new Set(toCols(t).flat())] : t.sel,
-  axis: t.axis, aite: t.method === "ながし" ? t.sel : [], cols: toCols(t), n: expand(t).length});
-// 作った買い目を投票タブに入れて、その買い目(のリスト)を返す。
-// 単勝・複勝は IPAT で1頭ずつしか入れられないので、何頭か選んだときは1頭ずつの買い目にする
+// 作った買い目を投票タブに入れて、その買い目(のリスト)を返す。単勝・複勝で何頭か選んだときは1頭ずつの買い目にする
 function saveTicket(b) {
   const base = {d: b.d, rid: b.rid, type: b.type, method: b.method, axis: b.method === "ながし" ? b.axis : null,
                 sel: b.method === "フォーメーション" ? [] : b.method === "通常" && ORDERED_T.includes(b.type) ? [...b.sel] : [...b.sel].sort(byNum),
@@ -1385,12 +1372,10 @@ function drawBuilder() {
     <input id="bUnit" type="number" inputmode="numeric" min="100" step="100" value="${b.unit}" aria-label="1点の金額(円)">
     <div class="bsum" id="bSum">${sum()}</div>
     <div class="bact">
-      ${window.KeibaApp ? `<button class="btn on" id="bIpat" ${cs.length && !closed ? "" : "disabled"}>IPATで入力</button>` : ""}
-      <button class="btn ${window.KeibaApp ? "" : "on"}" id="bCopy" ${cs.length ? "" : "disabled"}>コピー</button>
+      <button class="btn on" id="bCopy" ${cs.length ? "" : "disabled"}>コピー</button>
       <button class="btn" id="bDone" ${cs.length ? "" : "disabled"}>買った</button>
     </div>
     <p class="legendnote">${closed ? "このレースは締切済みです(「買った」の記録だけ付けられます)。" : ""}
-      ${window.KeibaApp ? "「IPATで入力」はIPATの画面を金額入力まで自動で進めます(2頭以上の券種はIPATのフォーメーションで入れます。単勝・複勝は1頭ずつで、2頭目からは投票タブの「IPATで入力」で)。金額・セット・投票は自分で。" : ""}
       作った買い目は投票タブに入ります。</p>`;
   box.querySelector(".bgrid").scrollTop = sc;
   const clear = () => { b.sel = []; b.axis = null; b.mode = "axis"; b.cols = [[], [], []]; b.col = 0; };
@@ -1435,12 +1420,6 @@ function drawBuilder() {
   // 金額は打つたびに合計だけ直す(描き直すと、続けて押したボタンが効かなくなる)
   $("#bUnit").oninput = e => { b.unit = Math.max(100, Math.round((+e.target.value || 100) / 100) * 100); $("#bSum").innerHTML = sum(); };
   $("#bUnit").onchange = e => { e.target.value = b.unit; store.set("keiba-unit", String(b.unit)); };
-  const ip = $("#bIpat");
-  if (ip) ip.onclick = () => {
-    const [tk] = saveTicket(b);            // 単勝・複勝の2頭目からは、投票タブの「IPATで入力」で1頭ずつ
-    $("#betdlg").close();
-    window.KeibaApp.buy(JSON.stringify({text: ticketText(b.d, r, tk), bet: ipatBet(b.d, r, tk)}));
-  };
   $("#bCopy").onclick = () => copyText(saveTicket(b).map(tk => ticketText(b.d, r, tk)).join("\n"), $("#bCopy"));
   $("#bDone").onclick = () => {
     const vs = loadVotes();
