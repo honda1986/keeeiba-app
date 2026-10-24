@@ -237,6 +237,13 @@ dialog.sheet .close{display:block;width:100%;margin-top:10px;padding:9px;border-
 .nextb .t{flex:1;min-width:0}
 .nextb .k{display:block;font-size:11px;font-weight:700;color:var(--accent)}
 .cbox>summary{font-size:12.5px}
+.ev{font-size:11px;color:var(--muted)}
+.ev.up{color:var(--good);font-weight:800}
+.evtbl{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
+.evtbl th{font-size:11px;color:var(--muted);font-weight:600;text-align:right;padding:3px 4px}
+.evtbl th:first-child,.evtbl td:first-child{text-align:left}
+.evtbl td{padding:4px;border-top:1px solid var(--line);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.evtbl tr.mk td{font-weight:700}
 .cbox .tag{margin-left:2px}
 </style>
 </head>
@@ -621,6 +628,7 @@ function card(r) {
     ${res && res.order ? `<div class="res">結果 <b class="num">${res.order.slice(0,3).join("-")}</b>
       ${s ? ` · ◎${s.honmei_rank ?? "-"}着 ○${s.taikou_rank ?? "-"}着 · ${s.hit ? `<b class="good">的中 ${yen(s.ret)}</b>` : `<span class="neg">不的中</span>`}` : ""}
       ${altLine(r)}</div>` : ""}
+    ${evBox(r)}
     <details class="more"><summary>全馬の評価(来ない理由)</summary>${table(r)}</details>
   </article>`;
 }
@@ -698,7 +706,7 @@ function skipRow(r) {
     ${shortReason(r.pred.reason) !== r.pred.reason ? `<div class="note" style="padding-top:2px">見送り: ${esc(r.pred.reason)}</div>` : ""}
     ${skipRes(r)}
     <div class="mkrow"><button class="btn sm" data-mk="${esc(r.id)}">買い目を作る</button></div>
-    <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${r.pred.horses.length ? table(r) : ""}</details>`;
+    <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${evBox(r)}${r.pred.horses.length ? table(r) : ""}</details>`;
 }
 
 // 見送り欄の見出し: 結果が出たレースで、もし◎-○のワイドを買っていたら
@@ -710,9 +718,12 @@ function skipHead(rs) {
     ${refs.length}レース 的中${hit} 回収率${pct(ret, refs.length * 100)}(参考)</span>`;
 }
 
-const oddsCell = ho => `${ho.ninki ? ho.ninki + "人" : "-"}<br><span class="muted">${ho.odds ?? ""}</span>`;
+const evCls = v => v >= 1 ? "ev up" : "ev";
+const oddsCell = (ho, win) => `${ho.ninki ? ho.ninki + "人" : "-"}<br><span class="muted">${ho.odds ?? ""}</span>` +
+  (win && win[ho.umaban] && ho.odds ? `<br><span class="${evCls(win[ho.umaban] * ho.odds)}">期${(win[ho.umaban] * ho.odds).toFixed(2)}</span>` : "");
 function table(r) {
   const p = r.pred;
+  const win = evProbs(r);
   const rows = p.horses.map(h => {
     const ho = r.horses.find(x => x.umaban === h.umaban) || {};
     const tags = h.minus.map(m => `<span class="tag m">${esc(m.t)} ${m.p}</span>`).join("")
@@ -724,7 +735,7 @@ function table(r) {
       <td class="num">${h.umaban}</td>
       <td class="nm"><b>${esc(ho.name)}</b> <span class="muted">${esc(h.style || "")}</span><br>${tags}</td>
       <td class="sc num">${h.p3 != null ? Math.round(h.p3 * 100) + "%" : h.score}</td>
-      <td class="odds num"><span class="oc">${oddsCell(ho)}</span></td></tr>`;
+      <td class="odds num"><span class="oc">${oddsCell(ho, win)}</span></td></tr>`;
   }).join("");
   return `<div style="overflow-x:auto;padding:0 8px"><table class="hs"><thead><tr><th></th><th>番</th><th>馬 / 減点・加点</th>
     <th style="text-align:right;white-space:nowrap">${p.model ? "3着内" : "評価"}</th><th class="odds">人気</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -1219,6 +1230,88 @@ async function liveOdds(rid) {
   if (us.length && !us.every(u => out[u][1])) us.sort((a, b) => out[a][0] - out[b][0]).forEach((u, i) => { out[u][1] = i + 1; });
   return out;
 }
+// ワイドのオッズ "小さい馬番-大きい馬番" -> [下限, 上限](keiba.py の parse_wide_odds と同じ)
+async function liveWide(rid) {
+  const j = JSON.parse(await appFetch("https://race.netkeiba.com/api/api_get_jra_odds.html?pid=api_get_jra_odds&input=UTF-8" +
+    "&output=json&race_id=" + rid + "&type=5&action=init&compress=0"));
+  const out = {};
+  for (const [k, v] of Object.entries(((j.data || {}).odds || {})["5"] || {})) {
+    const a = +k.slice(0, 2), b = +k.slice(2, 4), lo = parseFloat(v[0]), hi = parseFloat(v[1]);
+    if (lo > 0) out[Math.min(a, b) + "-" + Math.max(a, b)] = [lo, hi > 0 ? hi : lo];
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- 期待値(単勝・ワイド)
+// 期待値 = 当たる確率 × オッズ(100円買って平均いくら戻るか ÷ 100)。1を超えれば、続けて買うと得になる見込み。
+// 1着の確率は、単勝オッズから出る市場の確率 q と、モデルの3着内の確率 p3 を混ぜる: P ∝ q^a × (p3/(1-p3))^b。
+// ワイドは1着の確率から Harville で2頭とも3着内に入る確率(2着・3着は確率を g 乗して平らにする)。
+// a・b・g は2024・2025年で決め、2026年で確率が実際の割合に合うことを確かめた(tools/experiments/ev_fit.py)。
+// モデルの重さ b はとても小さく、ほぼ市場の確率になる(モデルは単勝オッズ以上の情報をほとんど持っていない)
+const EVP = {a: 1.0, b: 0.04, g: 0.7};
+function evProbs(r) {
+  const p3 = {};
+  for (const h of (r.pred || {}).horses || []) if (h.p3 != null) p3[h.umaban] = h.p3;
+  const hs = (r.horses || []).filter(h => !h.scratched && h.odds > 1);
+  if (hs.length < 5) return null;
+  const inv = hs.reduce((a, h) => a + 1 / h.odds, 0);
+  const z = hs.map(h => {
+    const q = 1 / h.odds / inv, p = Math.min(Math.max(p3[h.umaban] ?? 0.5, 1e-3), 0.99);
+    return Math.pow(q, EVP.a) * Math.pow(p / (1 - p), EVP.b);
+  });
+  const s = z.reduce((a, v) => a + v, 0), win = {};
+  hs.forEach((h, i) => { win[h.umaban] = z[i] / s; });
+  return win;
+}
+// "小さい馬番-大きい馬番" -> 2頭とも3着内に入る確率
+function widePairs(win) {
+  const us = Object.keys(win).map(Number), p = us.map(u => win[u]), g = p.map(v => Math.pow(v, EVP.g));
+  const G = g.reduce((a, v) => a + v, 0), n = us.length, P = {};
+  const add = (a, b, v) => { const k = Math.min(us[a], us[b]) + "-" + Math.max(us[a], us[b]); P[k] = (P[k] || 0) + v; };
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+    if (j === i) continue;
+    const pij = p[i] * g[j] / (G - g[i]);
+    for (let k = 0; k < n; k++) {
+      if (k === i || k === j) continue;
+      const v = pij * g[k] / (G - g[i] - g[j]);
+      add(i, j, v); add(i, k, v); add(j, k, v);
+    }
+  }
+  return P;
+}
+const pctS = v => (v * 100).toFixed(v < 0.1 ? 1 : 0) + "%";
+const evRange = (p, o) => o[0] === o[1] ? (p * o[0]).toFixed(2) : `${(p * o[0]).toFixed(2)}〜${(p * o[1]).toFixed(2)}`;
+function evInner(r) {
+  const win = evProbs(r);
+  if (!win) return `<div class="muted">単勝のオッズがまだありません(発売前)。</div>`;
+  const pr = r.pred || {}, nm = u => esc(hname(r, u));
+  const tans = Object.keys(win).map(Number).map(u => ({u, p: win[u], o: r.horses.find(h => h.umaban === u).odds}))
+    .map(x => Object.assign(x, {ev: x.p * x.o})).sort((a, b) => b.ev - a.ev);
+  const tRows = tans.slice(0, 4).map(x => `<tr class="${x.u === pr.honmei ? "mk" : ""}"><td>${x.u} ${nm(x.u)}${x.u === pr.honmei ? " ◎" : ""}</td>
+    <td>${pctS(x.p)}</td><td>${x.o}</td><td class="${evCls(x.ev)}">${x.ev.toFixed(2)}</td></tr>`).join("");
+  let wHtml = `<div class="muted" style="margin-top:6px">ワイドのオッズはまだ取っていません(次のオッズの更新で取ります)。</div>`;
+  const wo = r.wide_odds;
+  if (wo && Object.keys(wo).length) {
+    const P = widePairs(win), hk = pr.honmei && pr.taikou ? [pr.honmei, pr.taikou].sort((a, b) => a - b).join("-") : "";
+    const ws = Object.entries(wo).filter(([k]) => P[k]).map(([k, o]) => ({k, p: P[k], o, ev: P[k] * o[0]}))
+      .sort((a, b) => b.ev - a.ev);
+    const show = ws.slice(0, 6);
+    if (hk && !show.some(x => x.k === hk)) { const x = ws.find(x => x.k === hk); if (x) show.push(x); }
+    wHtml = `<table class="evtbl"><thead><tr><th>ワイド</th><th>確率</th><th>オッズ</th><th>期待値</th></tr></thead><tbody>
+      ${show.map(x => `<tr class="${x.k === hk ? "mk" : ""}"><td>${esc(x.k)}${x.k === hk ? " ◎-○" : ""}</td><td>${pctS(x.p)}</td>
+        <td>${x.o[0] === x.o[1] ? x.o[0] : x.o[0] + "〜" + x.o[1]}</td><td class="${evCls(x.ev)}">${evRange(x.p, x.o)}</td></tr>`).join("")}</tbody></table>`;
+  }
+  return `<table class="evtbl"><thead><tr><th>単勝(期待値の高い順)</th><th>確率</th><th>オッズ</th><th>期待値</th></tr></thead>
+    <tbody>${tRows}</tbody></table>${wHtml}
+    <div class="muted" style="margin-top:6px">期待値 = 当たる確率 × オッズ。1を超えれば続けて買うと得になる見込み(緑)。
+      確率はほぼ単勝オッズから出したもので(モデルは少しだけ)、2024〜2026年の単勝で期待値1を超えた馬はいない。
+      ワイドの期待値はオッズの幅(下限〜上限)で出す。</div>`;
+}
+function evBox(r) {
+  if (!r.horses || !r.horses.some(h => h.odds)) return "";
+  return `<details class="more cbox"><summary>期待値(単勝・ワイド)</summary><div class="note evin" style="padding-top:2px">${evInner(r)}</div></details>`;
+}
+
 const oddsState = {at: 0, day: "", busy: false, ok: 0, ng: 0};
 const hm = t => `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
 function drawOddsBar() {
@@ -1241,10 +1334,13 @@ function drawOddsBar() {
 function updateOddsDom(r) {
   const box = document.getElementById("r-" + r.id);
   if (!box) return;
+  const win = evProbs(r);
   box.querySelectorAll("tr[data-u]").forEach(tr => {
     const ho = r.horses.find(h => h.umaban === +tr.dataset.u), c = tr.querySelector(".oc");
-    if (ho && c) c.innerHTML = oddsCell(ho);
+    if (ho && c) c.innerHTML = oddsCell(ho, win);
   });
+  const ev = box.querySelector(".evin");
+  if (ev) ev.innerHTML = evInner(r);
 }
 async function refreshOdds(manual) {
   if (!canLive() || oddsState.busy || !state.day) return;
@@ -1264,6 +1360,8 @@ async function refreshOdds(manual) {
       if (!Object.keys(o).length) { ng++; continue; }
       ok++;
       for (const h of r.horses) if (o[h.umaban]) { h.odds = o[h.umaban][0]; h.ninki = o[h.umaban][1]; }
+      const w = await liveWide(r.id).catch(() => ({}));
+      if (Object.keys(w).length) r.wide_odds = w;
       updateOddsDom(r);
     }
   }));
@@ -1403,8 +1501,25 @@ function drawBuilder() {
     : b.method === "ながし" ? (b.mode === "axis" ? `軸の${what}を1つ選ぶ${ord ? "(1着に固定)" : ""}` : `相手の${what}を選ぶ(いくつでも)`)
     : b.method === "ボックス" ? `${what}を${k}つ以上選ぶ`
     : k === 1 ? `${what}を選ぶ(いくつでも。1つ1点)` : ord ? `${what}を1着から順に${k}つ選ぶ` : `${what}を${k}つ選ぶ`;
+  const evLine = () => {
+    if (!cs.length || !["単勝", "ワイド"].includes(b.type)) return "";
+    const win = evProbs(r);
+    if (!win) return "";
+    let ps, os;
+    if (b.type === "単勝") {
+      ps = cs.map(c => win[c[0]] || 0); os = cs.map(c => { const h = r.horses.find(x => x.umaban === c[0]); return h && h.odds ? [h.odds, h.odds] : null; });
+    } else {
+      if (!r.wide_odds) return `<br><span class="muted">ワイドのオッズがまだ無いので期待値は出せません</span>`;
+      const P = widePairs(win);
+      ps = cs.map(c => P[c.join("-")] || 0); os = cs.map(c => r.wide_odds[c.join("-")] || null);
+    }
+    if (os.some(o => !o)) return "";
+    const lo = ps.reduce((a, p, i) => a + p * os[i][0], 0) / cs.length, hi = ps.reduce((a, p, i) => a + p * os[i][1], 0) / cs.length;
+    return `<br>期待値 <b class="${evCls(lo)}">${lo === hi ? lo.toFixed(2) : lo.toFixed(2) + "〜" + hi.toFixed(2)}</b>` +
+      (cs.length > 1 ? "(1点あたりの平均)" : `(当たる確率 約${pctS(ps[0])})`);
+  };
   const sum = () => cs.length ? `<b>${cs.length}点 · ${yen(cs.length * b.unit)}</b>(1点${b.unit}円)<br>
-      ${esc(cs.slice(0, 20).map(c => comboText(b.type, c)).join("  "))}${cs.length > 20 ? " …" : ""}` : `<span class="muted">${esc(hint)}</span>`;
+      ${esc(cs.slice(0, 20).map(c => comboText(b.type, c)).join("  "))}${cs.length > 20 ? " …" : ""}${evLine()}` : `<span class="muted">${esc(hint)}</span>`;
   const box = $("#betbox");
   const sc = box.querySelector(".bgrid")?.scrollTop || 0;
   box.innerHTML = `

@@ -367,6 +367,30 @@ def fetch_odds(rid):
     return out
 
 
+def parse_wide_odds(j):
+    """API(type=5)の返事から "小さい馬番-大きい馬番" -> [下限, 上限](ワイドのオッズ)。発売前・取れないときは空"""
+    out = {}
+    try:
+        for k, v in j["data"]["odds"]["5"].items():
+            a, b = int(k[:2]), int(k[2:4])
+            lo, hi = num(v[0], float), num(v[1], float)
+            if lo:
+                out["{}-{}".format(min(a, b), max(a, b))] = [lo, hi or lo]
+    except (TypeError, KeyError, IndexError, AttributeError, ValueError):
+        return {}
+    return out
+
+
+def fetch_wide_odds(rid):
+    """ワイドのオッズ(中央だけ)。アプリで期待値を出すのに使う"""
+    if center_of(rid) != "jra":
+        return {}
+    j = get(SITE["jra"] + "/api/api_get_jra_odds.html",
+            {"pid": "api_get_jra_odds", "input": "UTF-8", "output": "json",
+             "race_id": rid, "type": "5", "action": "init", "compress": "0"}, as_json=True)
+    return parse_wide_odds(j)
+
+
 PAY = {"Tansho": ("単勝", 1), "Fukusho": ("複勝", 1), "Wakuren": ("枠連", 2), "Umaren": ("馬連", 2),
        "Wide": ("ワイド", 2), "Umatan": ("馬単", 2), "Fuku3": ("3連複", 3), "Tan3": ("3連単", 3)}
 ORDERED = ("馬単", "3連単")      # 着順どおりの組で払い戻す券種
@@ -655,6 +679,9 @@ def run_day(d, now, backfill=False):
                     if h["umaban"] in od:
                         h["odds"], h["ninki"] = od[h["umaban"]]
                 rc["odds_at"] = now.isoformat(timespec="seconds")
+                wo = fetch_wide_odds(rid)
+                if wo:
+                    rc["wide_odds"] = wo
         # 結果
         if st and now >= st + timedelta(minutes=RESULT_AFTER) and not rc.get("result"):
             html = get(site + "/race/result.html", {"race_id": rid})

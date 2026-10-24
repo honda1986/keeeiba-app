@@ -303,6 +303,14 @@ class Parse(unittest.TestCase):
         self.assertEqual(K.parse_odds_form(ODDS_NAR), {8: (2.0, 1), 4: (3.0, 2)})
         self.assertEqual(K.parse_odds_form(ODDS_BEFORE), {})
 
+    def test_wide_odds(self):
+        # API(type=5)の形(取得の診断で見たもの)。キーは馬番2桁ずつ、値は [下限, 上限, 人気]
+        j = {"status": "middle", "data": {"odds": {"5": {"0102": ["133.5", "134.8", "67"], "0310": ["2.1", "2.4", "1"],
+                                                         "0405": ["---.-", "---.-", "**"]}}}}
+        self.assertEqual(K.parse_wide_odds(j), {"1-2": [133.5, 134.8], "3-10": [2.1, 2.4]})
+        self.assertEqual(K.parse_wide_odds(None), {})
+        self.assertEqual(K.parse_wide_odds({"data": {"odds": []}}), {})
+
     def test_past_skips_training_rows(self):
         oikiri = PAST_HTML.replace("</table>", """<tr class="OikiriDataHead3 HorseList">
 <td class="Waku2">2</td><td class="Umaban">3</td><td class="Horse_Info">前走</td></tr></table>""")
