@@ -3,7 +3,8 @@
        KEIBA_WORK=<作業フォルダ> python tools/experiments/rule_review.py build
   2. 月ごとに学ぶ(2024年1月〜。その月より前だけで学ぶ)。今の材料だけ(base)と、1つずつ足したもの(tag)の2通り
        KEIBA_WORK=<作業フォルダ> python tools/experiments/rule_review.py wf
-  確率は <作業フォルダ>/wf_base.json.gz / wf_tag.json.gz。成績は rule_report.py で出す"""
+  確率は <作業フォルダ>/wf_base.json.gz / wf_tag.json.gz。成績は rule_report.py で出す
+  点を変えた keiba_logic.py で比べるときは KEIBA_CACHE を別にして build し、KEIBA_SETS=base KEIBA_SUFFIX=2 で wf(→ wf_base2)"""
 import gzip, json, os, pickle, re, sys, time
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))

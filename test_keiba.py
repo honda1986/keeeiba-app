@@ -99,14 +99,16 @@ class Logic(unittest.TestCase):
         p = L.predict(nar, TODAY, probs=probs)
         self.assertEqual(p["verdict"], "見送り")
         self.assertIn("1強", p["reason"])
-        # 中央: ◎の下限と○の帯の中だけ買う
+        # 中央: ◎の下限(○の帯があればその中)だけ買う
         jra = race(hs)
         sj = L.model_select("jra")
-        mid = (sj["t2"] + sj["t2_max"]) / 2
+        mid = (sj["t2"] + min(sj["t2_max"], 1.0)) / 2
         probs.update({1: 0.95, 2: mid, 3: 0.20, 4: 0.15})
-        self.assertIn(L.predict(jra, TODAY, probs=probs)["verdict"], ("A", "B"))
-        probs[2] = min(0.94, sj["t2_max"] + 0.05)   # ○が帯より強い → 見送り
-        self.assertEqual(L.predict(jra, TODAY, probs=probs)["verdict"], "見送り")
+        p = L.predict(jra, TODAY, probs=probs)
+        self.assertEqual(p["verdict"], "A" if 0.95 >= sj.get("a_p1", 1) else "B")
+        if sj["t2_max"] <= 1:
+            probs[2] = min(0.94, sj["t2_max"] + 0.05)   # ○が帯より強い → 見送り
+            self.assertEqual(L.predict(jra, TODAY, probs=probs)["verdict"], "見送り")
         probs.update({1: max(0.0, sj["t1"] - 0.05), 2: mid - 0.06})   # ◎が下限に届かない → 見送り
         self.assertEqual(L.predict(jra, TODAY, probs=probs)["verdict"], "見送り")
         # 延長の馬は確率が高くても軸にしない

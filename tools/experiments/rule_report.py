@@ -5,7 +5,7 @@ R = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 WORK = os.environ.get("KEIBA_WORK", "/tmp/keiba_work")
 sets = {"今のモデル(repo)": json.load(gzip.open(R + "/keiba/model_wf.json.gz"))["probs"]}
 imps = {}
-for name in ("base", "tag"):
+for name in ("base", "tag", "base2"):
     p = os.path.join(WORK, "wf_%s.json.gz" % name)
     if os.path.exists(p):
         j = json.load(gzip.open(p))
