@@ -47,7 +47,7 @@ public class MainActivity extends Activity {
     static final String APP_URL = "https://honda1986.github.io/keeeiba-app/keiba/?app=1";
     static final String IPAT_SP = "https://www.ipat.jra.go.jp/sp/";
     static final String IPAT_PC = "https://www.ipat.jra.go.jp/";
-    static final long TICK_MS = 300, LIMIT_MS = 3 * 60 * 1000;   // 0.3秒ごとに画面を見る。3分進まなければ止める
+    static final long TICK_MS = 150, LIMIT_MS = 3 * 60 * 1000;   // 0.15秒ごとに画面を見る。3分進まなければ止める
 
     WebView web, ipat;
     FrameLayout ipatBox;

@@ -1,4 +1,4 @@
-// IPAT(スマホ版)で、買い目の「金額入力」の画面まで進める。アプリが 0.3 秒ごとに呼ぶ。
+// IPAT(スマホ版)で、買い目の「金額入力」の画面まで進める。アプリが 0.15 秒ごとに呼ぶ。
 //   B … {venue, dow, rno, type, method, combo: [馬番(枠連は枠番)...], axis, aite}
 //       cols … フォーメーションの列(1頭目・2頭目・3頭目、馬単・3連単は1着・2着・3着)。n … 点数(金額入力の組数と見比べる)
 //       2頭以上の券種は、どの買い方も IPAT のフォーメーションで入れる
@@ -118,7 +118,7 @@
       var el = cands[(n - 1 + k) % cands.length];
       if (!visible(el)) continue;
       if (!inView(el)) { bringIntoView(el); return {scroll: true}; }
-      if (Date.now() - (window.__kbScrollAt || 0) < 350) return {scroll: true};
+      if (Date.now() - (window.__kbScrollAt || 0) < 300) return {scroll: true};
       var p = point(el);
       if (p) return {el: el, p: p};
     }
@@ -157,7 +157,7 @@
     Array.prototype.forEach.call(c.querySelectorAll("a,button"), function (x) { x.remove(); });   // 「方式」「1頭目」の戻るボタンは除く
     return txt(c);
   }
-  // 画面が変わってから0.4秒は待つ。切り替えの動きの印(ui-mobile-viewport-transitioning)は、残ったままのことがあるので1.5秒まで
+  // 画面が変わってから0.25秒は待つ。切り替えの動きの印(ui-mobile-viewport-transitioning)は、残ったままのことがあるので1.5秒まで
   function settled() {
     var h1 = pageEl().querySelector("[data-role=header] h1, .ui-header h1, .ui-title");
     var key = (pageEl().id || location.pathname) + "|" + (h1 ? txt(h1) : "");
@@ -165,7 +165,7 @@
     var moving = /ui-mobile-viewport-transitioning/.test(document.documentElement.className + " " + document.body.className);
     var t = Date.now() - window.__kbPkAt;
     window.__kbSettle = "画面 " + key + " " + Math.round(t / 100) / 10 + "秒" + (moving ? " 切り替え中" : "");
-    return t > 400 && (!moving || t > 1500);
+    return t > 250 && (!moving || t > 1500);
   }
   var waitMove = function () { return out("wait", "画面が切り替わるのを待っています", {info: window.__kbSettle}); };
   // ボタンを押す。同じボタンは3秒あけ(その間に画面が変われば、次の画面へ進む)、押す所を変えて4回まで。画面を動かしただけの回は数えない
@@ -307,6 +307,14 @@
     }).map(function (e) { return +txt(e); });
     return nums.length ? nums : null;
   }
+  var zen2han = function (t) { return String(t).replace(/[０-９]/g, function (d) { return String.fromCharCode(d.charCodeAt(0) - 0xFEE0); }); };
+  // 馬番の画面の帯(「新潟(土) > 3R > ワイド > フォーメーション」)。帯が無ければ null、あって買い目と違えば違う所
+  function crumbBad() {
+    var m = zen2han(body).match(/(\S+?)\s*[(（]([日月火水木金土])[)）]\s*>\s*(\d+)\s*R\s*>\s*([^\s>]+)/);
+    if (!m) return null;
+    var ok = m[1].slice(-B.venue.length) === B.venue && m[2] === B.dow && +m[3] === +B.rno && m[4] === B.type;
+    return ok ? "" : m[0];
+  }
   var sortN = function (xs) { return xs.slice().sort(function (a, b) { return a - b; }).join(","); };
 
   // 選んだ馬の記録。新しい買い目では使わない。IPAT は画面ごと読み直すこと(通常投票のあとなど)があり、そのときは消えている
@@ -336,14 +344,27 @@
   // ログイン
   if (document.querySelector("input[type=password]") && /加入者番号|暗証番号|INET/.test(body))
     return out("login", "ログインしてください(ログインすると続きを自動で進めます)");
-  // 投票一覧(前の買い目をセットしたあと): 続けて入れる
-  if (/投票一覧/.test(body) && /場名から続けて入力/.test(body)) return clickText("list", /^場名から続けて入力$/, "場名から続けて入力");
+  // 投票一覧(前の買い目をセットしたあと): 続けて入れる。最後に入れたのが同じレース・同じ券種(フォーメーション)なら
+  // 「馬（枠）番から続けて入力」で競馬場・レース・式別の画面を飛ばす。それ以外は「場名から続けて入力」
+  if (/投票一覧/.test(body) && /場名から続けて入力/.test(body)) {
+    var ents = [], er = /[(（](\d+)[)）]\s*(\S+?)\s*[(（]([日月火水木金土])[)）]\s*(\d+)\s*R\s*(\S+)/g, em;
+    var zb = zen2han(body);
+    while ((em = er.exec(zb))) ents.push(em);
+    var last = ents[ents.length - 1];
+    var sameRace = last && last[2] === B.venue && last[3] === B.dow && +last[4] === +B.rno &&
+      zen2han(last[5]).indexOf(B.type) === 0 && (K === 1 || /フォーメーション/.test(last[5]));
+    if (sameRace && findAll(/^馬\s*[(（]枠[)）]\s*番から続けて入力$/).length)
+      return clickText("list", /^馬\s*[(（]枠[)）]\s*番から続けて入力$/, "同じレース・券種なので 馬（枠）番から続けて入力");
+    return clickText("list", /^場名から続けて入力$/, "場名から続けて入力");
+  }
   // 馬番(枠番)を選ぶ画面(フォーメーションの 1頭目・2頭目・3頭目 / 1着・2着・3着、単勝・複勝は1画面)
   if (/(金額入力画面へ|次へ)/.test(body) && /(全選択|選択してください)/.test(body)) {
     var pm = (pageEl().id || "").match(/^uma([1-3])$/);
     var h1 = pageEl().querySelector("[data-role=header] h1, .ui-header h1, .ui-title");
     var hm = (h1 ? txt(h1) : heading()).match(/([1-3])\s*(?:頭目|着)/);
     var ci = pm ? +pm[1] - 1 : hm ? +hm[1] - 1 : 0, want = COLS[ci] || [];
+    var cb = crumbBad();
+    if (cb) return out("error", "画面のレース・券種(" + cb + ")が買い目と違うので止めました。手で直してください");
     var name = B.type === "枠連" ? "枠番 " : "馬番 ", miss = [];
     if (!settled()) return waitMove();
     // 行は押すたびに選ぶ・外すが入れ替わる。IPAT は選ばれた行のリンクに selected が付くので、押す前と後でそれを見る。
@@ -410,13 +431,15 @@
     }
     if (miss.length) return out("error", colName(ci) + " " + name + miss.join("・") + " が見つかりません。手で選んでください",
       {info: "似た所 " + near(new RegExp("^0?" + miss[0] + "$"))});
-    if (Date.now() - (window.__kbPickAt || 0) < 400) return out("wait", colName(ci) + "を選びました");
+    if (Date.now() - (window.__kbPickAt || 0) < 200) return out("wait", colName(ci) + "を選びました");
     if (ci < COLS.length - 1 && findAll(/^次へ$/).length) return clickText("next" + ci, /^次へ$/, colName(ci) + "を選びました。次へ");
     return clickText("kingaku" + ci, /^金額入力画面へ$/, "金額入力画面へ");
   }
   // 単勝・複勝の馬番の画面(「馬番を1頭選択してください」。次へ・金額入力画面へは無く、馬を押すと金額入力へ進む)
   if (/選択してください/.test(body) && /^uma\d$/.test(pageEl().id || "") && K === 1) {
     if (!settled()) return waitMove();
+    var cb1 = crumbBad();
+    if (cb1) return out("error", "画面のレース・券種(" + cb1 + ")が買い目と違うので止めました。手で直してください");
     var u1 = (COLS[0] || B.combo)[0], r1 = rowFor(u1);
     if (!r1) return out("error", "馬番 " + u1 + " が見つかりません。手で選んでください", {info: "似た所 " + near(new RegExp("^0?" + u1 + "$"))});
     return press("tan" + u1, rowSpots(r1), "馬番 " + u1 + " を選ぶ", r1.num);
