@@ -609,6 +609,26 @@ def refetch_result(d, now):
     print("{} 結果を取り直した {} / 残り {}".format(d, n, left), flush=True)
 
 
+def refetch_odds(d, now):
+    """ワイドの確定オッズ(wide_final)を取る。過去の日の期待値を確かめるため(予想・結果はそのまま)"""
+    day = load_day(d)
+
+    def one(rid):
+        rc = day["races"][rid]
+        if center_of(rid) != "jra" or not rc.get("result") or rc.get("wide_final"):
+            return 0
+        wf = fetch_wide_odds(rid)
+        if not wf:
+            return 0
+        rc["wide_final"] = wf
+        return 1
+    n = sum(pmap(one, sorted(day["races"])))
+    if n:
+        save_day(d, day)
+    left = sum(1 for r in day["races"].values() if center_of(r["id"]) == "jra" and r.get("result") and not r.get("wide_final"))
+    print("{} ワイドの確定オッズ {} / 残り {}".format(d, n, left), flush=True)
+
+
 def predict_past(rc, d, today):
     pr = past_probs(rc["id"], d)
     if pr is False:
@@ -688,6 +708,9 @@ def run_day(d, now, backfill=False):
             res = parse_result(html) if html else None
             if res and len(res["order"]) >= 3:
                 rc["result"] = res
+                wf = fetch_wide_odds(rid)            # ワイドの確定オッズ(期待値を後で確かめるため)
+                if wf:
+                    rc["wide_final"] = wf
 
     def two(rid):
         """予想。当日は発走後に固定。過去の日は予想が無いときだけ作る(人気は確定人気)"""
@@ -977,6 +1000,8 @@ def main():
                     help="--backfill-dates の日の馬柱だけを今の読み方で取り直す(予想はそのまま)")
     ap.add_argument("--refetch-result", action="store_true",
                     help="--backfill-dates の日の結果(払戻)だけを今の読み方で取り直す(予想はそのまま)")
+    ap.add_argument("--refetch-odds", action="store_true",
+                    help="--backfill-dates の日のワイドの確定オッズだけを取る(予想・結果はそのまま)")
     ap.add_argument("--no-history", action="store_true", help="history.json を作らない(並列ジョブ用)")
     ap.add_argument("--repredict", action="store_true",
                     help="再現の予想を今のロジックで作り直す(保存済みの馬柱を使う。取得しない)")
@@ -1009,9 +1034,9 @@ def main():
                 # 一覧が続けて取れないのは netkeiba のメンテナンスなど。残りは次の再現にまわす
                 print("{} から先は取らない(レース一覧が{}日続けて取れない。メンテナンス中?)".format(d, fails))
                 break
-            if a.refetch_past or a.refetch_result:
+            if a.refetch_past or a.refetch_result or a.refetch_odds:
                 if d < today_s:
-                    (refetch_past if a.refetch_past else refetch_result)(d, datetime.now(JST))
+                    (refetch_past if a.refetch_past else refetch_result if a.refetch_result else refetch_odds)(d, datetime.now(JST))
                 continue
             if d >= today_s:
                 print("{} は今日以降なので再現しません".format(d))

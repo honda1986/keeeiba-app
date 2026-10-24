@@ -26,7 +26,7 @@ on:
         required: false
         default: '6'
       mode:
-        description: 'predict(予想と結果を再現) / past(馬柱だけを今の読み方で取り直す) / result(結果・払戻だけを取り直す)'
+        description: 'predict(予想と結果を再現) / past(馬柱だけを今の読み方で取り直す) / result(結果・払戻だけを取り直す) / odds(ワイドの確定オッズだけを取る)'
         required: false
         default: 'predict'
 
@@ -66,6 +66,10 @@ jobs:
                       # 払戻表に馬単が無いレースが残っている日だけ(中央だけ。地方は2026-10-21にやめた)
                       done = all("馬単" in (r.get("result") or {}).get("payout", {}) for r in day["races"].values()
                                  if (r.get("result") or {}).get("payout") and int(r["id"][4:6]) < 30)
+                  elif os.environ.get("MODE") == "odds":
+                      # ワイドの確定オッズが無い中央のレースが残っている日だけ
+                      done = all(r.get("wide_final") for r in day["races"].values()
+                                 if r.get("result") and int(r["id"][4:6]) < 30)
                   elif os.environ.get("MODE") == "past":
                       # 馬柱の読み方が古いレースが残っている日だけ
                       import re
@@ -75,7 +79,7 @@ jobs:
                   else:
                       done = day.get("complete")
               except Exception:
-                  done = os.environ.get("MODE") in ("past", "result")
+                  done = os.environ.get("MODE") in ("past", "result", "odds")
               if not done:
                   todo.append(s)
               d -= timedelta(days=1)
@@ -108,6 +112,7 @@ jobs:
           EXTRA=""
           [ "${{ github.event.inputs.mode }}" = "past" ] && EXTRA="--refetch-past"
           [ "${{ github.event.inputs.mode }}" = "result" ] && EXTRA="--refetch-result"
+          [ "${{ github.event.inputs.mode }}" = "odds" ] && EXTRA="--refetch-odds"
           python keiba.py --backfill-dates "${{ matrix.chunk.dates }}" --workers "${{ github.event.inputs.workers || 6 }}" --no-history $EXTRA
       - name: このジョブの日だけを渡す
         if: always()

@@ -1290,7 +1290,7 @@ function evInner(r) {
   const tRows = tans.slice(0, 4).map(x => `<tr class="${x.u === pr.honmei ? "mk" : ""}"><td>${x.u} ${nm(x.u)}${x.u === pr.honmei ? " ◎" : ""}</td>
     <td>${pctS(x.p)}</td><td>${x.o}</td><td class="${evCls(x.ev)}">${x.ev.toFixed(2)}</td></tr>`).join("");
   let wHtml = `<div class="muted" style="margin-top:6px">ワイドのオッズはまだ取っていません(次のオッズの更新で取ります)。</div>`;
-  const wo = r.wide_odds;
+  const wo = r.wide_odds || r.wide_final;          // 発走前の最後のオッズ / 無ければ確定オッズ
   if (wo && Object.keys(wo).length) {
     const P = widePairs(win), hk = pr.honmei && pr.taikou ? [pr.honmei, pr.taikou].sort((a, b) => a - b).join("-") : "";
     const ws = Object.entries(wo).filter(([k]) => P[k]).map(([k, o]) => ({k, p: P[k], o, ev: P[k] * o[0]}))
@@ -1509,9 +1509,10 @@ function drawBuilder() {
     if (b.type === "単勝") {
       ps = cs.map(c => win[c[0]] || 0); os = cs.map(c => { const h = r.horses.find(x => x.umaban === c[0]); return h && h.odds ? [h.odds, h.odds] : null; });
     } else {
-      if (!r.wide_odds) return `<br><span class="muted">ワイドのオッズがまだ無いので期待値は出せません</span>`;
+      const wo = r.wide_odds || r.wide_final;
+      if (!wo) return `<br><span class="muted">ワイドのオッズがまだ無いので期待値は出せません</span>`;
       const P = widePairs(win);
-      ps = cs.map(c => P[c.join("-")] || 0); os = cs.map(c => r.wide_odds[c.join("-")] || null);
+      ps = cs.map(c => P[c.join("-")] || 0); os = cs.map(c => wo[c.join("-")] || null);
     }
     if (os.some(o => !o)) return "";
     const lo = ps.reduce((a, p, i) => a + p * os[i][0], 0) / cs.length, hi = ps.reduce((a, p, i) => a + p * os[i][1], 0) / cs.length;
