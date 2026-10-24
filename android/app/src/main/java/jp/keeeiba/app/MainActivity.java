@@ -39,7 +39,7 @@ import java.io.InputStream;
 
 /**
  * 2強レース(個人用)。下の切り替えで「予想」(GitHub Pages のアプリ)と「IPAT」(JRA のネット投票)を行き来する。
- * 予想の「IPATで入力」を押すと、IPAT の画面を順に押して「金額入力」の画面まで進める。
+ * 予想の「IPATで入力」を押すと、IPAT の画面を順に押して「金額入力」の画面まで進める(途中で画面に触ると止まる)。
  * 押す場所は assets/autopilot.js が画面の文字から決め、このアプリが指で押したのと同じように押す。
  * 金額・セット・投票は自分で入れる。ログイン情報はこのアプリでは持たず、IPAT の画面に入れる。
  */
@@ -66,6 +66,7 @@ public class MainActivity extends Activity {
     String lastMsg = "", lastInfo = "", tapInfo = "";   // 止まったときにコピーする手がかり(最後の画面・様子・押した所)
     final java.util.ArrayDeque<String> history = new java.util.ArrayDeque<>();   // 最近の様子(同じものは続けて入れない)
     String autopilot;
+    boolean selfTouch = false;                // アプリが押している最中(自分で触ったのと見分ける)
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -78,26 +79,28 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new Bridge(), "KeibaApp");
         ipat = newWebView();
         CookieManager.getInstance().setAcceptThirdPartyCookies(ipat, true);
+        // 自動入力の途中で自分で IPAT の画面に触ったら、自分で続けるとみて自動入力を止める
+        ipat.setOnTouchListener((v, e) -> {
+            if (!selfTouch && e.getActionMasked() == MotionEvent.ACTION_DOWN && "run".equals(phase)) {
+                report("手で止めた所: " + lastMsg);
+                stopTask();
+                toast("画面に触ったので自動入力を止めました");
+            }
+            return false;
+        });
         // アプリ内の画面(WebView)だと断るサイトがあるので、IPAT にはふつうのスマホのブラウザとして名乗る
         WebSettings is = ipat.getSettings();
         is.setUserAgentString(is.getUserAgentString().replace("; wv", "").replaceAll("Version/[0-9.]+ ", ""));
 
-        // IPAT の上に出す買い目と、自動入力の様子(押すと止めて消える、長押しでもう一度コピー)
+        // IPAT の上の帯: 自動入力が止まった(うまくいかなかった)ときだけ出す。押すと消える、長押しで買い目をコピー
         betBar = new TextView(this);
         betBar.setTextSize(15);
         betBar.setTypeface(Typeface.DEFAULT_BOLD);
         betBar.setTextColor(Color.WHITE);
-        betBar.setBackgroundColor(0xFF1F6FEB);
+        betBar.setBackgroundColor(0xFFC62828);
         betBar.setPadding(dp(14), dp(10), dp(14), dp(10));
         betBar.setVisibility(View.GONE);
-        betBar.setOnClickListener(v -> {
-            if ("run".equals(phase)) {           // 動いている途中で止めたら、その時の様子をコピーしておく
-                report("手で止めた所: " + lastMsg);
-                toast("止めました(止めた所の情報をコピーしました)");
-            }
-            stopTask();
-            betBar.setVisibility(View.GONE);
-        });
+        betBar.setOnClickListener(v -> betBar.setVisibility(View.GONE));
         betBar.setOnLongClickListener(v -> {
             copy(taskText);
             return true;
@@ -210,7 +213,7 @@ public class MainActivity extends Activity {
         history.clear();
         phase = "run";
         lastAt = System.currentTimeMillis();
-        setBar("自動入力を始めます");
+        betBar.setVisibility(View.GONE);
         copy(text);
         show(true);
         handler.removeCallbacks(tick);
@@ -222,9 +225,9 @@ public class MainActivity extends Activity {
         handler.removeCallbacks(tick);
     }
 
-    void setBar(String status) {
-        betBar.setText("買い目  " + taskText + "\n" + status + "\n(押すと止める・長押しで買い目をコピー)");
-        betBar.setBackgroundColor("final".equals(phase) ? 0xFF1A7F37 : 0xFF1F6FEB);
+    /** うまくいかなかったときだけ、IPAT の上に赤い帯で知らせる */
+    void showError(String msg) {
+        betBar.setText("買い目  " + taskText + "\n" + msg + "\n(押すと消える・長押しで買い目をコピー)");
         betBar.setVisibility(View.VISIBLE);
     }
 
@@ -235,7 +238,7 @@ public class MainActivity extends Activity {
             if (System.currentTimeMillis() - lastAt > LIMIT_MS) {
                 stopTask();
                 report("時間切れ: " + lastMsg);
-                setBar("時間がかかりすぎたので止めました。手で続けてください\n(止めた所の情報をコピーしました。困ったら貼り付けて送ってください)");
+                showError("時間がかかりすぎたので止めました。手で続けてください\n(止めた所の情報をコピーしました。困ったら貼り付けて送ってください)");
                 return;
             }
             if (ipatBox.getVisibility() != View.VISIBLE) {           // 予想を見ているあいだは待つ
@@ -275,23 +278,20 @@ public class MainActivity extends Activity {
                 if (ipatBox.getVisibility() == View.VISIBLE) {     // 予想に切り替えていたら押さない
                     steps++;
                     tapAt((float) o.getDouble("x"), (float) o.getDouble("y"));
-                    setBar(msg);
                 }
-            } else if ("final".equals(st)) {          // 金額入力の画面に着いた: ここで止まる
+            } else if ("final".equals(st)) {          // 金額入力の画面に着いた: ここで止まる(帯は、買い目と違うときだけ)
                 handler.removeCallbacks(tick);
                 phase = "final";
-                setBar(msg + "\n買ったら予想の投票タブで「買った」を押してください");
+                if (o.optBoolean("warn")) showError(msg);
                 return;
             } else if ("error".equals(st)) {
                 stopTask();
                 report("止めた所: " + msg);
-                setBar("止めました: " + msg + "\n(止めた所の情報をコピーしました。困ったら貼り付けて送ってください)");
+                showError("止めました: " + msg + "\n(止めた所の情報をコピーしました。困ったら貼り付けて送ってください)");
                 return;
-            } else if (!"wait".equals(st)) {
-                setBar(msg);
             }
         } catch (Exception e) {
-            setBar("画面を読めませんでした。手で続けてください");
+            lastMsg = "画面を読めませんでした";      // 読み込み中などで読めないことがある。続けて見る
         }
         if ("run".equals(phase)) handler.postDelayed(tick, TICK_MS);
     }
@@ -314,12 +314,16 @@ public class MainActivity extends Activity {
         long t = SystemClock.uptimeMillis();
         MotionEvent down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, x, y, 0);
         down.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        selfTouch = true;
         ipat.dispatchTouchEvent(down);
+        selfTouch = false;
         down.recycle();
         handler.postDelayed(() -> {
             MotionEvent up = MotionEvent.obtain(t, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0);
             up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+            selfTouch = true;
             ipat.dispatchTouchEvent(up);
+            selfTouch = false;
             up.recycle();
         }, 80);
     }

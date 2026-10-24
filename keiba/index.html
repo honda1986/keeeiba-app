@@ -110,9 +110,6 @@ details>summary::-webkit-details-marker{display:none}
 .tag.m{background:var(--neg-bg);color:var(--neg)}
 .tag.p{background:var(--good-bg);color:var(--good)}
 .tag.o{background:var(--accent-bg);color:var(--accent)}
-.odds{display:none}
-.showodds .odds{display:table-cell}
-.oddsb{font-size:12px;color:var(--pos);font-weight:600;padding:8px 14px}
 .skip{display:flex;gap:10px;align-items:baseline;padding:9px 14px;font-size:13px}
 .skip .r{flex:1;color:var(--muted);min-width:0}
 .skip .rs{white-space:nowrap;font-size:12px;color:var(--muted)}
@@ -521,10 +518,6 @@ function drawList() {
   flush();
   box.innerHTML = html;
   box.querySelectorAll("[data-mk]").forEach(b => b.onclick = () => openBuilder({rid: b.dataset.mk}));
-  box.querySelectorAll(".oddsb").forEach(b => b.onclick = () => {
-    const c = b.closest(".card,.skipd"); c.classList.toggle("showodds");
-    b.textContent = c.classList.contains("showodds") ? "人気・オッズを隠す" : "人気・オッズを見る(最後に)";
-  });
 }
 
 function waitRow(r) {
@@ -581,8 +574,7 @@ function card(r) {
     ${res && res.order ? `<div class="res">結果 <b class="num">${res.order.slice(0,3).join("-")}</b>
       ${s ? ` · ◎${s.honmei_rank ?? "-"}着 ○${s.taikou_rank ?? "-"}着 · ${s.hit ? `<b class="good">的中 ${yen(s.ret)}</b>` : `<span class="neg">不的中</span>`}` : ""}
       ${altLine(r)}</div>` : ""}
-    <details class="more"><summary>全馬の評価(来ない理由)</summary>${table(r)}
-      <button class="oddsb">人気・オッズを見る(最後に)</button></details>
+    <details class="more"><summary>全馬の評価(来ない理由)</summary>${table(r)}</details>
   </article>`;
 }
 
@@ -644,7 +636,7 @@ function skipRow(r) {
     <b>${head(r)}</b><span class="r">${esc(r.pred.reason)}</span>${rs}</summary>
     ${skipRes(r)}
     <div class="mkrow"><button class="btn sm" data-mk="${esc(r.id)}">買い目を作る</button></div>
-    <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${r.pred.horses.length ? table(r) + `<button class="oddsb">人気・オッズを見る(最後に)</button>` : ""}</details>`;
+    <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${r.pred.horses.length ? table(r) : ""}</details>`;
 }
 
 // 見送り欄の見出し: 結果が出たレースで、もし◎-○のワイドを買っていたら
