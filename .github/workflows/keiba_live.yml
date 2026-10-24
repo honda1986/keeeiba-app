@@ -1,0 +1,76 @@
+name: 競馬の予想(開催日は10分ごと)
+
+# 中央の開催日に、1回の実行の中で10分ごとに予想・オッズ・馬体重・結果を更新し続ける。
+# GitHub の時刻指定は1〜3時間遅れたり飛ばされたりするので、30分ごとに起こすのをやめ、始まったら自分で回る。
+# 1回の実行は6時間までなので、午前(8:31〜12:40)と午後(12:31〜最後のレースの結果まで)に分ける。
+# 開催の無い日は1回更新して終わる(平日などの更新は「競馬の予想」が受け持つ)。
+
+on:
+  workflow_dispatch:
+    inputs:
+      until:
+        description: '何時まで繰り返すか HH:MM(日本時間。空なら午前は 12:40、午後は最後のレースの結果まで)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '31 23 * * *'   # JST 8:31 から 12:40 まで
+    - cron: '31 3 * * *'    # JST 12:31 から 最後のレースの結果まで
+
+# 午前と午後が重ならないように、前のが終わるまで待つ(「競馬の予想」とは別の組。同じ組だと、待っている方が消されることがある)
+concurrency:
+  group: keiba-live
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 依存インストール
+        run: pip install requests beautifulsoup4 numpy lightgbm
+      - name: テスト
+        run: python -m unittest test_keiba
+      - name: 10分ごとに更新して保存
+        env:
+          UNTIL: ${{ github.event.inputs.until }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 終わりの時刻(日本時間)。午前の実行は 12:40、午後(と手で動かしたとき)は最後のレースの結果まで(raceday.py が決める)
+          HOUR=$(TZ=Asia/Tokyo date +%H)
+          if [ -n "$UNTIL" ]; then END=$(TZ=Asia/Tokyo date -d "$UNTIL" +%s)
+          elif [ "$HOUR" -lt 12 ]; then END=$(TZ=Asia/Tokyo date -d "12:40" +%s)
+          else END=$(TZ=Asia/Tokyo date -d "23:59" +%s); fi
+          save() {
+            git add keiba/data.json keiba/days keiba/past keiba/history.json
+            if git diff --cached --quiet; then echo "変更なし"; return 0; fi
+            git commit -m "keiba: 更新(開催日)" -q
+            for i in 1 2 3 4 5; do
+              # 「競馬の予想」と同時に更新されていたら取り込み直す
+              if git pull --rebase --autostash -X theirs -q; then
+                git push -q && return 0
+              else
+                git rebase --abort 2>/dev/null || true
+              fi
+              sleep 5
+            done
+            echo "保存できなかった(次の回でまた保存する)"
+          }
+          while :; do
+            git pull --rebase --autostash -q || git rebase --abort 2>/dev/null || true
+            echo "== $(TZ=Asia/Tokyo date '+%H:%M') 更新"
+            python keiba.py || echo "更新に失敗(次の回でやり直す)"
+            save
+            python tools/raceday.py || break
+            NOW=$(date +%s)
+            [ "$NOW" -ge "$END" ] && { echo "終わりの時刻"; break; }
+            # 次の10分の区切りまで待つ(:x0)
+            sleep $(( 600 - NOW % 600 ))
+          done
