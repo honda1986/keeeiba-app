@@ -1480,6 +1480,14 @@ function drawBuilder() {
   };
 }
 
+// 画面(GitHub Pages に置いた時刻)とアプリの版。更新が届いたかを確かめる用
+function verText() {
+  const t = new Date(document.lastModified);
+  let app = "";
+  try { app = window.KeibaApp && window.KeibaApp.version ? window.KeibaApp.version() : ""; } catch (e) { /* 古いアプリ */ }
+  return `画面 ${isNaN(t) ? "-" : `${t.getMonth() + 1}/${t.getDate()} ${hm(t)}`}` + (window.KeibaApp ? ` · アプリ ${app || "?"}` : "");
+}
+
 function renderRule() {
   $("#v-rule").innerHTML = `
     <div class="sec">流れ</div>
@@ -1516,7 +1524,8 @@ function renderRule() {
         「荒れやすい」コースは0.5上げて穴馬を2頭まで拾う</li>
       <li><b>少ない出走</b>出走が少ないコースは平均に寄せて控えめに効かせる。記事に無い距離は、その場の芝/ダート全体を半分の重みで使う</li>
     </ul>
-    <p class="muted" style="font-size:12px;margin:12px 0">閾値は目安。「収支・分析」で条件別の回収率を見て、儲かる条件にレースを絞っていく。</p>`;
+    <p class="muted" style="font-size:12px;margin:12px 0">閾値は目安。「収支・分析」で条件別の回収率を見て、儲かる条件にレースを絞っていく。</p>
+    <p class="muted" style="font-size:11px;margin:12px 0">${esc(verText())}</p>`;
   modelBox();
 }
 

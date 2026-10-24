@@ -27,7 +27,11 @@ import java.net.URL;
 public class MainActivity extends Activity {
     static final String APP_URL = "https://honda1986.github.io/keeeiba-app/keiba/?app=1";
 
+    /** 裏に回っていたのがこれより長ければ、戻ったときに画面を読み直す(予想アプリの更新を出すため) */
+    static final long RELOAD_AFTER_MS = 10 * 60 * 1000;
+
     WebView web;
+    long pausedAt = 0;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -55,8 +59,12 @@ public class MainActivity extends Activity {
         });
         web.addJavascriptInterface(new Bridge(), "KeibaApp");
         setContentView(web);
-        if (saved != null) web.restoreState(saved);
-        if (web.getUrl() == null) web.loadUrl(APP_URL);
+        loadFresh();                           // 前の画面は戻さない(古い画面のまま出さない)
+    }
+
+    /** 予想アプリを読み直す。GitHub Pages は10分キャッシュさせるので、毎回違うアドレスにして古い画面を出さない */
+    void loadFresh() {
+        web.loadUrl(APP_URL + "&v=" + System.currentTimeMillis());
     }
 
     void toast(String s) {
@@ -122,14 +130,16 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    protected void onSaveInstanceState(Bundle out) {
-        super.onSaveInstanceState(out);
-        web.saveState(out);
+    protected void onPause() {
+        super.onPause();
+        pausedAt = System.currentTimeMillis();
+        CookieManager.getInstance().flush();
     }
 
     @Override
-    protected void onPause() {
-        super.onPause();
-        CookieManager.getInstance().flush();
+    protected void onResume() {
+        super.onResume();
+        if (pausedAt > 0 && System.currentTimeMillis() - pausedAt > RELOAD_AFTER_MS) loadFresh();
+        pausedAt = 0;
     }
 }
