@@ -49,7 +49,8 @@ button:focus-visible,summary:focus-visible{outline:2px solid var(--pos);outline-
 .brand{font-weight:800;font-size:18px}
 .brand small{font-weight:600;font-size:11px;color:var(--muted);margin-left:6px}
 .stamp{margin-left:auto;font-size:11px;color:var(--muted);text-align:right;line-height:1.35}
-.themeb{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:var(--ink2)}
+.themeb{flex:none;height:32px;padding:0 10px;border-radius:999px;border:1px solid var(--line2);background:var(--surface);
+  font-size:12px;font-weight:700;color:var(--ink2);white-space:nowrap}
 .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);
   border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
 .tabbar .in{max-width:640px;margin:0 auto;display:flex}
@@ -64,6 +65,9 @@ button:focus-visible,summary:focus-visible{outline:2px solid var(--pos);outline-
 .tile .k{font-size:11px;color:var(--muted);font-weight:600}
 .tile .v{font-size:20px;font-weight:800;white-space:nowrap}
 .tile .v.long{font-size:16px}
+button.tile{width:100%;text-align:left}
+button.tile .k::after{content:" ›"}
+button.tile[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
 .tbl.nw td,.tbl.nw th{white-space:nowrap}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 12px}
 .chip{padding:5px 12px;border-radius:999px;border:1px solid var(--line2);font-size:13px;font-weight:600;color:var(--ink2);background:var(--surface)}
@@ -237,7 +241,7 @@ dialog.sheet .close{display:block;width:100%;margin-top:10px;padding:9px;border-
   <div class="top">
     <div class="brand">2強レース<small>中央</small></div>
     <div class="stamp" id="stamp"></div>
-    <button class="themeb" id="themeb" aria-label="表示の明暗を切り替える">◐</button>
+    <button class="themeb" id="themeb"></button>
   </div>
   <main id="v-race"></main>
   <main id="v-money" hidden></main>
@@ -290,11 +294,17 @@ const SRC = {live: "当日の予想", backfill: "再現"};
 
 // 明暗
 const th = store.get("keiba-theme"); if (th) document.documentElement.dataset.theme = th;
+const isDark = () => document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark"
+  : matchMedia("(prefers-color-scheme: dark)").matches;
+// ボタンには押すとどうなるかを出す
+const drawThemeBtn = () => { const b = $("#themeb"), dark = isDark();
+  b.textContent = dark ? "☀ 明るく" : "🌙 暗く"; b.setAttribute("aria-label", dark ? "明るい表示にする" : "暗い表示にする"); };
+drawThemeBtn();
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawThemeBtn);
 $("#themeb").onclick = () => {
-  const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark"
-    : matchMedia("(prefers-color-scheme: dark)").matches;
-  document.documentElement.dataset.theme = dark ? "light" : "dark";
+  document.documentElement.dataset.theme = isDark() ? "light" : "dark";
   store.set("keiba-theme", document.documentElement.dataset.theme);
+  drawThemeBtn();
 };
 function showTab(v) {
   document.querySelectorAll(".tabbar button").forEach(x => x.setAttribute("aria-selected", x.dataset.v === v));
@@ -483,10 +493,11 @@ function renderRace() {
     ${nback ? `<div class="srcnote">${nback === all.length ? "この日" : nback + "レース"}は<b>後から再現した予想</b>です。
       その日の出馬表と、そのレースより前の過去走だけで予想しています(人気は確定人気)。</div>` : ""}
     <div class="sum">
-      <div class="tile"><div class="k">全レース</div><div class="v num">${rs.length}</div></div>
-      <div class="tile"><div class="k">買う (A ${nA})</div><div class="v num">${buy.length}</div></div>
-      <div class="tile"><div class="k">${set.length ? "収支 " + pct(rt, st) : "見送り"}</div>
-        <div class="v num ${set.length ? (rt - st >= 0 ? "good" : "neg") : ""}">${set.length ? yen(rt - st) : rs.length - buy.length}</div></div>
+      <button class="tile" data-tf="all" aria-pressed="${state.filter === "all"}"><div class="k">全レース</div><div class="v num">${rs.length}</div></button>
+      <button class="tile" data-tf="bought" aria-pressed="${state.filter === "bought"}"><div class="k">買う (A ${nA})</div><div class="v num">${buy.length}</div></button>
+      ${set.length ? `<div class="tile"><div class="k">収支 ${pct(rt, st)}</div>
+        <div class="v num ${rt - st >= 0 ? "good" : "neg"}">${yen(rt - st)}</div></div>`
+      : `<button class="tile" data-tf="skip" aria-pressed="${state.filter === "skip"}"><div class="k">見送り</div><div class="v num">${rs.length - buy.length}</div></button>`}
     </div>
     ${CENTERS.length > 1 ? `<div class="chips" role="group" aria-label="中央・地方">
       ${[["all","中央+地方"],["jra","中央"],["nar","地方"]].map(([k,t]) => `<button class="chip" data-c="${k}" aria-pressed="${state.center===k}">${t}</button>`).join("")}
@@ -504,6 +515,11 @@ function renderRace() {
   drawNextBuy();
   $("#pick").onclick = () => { state.calMonth = d.date.slice(0, 6); openCalendar(); };
   el.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { state.filter = b.dataset.f; saveRace(); renderRace(); });
+  // 上のマス: 絞り込んで一覧の頭へ
+  el.querySelectorAll("[data-tf]").forEach(b => b.onclick = () => {
+    state.filter = b.dataset.tf; state.q = ""; saveRace(); renderRace();
+    $("#rlist").scrollIntoView({behavior: "smooth", block: "start"});
+  });
   el.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { state.center = b.dataset.c; saveRace(); renderRace(); });
   el.querySelectorAll(".cell[data-rid]").forEach(b => b.onclick = () => jumpRace(b.dataset.rid));
   $("#q").oninput = e => { state.q = e.target.value; drawList(); };
@@ -655,12 +671,26 @@ function skipRes(r) {
     <div class="muted" style="margin-top:2px">${names}</div></div>`;
 }
 
+// 見送りの理由の短い形(一覧の1行用)。合わない形はそのまま
+function shortReason(t) {
+  t = t || "";
+  let m;
+  if ((m = t.match(/^(混戦|人気どおり)\((◎|○)の3着内(\d+%)/))) return `${m[1]} ${m[2]}${m[3]}`;
+  if ((m = t.match(/^1強\((◎\d+%・○\d+%)\)$/))) return `1強 ${m[1]}`;
+  if ((m = t.match(/^少頭数\((\d+頭)/))) return `少頭数 ${m[1]}`;
+  if (t.startsWith("過去走のない馬が多い")) return "新馬・能力不明";
+  if (t.startsWith("障害・ばんえい")) return "障害(対象外)";
+  if (t.startsWith("◎○の弱点が重なる")) return "◎○の弱点が重なる";
+  return t.length > 14 ? t.replace(/\(.*\)$/, "") : t;
+}
+
 function skipRow(r) {
   const res = r.result, ref = skipRef(r);
   const rs = res && res.order && res.order.length >= 3
     ? `<span class="rs num ${ref && ref.ret ? "hit" : ""}">${res.order.slice(0, 3).join("-")}${ref && ref.ret ? " ◎○" : ""}</span>` : "";
   return `<details class="skipd more" id="r-${esc(r.id)}" style="border-top:0;border-bottom:1px solid var(--line)"><summary class="skip">
-    <b>${head(r)}</b><span class="r">${esc(r.pred.reason)}</span>${rs}</summary>
+    <b>${head(r)}</b><span class="r">${esc(shortReason(r.pred.reason))}</span>${rs}</summary>
+    ${shortReason(r.pred.reason) !== r.pred.reason ? `<div class="note" style="padding-top:2px">見送り: ${esc(r.pred.reason)}</div>` : ""}
     ${skipRes(r)}
     <div class="mkrow"><button class="btn sm" data-mk="${esc(r.id)}">買い目を作る</button></div>
     <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${r.pred.horses.length ? table(r) : ""}</details>`;
