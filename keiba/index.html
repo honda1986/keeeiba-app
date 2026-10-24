@@ -1249,6 +1249,24 @@ async function liveWide(rid) {
 // a・b・g は2024・2025年で決め、2026年で確率が実際の割合に合うことを確かめた(tools/experiments/ev_fit.py)。
 // モデルの重さ b はとても小さく、ほぼ市場の確率になる(モデルは単勝オッズ以上の情報をほとんど持っていない)
 const EVP = {a: 1.0, b: 0.04, g: 0.7};
+// ワイドは、上の Harville の確率と、ワイドのオッズが表す確率(1/オッズの中央 をレースで合計3に揃える)を混ぜる:
+// logit P = c + h × logit(Harville) + m × logit(ワイドの市場)。2022〜2025年の確定オッズで決め、2026年で確かめた
+// (tools/experiments/ev_wide_fit.py)。Harville だけだと、ワイドのオッズとずれた組で期待値を高く見すぎる
+const EVW = {c: 0.182, h: 0.327, m: 0.742};
+const logit = v => { const p = Math.min(Math.max(v, 1e-5), 1 - 1e-5); return Math.log(p / (1 - p)); };
+// "小さい馬番-大きい馬番" -> ワイドが当たる確率(ワイドのオッズが無ければ null)
+function wideProbs(r, win) {
+  const wo = r.wide_odds || r.wide_final;
+  if (!win || !wo) return null;
+  const P = widePairs(win), ks = Object.keys(wo).filter(k => P[k] && wo[k][0] > 1);   // 1.0倍以下は取消の返還
+  if (!ks.length) return null;
+  const mk = {};
+  let tot = 0;
+  for (const k of ks) { mk[k] = 2 / (wo[k][0] + wo[k][1]); tot += mk[k]; }
+  const out = {};
+  for (const k of ks) out[k] = 1 / (1 + Math.exp(-(EVW.c + EVW.h * logit(P[k]) + EVW.m * logit(mk[k] * 3 / tot))));
+  return out;
+}
 function evProbs(r) {
   const p3 = {};
   for (const h of (r.pred || {}).horses || []) if (h.p3 != null) p3[h.umaban] = h.p3;
@@ -1286,25 +1304,27 @@ function evInner(r) {
   if (!win) return `<div class="muted">単勝のオッズがまだありません(発売前)。</div>`;
   const pr = r.pred || {}, nm = u => esc(hname(r, u));
   const tans = Object.keys(win).map(Number).map(u => ({u, p: win[u], o: r.horses.find(h => h.umaban === u).odds}))
-    .map(x => Object.assign(x, {ev: x.p * x.o})).sort((a, b) => b.ev - a.ev);
+    .map(x => Object.assign(x, {ev: x.p * x.o})).sort((a, b) => b.p - a.p);
   const tRows = tans.slice(0, 4).map(x => `<tr class="${x.u === pr.honmei ? "mk" : ""}"><td>${x.u} ${nm(x.u)}${x.u === pr.honmei ? " ◎" : ""}</td>
     <td>${pctS(x.p)}</td><td>${x.o}</td><td class="${evCls(x.ev)}">${x.ev.toFixed(2)}</td></tr>`).join("");
   let wHtml = `<div class="muted" style="margin-top:6px">ワイドのオッズはまだ取っていません(次のオッズの更新で取ります)。</div>`;
   const wo = r.wide_odds || r.wide_final;          // 発走前の最後のオッズ / 無ければ確定オッズ
-  if (wo && Object.keys(wo).length) {
-    const P = widePairs(win), hk = pr.honmei && pr.taikou ? [pr.honmei, pr.taikou].sort((a, b) => a - b).join("-") : "";
-    const ws = Object.entries(wo).filter(([k]) => P[k]).map(([k, o]) => ({k, p: P[k], o, ev: P[k] * o[0]}))
-      .sort((a, b) => b.ev - a.ev);
+  const P = wideProbs(r, win);
+  if (P) {
+    const hk = pr.honmei && pr.taikou ? [pr.honmei, pr.taikou].sort((a, b) => a - b).join("-") : "";
+    const ws = Object.keys(P).map(k => ({k, p: P[k], o: wo[k], ev: P[k] * wo[k][0]}))
+      .sort((a, b) => b.p - a.p);
     const show = ws.slice(0, 6);
     if (hk && !show.some(x => x.k === hk)) { const x = ws.find(x => x.k === hk); if (x) show.push(x); }
-    wHtml = `<table class="evtbl"><thead><tr><th>ワイド</th><th>確率</th><th>オッズ</th><th>期待値</th></tr></thead><tbody>
+    wHtml = `<table class="evtbl"><thead><tr><th>ワイド(当たりやすい順)</th><th>確率</th><th>オッズ</th><th>期待値</th></tr></thead><tbody>
       ${show.map(x => `<tr class="${x.k === hk ? "mk" : ""}"><td>${esc(x.k)}${x.k === hk ? " ◎-○" : ""}</td><td>${pctS(x.p)}</td>
         <td>${x.o[0] === x.o[1] ? x.o[0] : x.o[0] + "〜" + x.o[1]}</td><td class="${evCls(x.ev)}">${evRange(x.p, x.o)}</td></tr>`).join("")}</tbody></table>`;
   }
-  return `<table class="evtbl"><thead><tr><th>単勝(期待値の高い順)</th><th>確率</th><th>オッズ</th><th>期待値</th></tr></thead>
+  return `<table class="evtbl"><thead><tr><th>単勝(当たりやすい順)</th><th>確率</th><th>オッズ</th><th>期待値</th></tr></thead>
     <tbody>${tRows}</tbody></table>${wHtml}
     <div class="muted" style="margin-top:6px">期待値 = 当たる確率 × オッズ。1を超えれば続けて買うと得になる見込み(緑)。
-      確率はほぼ単勝オッズから出したもので(モデルは少しだけ)、2024〜2026年の単勝で期待値1を超えた馬はいない。
+      単勝の確率はほぼ単勝オッズから(モデルは少しだけ)、ワイドの確率は単勝から出した確率とワイドのオッズを混ぜたもの。
+      2022〜2026年の確定オッズで確かめると、期待値1を超えた単勝の馬・ワイドの組はほとんど無く、超えた組も得になっていない。
       ワイドの期待値はオッズの幅(下限〜上限)で出す。</div>`;
 }
 function evBox(r) {
@@ -1509,10 +1529,9 @@ function drawBuilder() {
     if (b.type === "単勝") {
       ps = cs.map(c => win[c[0]] || 0); os = cs.map(c => { const h = r.horses.find(x => x.umaban === c[0]); return h && h.odds ? [h.odds, h.odds] : null; });
     } else {
-      const wo = r.wide_odds || r.wide_final;
-      if (!wo) return `<br><span class="muted">ワイドのオッズがまだ無いので期待値は出せません</span>`;
-      const P = widePairs(win);
-      ps = cs.map(c => P[c.join("-")] || 0); os = cs.map(c => wo[c.join("-")] || null);
+      const wo = r.wide_odds || r.wide_final, P = wideProbs(r, win);
+      if (!P) return `<br><span class="muted">ワイドのオッズがまだ無いので期待値は出せません</span>`;
+      ps = cs.map(c => P[c.join("-")] || 0); os = cs.map(c => P[c.join("-")] ? wo[c.join("-")] : null);
     }
     if (os.some(o => !o)) return "";
     const lo = ps.reduce((a, p, i) => a + p * os[i][0], 0) / cs.length, hi = ps.reduce((a, p, i) => a + p * os[i][1], 0) / cs.length;
