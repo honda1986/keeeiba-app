@@ -868,6 +868,17 @@ def diag(d):
                      "race_id": rid, "type": "1", "action": "init", "compress": "0"}):
             st, b = raw(SITE[c] + api, prm)
             print("  {} {} {}B {}".format(prm["action"], st, len(b), decode(b)[:300].replace("\n", " ")))
+        # ワイド(type=5)。期待値を出すため
+        st, b = raw(SITE[c] + "/api/api_get_jra_odds.html",
+                    {"pid": "api_get_jra_odds", "input": "UTF-8", "output": "json", "race_id": rid,
+                     "type": "5", "action": "init", "compress": "0"})
+        print("  ワイド type=5 {} {}B {}".format(st, len(b), decode(b)[:600].replace("\n", " ")))
+        try:
+            j = json.loads(decode(b))
+            od = (j.get("data") or {}).get("odds") or {}
+            print("   odds のキー", list(od), {k: list(v.items())[:4] for k, v in od.items() if isinstance(v, dict)})
+        except Exception as e:
+            print("   JSON にならない", type(e).__name__, e)
         for path in ("/odds/index.html", "/race/shutuba.html"):
             st, b = raw(SITE[c] + path, {"type": "b1", "race_id": rid})
             t = decode(b)
