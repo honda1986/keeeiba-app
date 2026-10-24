@@ -922,6 +922,18 @@ def diag(d):
             print("  {} {} {}B".format(path, st, len(b)))
             for tr in soup.select("tr")[:3]:
                 print("   tr:", [(td.get("class"), txt(td)[:20]) for td in tr.find_all("td")][:8])
+    # 終わったレースのワイドのオッズ(確定オッズ)が取れるか
+    for rid in ("202608040811", "202408050611", "202205010111"):
+        st, b = raw(SITE["jra"] + "/api/api_get_jra_odds.html",
+                    {"pid": "api_get_jra_odds", "input": "UTF-8", "output": "json", "race_id": rid,
+                     "type": "5", "action": "init", "compress": "0"})
+        try:
+            j = json.loads(decode(b))
+            w = parse_wide_odds(j)
+            print("==== 過去のワイド", rid, st, "status", j.get("status"), "組", len(w), list(w.items())[:3],
+                  "時刻", (j.get("data") or {}).get("official_datetime"))
+        except Exception as e:
+            print("==== 過去のワイド", rid, st, type(e).__name__, decode(b)[:200].replace("\n", " "))
     # 前日(過去のレース)が取れるか
     y = (datetime.strptime(d, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
     yid = race_ids(y) or []
