@@ -85,6 +85,12 @@ def jt_add(acc, rc):
                 v = acc[k].setdefault(name, [0, 0])
                 v[0] += 1
                 v[1] += h["umaban"] in top3
+        name = M.jt_name(h, "jockey")
+        if name:
+            for k, ctx in M.jt_ctx(rc).items():        # 騎手の競馬場・コース・距離帯ごと
+                v = acc.setdefault(k, {}).setdefault(name + "|" + ctx, [0, 0])
+                v[0] += 1
+                v[1] += h["umaban"] in top3
 
 
 def speed_table(races, until=None):
@@ -103,7 +109,7 @@ def speed_table(races, until=None):
 def build(races, norm, sp=None):
     """日付の順に作る。騎手・厩舎の成績は、その日より前のレースだけで数える(先の結果を使わない)"""
     rows = []
-    acc = {"jockey": {}, "trainer": {}}
+    acc = {"jockey": {}, "trainer": {}, "jockey_venue": {}, "jockey_course": {}, "jockey_dist": {}}
     cur, snap, todays = None, None, []
     for d, rc in races:
         if d != cur:

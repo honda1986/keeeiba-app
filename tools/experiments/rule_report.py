@@ -1,11 +1,11 @@
 """rule_review.py で作った月ごとの確率(base / tag)を比べる。当たり方(AUC・対数損失)と、ワイド◎-○の回収率を年ごとに
-  KEIBA_WORK=<作業フォルダ> python tools/experiments/rule_report.py"""
+  KEIBA_WORK=<作業フォルダ> [KEIBA_SETS=base,tag] python tools/experiments/rule_report.py"""
 import glob, gzip, json, math, os, sys
 R = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 WORK = os.environ.get("KEIBA_WORK", "/tmp/keiba_work")
 sets = {"今のモデル(repo)": json.load(gzip.open(R + "/keiba/model_wf.json.gz"))["probs"]}
 imps = {}
-for name in ("base", "tag", "base2"):
+for name in os.environ.get("KEIBA_SETS", "base,tag,base2").split(","):
     p = os.path.join(WORK, "wf_%s.json.gz" % name)
     if os.path.exists(p):
         j = json.load(gzip.open(p))

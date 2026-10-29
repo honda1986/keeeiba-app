@@ -41,9 +41,10 @@ STYLE_ID = {"逃げ": 0, "先行": 1, "差し": 2, "追込": 3}
 # 同じレースの中で順位・最大との差を取る特徴量
 REL = ["sc_mean", "sc_best2", "sc_last", "margin_min", "margin_mean", "rank_ratio_mean",
        "pop_mean", "pop_min", "rule_score", "rule_ability", "l3f_dev_best", "top3_rate",
-       "jockey_top3", "trainer_top3", "spd_best", "spd_best_surf", "spd_mean3", "spd_last", "l3fig_best",
+       "jockey_top3", "jockey_course_top3", "trainer_top3", "spd_best", "spd_best_surf", "spd_mean3", "spd_last", "l3fig_best",
        "spd_adj_best", "spd_adj_mean3"]
 JT_K = 30          # 騎手・厩舎の3着内率は、乗った数が少ないうちは全体の平均へ寄せる
+JT_CTX_K = 20      # 騎手の競馬場・コース・距離帯ごとの3着内率は、乗った数が少ないうちはその騎手のふだんの3着内率へ寄せる
 
 
 def dist_band(d):
@@ -70,6 +71,20 @@ def jt_rate(stats, name):
     n, t = stats["by"].get(name, (0, 0))
     base = stats["base"]
     return (t + JT_K * base) / (n + JT_K), n
+
+
+def jt_ctx(race):
+    """騎手の得意を数える場面: 競馬場 / コース(競馬場×芝ダ×距離)/ 芝ダの距離帯"""
+    v, s, d = race.get("venue") or "?", race.get("surface") or "?", race.get("dist") or 0
+    return {"jockey_venue": v, "jockey_course": "{}{}{}".format(v, s, d), "jockey_dist": "{}{}".format(s, dist_band(d))}
+
+
+def jt_rate_ctx(stats, key, prior):
+    """[乗った数, 3着内] -> その騎手のふだんの3着内率(prior)へ寄せた3着内率"""
+    if not stats or not key or prior is None:
+        return None, 0
+    n, t = stats["by"].get(key, (0, 0))
+    return (t + JT_CTX_K * prior) / (n + JT_CTX_K), n
 
 
 def center_of(venue):
@@ -195,6 +210,12 @@ def horse_feats(h, race, today, cs, n, l3f_norm, jt=None, sp=None):
     # 騎手・厩舎(そのレースより前の日までの3着内率)
     jt = jt or {}
     f["jockey_top3"], f["jockey_n"] = jt_rate(jt.get("jockey"), jt_name(h, "jockey"))
+    # 騎手の得意な競馬場・コース・距離(それまでの成績)。_diff はふだんより良いか
+    jn = jt_name(h, "jockey")
+    for k, ctx in jt_ctx(race).items():
+        rate, cnt = jt_rate_ctx(jt.get(k), jn and jn + "|" + ctx, f["jockey_top3"])
+        f[k + "_top3"], f[k + "_n"] = rate, cnt
+        f[k + "_diff"] = rate - f["jockey_top3"] if rate is not None else None
     f["trainer_top3"], f["trainer_n"] = jt_rate(jt.get("trainer"), jt_name(h, "trainer"))
     if sp:
         speed_feats(f, past, race, sp)
@@ -235,6 +256,30 @@ def race_rows(race, today, pred, l3f_norm, jt=None, sp=None):
             f[k + "_dmean"] = v - mean if v is not None else None
             f[k + "_rank"] = srt.index(v) + 1 if v is not None else None
     return rows
+
+
+def add_jockey_info(race, pred):
+    """予想の各馬に、騎手のそれまでの成績 [乗った数, 3着内] を入れる(jk: all / venue / course / dist)。
+    モデルを学んだときの成績(keiba_model_meta.json の jt)から。5回以上乗った場面だけ残っている"""
+    _, meta = load()
+    jt = (meta or {}).get("jt") or {}
+    if not jt.get("jockey_course"):
+        return
+    hs = {h["umaban"]: h for h in race.get("horses") or []}
+    ctx = jt_ctx(race)
+    for r in pred.get("horses") or []:
+        name = jt_name(hs.get(r["umaban"]) or {}, "jockey")
+        if not name:
+            continue
+        jk = {}
+        if name in (jt.get("jockey") or {}).get("by", {}):
+            jk["all"] = list(jt["jockey"]["by"][name])
+        for k, c in ctx.items():
+            v = (jt.get(k) or {}).get("by", {}).get(name + "|" + c)
+            if v:
+                jk[k.replace("jockey_", "")] = list(v)
+        if jk.get("all"):
+            r["jk"] = jk
 
 
 # ---------------------------------------------------------------- 予測(アプリで使う)

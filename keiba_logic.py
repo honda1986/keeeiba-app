@@ -684,11 +684,15 @@ def predict(race, today=None, use_model=True, probs=None):
         return out
 
     # 3着以内の確率モデル(手作りの評価・加減点も材料にしている)
-    if use_model and probs is None:
+    live = use_model and probs is None
+    if live:
         import keiba_model as KM            # keiba_model は keiba_logic を読むので、ここで読む
         probs = KM.probs(race, today, {"horses": res})
     if probs:
-        return _predict_model(out, res, rb, horses, race, cs, pace, probs)
+        out = _predict_model(out, res, rb, horses, race, cs, pace, probs)
+        if live:
+            KM.add_jockey_info(race, out)   # 騎手の得意な競馬場・コース・距離(アプリの表に出す)
+        return out
 
     hon, tai, memo, ovl = pick_marks(evs)
     if not hon:

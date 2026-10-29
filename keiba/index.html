@@ -719,6 +719,21 @@ function skipHead(rs) {
 }
 
 const evCls = v => v >= 1 ? "ev up" : "ev";
+// 騎手の得意・苦手(このコース → この距離帯 → この競馬場 の順に、10回以上乗っていて、ふだんより8ポイント以上違う1つだけ)
+function jockeyTag(r, h) {
+  const jk = h.jk;
+  if (!jk || !jk.all || !jk.all[0]) return "";
+  const base = jk.all[1] / jk.all[0];
+  const dist = r.surface ? (r.surface === "ダ" ? "ダート" : r.surface) + "のこの距離帯" : "この距離帯";
+  for (const [k, l] of [["course", "このコース"], ["dist", dist], ["venue", "この競馬場"]]) {
+    const x = jk[k];
+    if (!x || x[0] < 10) continue;
+    const v = x[1] / x[0], d = v - base;
+    if (Math.abs(d) < 0.08) continue;
+    return `<span class="tag ${d > 0 ? "p" : "m"}">騎手${d > 0 ? "得意" : "苦手"}: ${l} 3着内${Math.round(v * 100)}%(${x[0]}回・ふだん${Math.round(base * 100)}%)</span>`;
+  }
+  return "";
+}
 const oddsCell = (ho, win) => `${ho.ninki ? ho.ninki + "人" : "-"}<br><span class="muted">${ho.odds ?? ""}</span>` +
   (win && win[ho.umaban] && ho.odds ? `<br><span class="${evCls(win[ho.umaban] * ho.odds)}">期${(win[ho.umaban] * ho.odds).toFixed(2)}</span>` : "");
 function table(r) {
@@ -730,7 +745,8 @@ function table(r) {
       + h.plus.map(m => `<span class="tag p">${esc(m.t)} +${m.p}</span>`).join("")
       + (h.axis_ng.length && !h.cut ? `<span class="tag o">軸不可: ${esc(h.axis_ng.join("・"))}</span>` : "")
       + (h.cut ? `<span class="tag m"><b>消し</b> ${esc(h.cut_reason)}</span>` : "")
-      + (h.odds_note ? `<span class="tag o">${esc(h.odds_note)}</span>` : "");
+      + (h.odds_note ? `<span class="tag o">${esc(h.odds_note)}</span>` : "")
+      + jockeyTag(r, h);
     return `<tr class="${h.cut ? "cut" : ""}" data-u="${h.umaban}"><td class="mk">${h.mark || ""}</td>
       <td class="num">${h.umaban}</td>
       <td class="nm"><b>${esc(ho.name)}</b> <span class="muted">${esc(h.style || "")}</span><br>${tags}</td>
