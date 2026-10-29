@@ -45,6 +45,9 @@ REL = ["sc_mean", "sc_best2", "sc_last", "margin_min", "margin_mean", "rank_rati
        "spd_adj_best", "spd_adj_mean3"]
 JT_K = 30          # 騎手・厩舎の3着内率は、乗った数が少ないうちは全体の平均へ寄せる
 JT_CTX_K = 20      # 騎手の競馬場・コース・距離帯ごとの3着内率は、乗った数が少ないうちはその騎手のふだんの3着内率へ寄せる
+# 騎手の得意な競馬場・コース・距離帯を材料にするか。2026-10-29 に試したが良くならなかったので、既定では使わない(1 で使う)。
+# 成績はいつも数えて保存し(keiba_model_meta.json の jt)、アプリの「騎手得意/苦手」の札に使う
+USE_JOCKEY_CTX = os.environ.get("KEIBA_JOCKEY_CTX", "0") == "1"
 
 
 def dist_band(d):
@@ -212,7 +215,7 @@ def horse_feats(h, race, today, cs, n, l3f_norm, jt=None, sp=None):
     f["jockey_top3"], f["jockey_n"] = jt_rate(jt.get("jockey"), jt_name(h, "jockey"))
     # 騎手の得意な競馬場・コース・距離(それまでの成績)。_diff はふだんより良いか
     jn = jt_name(h, "jockey")
-    for k, ctx in jt_ctx(race).items():
+    for k, ctx in (jt_ctx(race) if USE_JOCKEY_CTX else {}).items():
         rate, cnt = jt_rate_ctx(jt.get(k), jn and jn + "|" + ctx, f["jockey_top3"])
         f[k + "_top3"], f[k + "_n"] = rate, cnt
         f[k + "_diff"] = rate - f["jockey_top3"] if rate is not None else None

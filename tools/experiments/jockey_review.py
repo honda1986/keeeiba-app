@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "..")); sys.path.insert(0, os.path.j
 WORK = os.environ.get("KEIBA_WORK", "/tmp/keiba_work")
 os.makedirs(WORK, exist_ok=True)
 os.environ.setdefault("KEIBA_CACHE", os.path.join(WORK, "dataset_jk.pkl"))
+os.environ["KEIBA_JOCKEY_CTX"] = "1"          # 新しい材料も作る(base はそれを外して学ぶ)
 import train_model as T   # noqa: E402
 import keiba_model as M   # noqa: E402
 NEW = ("jockey_venue_", "jockey_course_", "jockey_dist_")
