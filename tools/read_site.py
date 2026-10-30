@@ -6,6 +6,8 @@
    python tools/read_site.py links URL [正規表現]        … ページの中の同じサイトへのリンクを出す(複数可)
    python tools/read_site.py grep URL 正規表現            … その言葉を含む要素の中身と、元のHTMLの前後を出す(表以外の形で載っているものを探す)
    python tools/read_site.py json URL 要素のid           … ページに埋め込まれた JSON(<script id=...>)の形(キーと値の例)を出す
+   python tools/read_site.py raw URL                     … ページのつくり(スクリプト・表・本文の始め)を出す(データがどこにあるかを見る)
+   python tools/read_site.py probe 'URL{d}' 最初の日-最後の日 … {d} に日付(YYYYMMDD)を入れて、あるページを出す(過去の分が残っているか)
    直接読めない(403など)ときは Wayback Machine の最新のスナップショットを読む"""
 import re
 import sys
@@ -179,6 +181,52 @@ def do_json(u, eid):
     print("##### おわり")
 
 
+def do_raw(u):
+    html = get(u)
+    if not html:
+        print("読めませんでした", u)
+        return
+    soup = BeautifulSoup(html, "html.parser")
+    print("##### つくり", u, len(html), "字 題名:", soup.title.get_text(strip=True) if soup.title else "")
+    for sc in soup.find_all("script"):
+        t = sc.string or sc.get_text() or ""
+        if sc.get("src"):
+            print("SCRIPT src", sc["src"])
+        elif len(t.strip()) > 0:
+            print("SCRIPT id={} type={} {}字: {}".format(sc.get("id"), sc.get("type"), len(t), re.sub(r"\s+", " ", t.strip())[:400]))
+    for i, tb in enumerate(soup.find_all("table")[:12]):
+        rows = tb.find_all("tr")
+        print("TABLE", i, len(rows), "行")
+        for tr in rows[:4]:
+            print("  | " + " | ".join(c.get_text(" ", strip=True)[:30] for c in tr.find_all(["th", "td"])))
+    for t in soup(["script", "style", "noscript"]):
+        t.decompose()
+    tx = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
+    print("TEXT", len(tx), "字:", tx[:2500])
+    print("##### おわり")
+
+
+def do_probe(tmpl, rng):
+    import datetime
+    a, b = rng.split("-")
+    d = datetime.date(int(a[:4]), int(a[4:6]), int(a[6:]))
+    e = datetime.date(int(b[:4]), int(b[4:6]), int(b[6:]))
+    found = []
+    while d <= e:
+        if d.weekday() in (5, 6) or True:
+            u = tmpl.replace("{d}", d.strftime("%Y%m%d"))
+            try:
+                r = S.get(u, timeout=30)
+                if r.status_code == 200:
+                    found.append(d.strftime("%Y%m%d"))
+                    print("ある", u, len(r.content), flush=True)
+            except requests.RequestException as ex:
+                print("ERR", u, type(ex).__name__, flush=True)
+            time.sleep(0.3)
+        d += datetime.timedelta(days=1)
+    print("##### ある日", len(found), found)
+
+
 def do_links(u, pat):
     html = get(u)
     if not html:
@@ -205,6 +253,14 @@ if __name__ == "__main__":
         for u in re.split(r"[\s,]+", sys.argv[2].strip()):
             if u:
                 do_grep(u, sys.argv[3] if len(sys.argv) > 3 else ".")
+    elif sys.argv[1] == "raw":
+        for u in re.split(r"[\s,]+", sys.argv[2].strip()):
+            if u:
+                do_raw(u)
+    elif sys.argv[1] == "probe":
+        for t in re.split(r"[\s,]+", sys.argv[2].strip()):
+            if t:
+                do_probe(t, sys.argv[3])
     elif sys.argv[1] == "links":
         for u in re.split(r"[\s,]+", sys.argv[2].strip()):
             if u:
