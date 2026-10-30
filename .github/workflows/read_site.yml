@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'list(記事のURLを出す) か read(記事を読む) か links(ページ内のリンクを出す) か grep(filter の言葉の前後を元のHTMLから出す)'
+        description: 'list(記事のURLを出す) か read(記事を読む) か links(ページ内のリンクを出す) か grep(filter の言葉の前後を元のHTMLから出す) か json(filter の id の埋め込み JSON の形を出す)'
         required: true
         default: 'list'
       url:

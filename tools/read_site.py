@@ -5,6 +5,7 @@
    python tools/read_site.py read URL                    … 1記事の本文を出す
    python tools/read_site.py links URL [正規表現]        … ページの中の同じサイトへのリンクを出す(複数可)
    python tools/read_site.py grep URL 正規表現            … その言葉を含む要素の中身と、元のHTMLの前後を出す(表以外の形で載っているものを探す)
+   python tools/read_site.py json URL 要素のid           … ページに埋め込まれた JSON(<script id=...>)の形(キーと値の例)を出す
    直接読めない(403など)ときは Wayback Machine の最新のスナップショットを読む"""
 import re
 import sys
@@ -146,6 +147,38 @@ def do_grep(u, pat):
     print("##### おわり")
 
 
+def show_shape(x, path="", depth=0, out=None):
+    """JSON の形を、キーの道すじと値の例で出す(リストは最初の1つだけたどる)"""
+    if depth > 8:
+        return
+    if isinstance(x, dict):
+        for k, v in x.items():
+            show_shape(v, path + "." + str(k), depth + 1, out)
+    elif isinstance(x, list):
+        print("{} [リスト {}個]".format(path, len(x)))
+        if x:
+            show_shape(x[0], path + "[0]", depth + 1, out)
+    else:
+        v = re.sub(r"\s+", " ", str(x))
+        print("{} = {}".format(path, v[:120] + ("…({}字)".format(len(v)) if len(v) > 120 else "")))
+
+
+def do_json(u, eid):
+    import json
+    html = get(u)
+    if not html:
+        print("読めませんでした", u)
+        return
+    el = BeautifulSoup(html, "html.parser").find("script", id=eid)
+    if not el:
+        print("見つかりません", eid)
+        return
+    data = json.loads(el.string or el.get_text())
+    print("##### JSON", u, eid, len(el.string or ""), "字")
+    show_shape(data)
+    print("##### おわり")
+
+
 def do_links(u, pat):
     html = get(u)
     if not html:
@@ -164,6 +197,10 @@ def do_links(u, pat):
 if __name__ == "__main__":
     if sys.argv[1] == "list":
         do_list(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ".")
+    elif sys.argv[1] == "json":
+        for u in re.split(r"[\s,]+", sys.argv[2].strip()):
+            if u:
+                do_json(u, sys.argv[3] if len(sys.argv) > 3 else "")
     elif sys.argv[1] == "grep":
         for u in re.split(r"[\s,]+", sys.argv[2].strip()):
             if u:
