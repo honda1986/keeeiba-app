@@ -164,8 +164,16 @@ BET_NAME = {"wide": "ワイド◎-○", "trio": "3連複◎○▲(▲が距離�
 def trio_wide(race, u):
     """▲(u)が TH["trio_wide_if"] の軸不可(距離延長)なら True(アプリはそのレースをワイド◎-○で買う)。
     理由は日別ファイルの予想(30か条の評価。モデルの確率には関わらない)から取る"""
+    if "trio_wide_u" in race:                 # 結果だけ残した古いレース(下の races_by_id)
+        return u in race["trio_wide_u"]
     ng = next((h.get("axis_ng") or [] for h in (race.get("pred") or {}).get("horses") or [] if h["umaban"] == u), [])
     return bool(set(ng) & set(L.TH.get("trio_wide_if", ())))
+
+
+def trio_wide_us(race):
+    """trio_wide が True になる馬番(結果だけ残すレースに持たせる)"""
+    return [h["umaban"] for h in (race.get("pred") or {}).get("horses") or []
+            if set(h.get("axis_ng") or []) & set(L.TH.get("trio_wide_if", ()))]
 
 
 def evaluate(rows, p, races_by_id, pick, label, bet="wide"):
@@ -339,7 +347,8 @@ def main():
         pickle.dump((norm, rows, jt_all, sp), open(cache, "wb"))
     # 3年分になるとメモリが足りなくなるので、手作りの評価で比べる期間(調整・試験)より前は結果だけ残す
     races_by_id = {rc["id"]: (rc if d >= VALID_FROM else {"id": rc["id"], "center": rc.get("center"),
-                                                         "result": rc["result"]}) for d, rc in races}
+                                                         "result": rc["result"], "trio_wide_u": trio_wide_us(rc)})
+                   for d, rc in races}
     span = (races[0][0], races[-1][0], len(races))
     del races
     if a.update_select:
