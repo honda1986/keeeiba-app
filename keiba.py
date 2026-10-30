@@ -728,12 +728,13 @@ def run_day(d, now, backfill=False):
                 wo = fetch_wide_odds(rid)
                 if wo:
                     rc["wide_odds"] = wo
-                # 買うレースは3連複◎-○-x のオッズも(前の更新の予想の◎○で。買い目のオッズとしてアプリに出す)
-                p0 = rc.get("pred") or {}
-                if p0.get("verdict") in ("A", "B") and p0.get("honmei") and p0.get("taikou"):
-                    to = fetch_trio_odds(rid, (p0["honmei"], p0["taikou"]))
-                    if to:
-                        rc["trio_odds"] = to
+            # 買うレースは3連複◎-○-x のオッズも(前の更新の予想の◎○で。買い目のオッズとしてアプリに出す)。
+            # 単勝より先に前日発売のオッズが出ていることがあるので、単勝が取れなくても取る
+            p0 = rc.get("pred") or {}
+            if p0.get("verdict") in ("A", "B") and p0.get("honmei") and p0.get("taikou"):
+                to = fetch_trio_odds(rid, (p0["honmei"], p0["taikou"]))
+                if to:
+                    rc["trio_odds"] = to
         # 結果
         if st and now >= st + timedelta(minutes=RESULT_AFTER) and not rc.get("result"):
             html = get(site + "/race/result.html", {"race_id": rid})
