@@ -121,6 +121,11 @@ class Logic(unittest.TestCase):
         if sj["t2_max"] <= 1:
             probs[2] = min(0.94, sj["t2_max"] + 0.05)   # ○が帯より強い → 見送り
             self.assertEqual(L.predict(jra, TODAY, probs=probs)["verdict"], "見送り")
+        if sj.get("g12", -1) > 0:                     # ◎と○が近い → 見送り(人気どおりで配当が安い)
+            probs.update({1: 0.95, 2: 0.95 - sj["g12"] + 0.01})
+            p = L.predict(jra, TODAY, probs=probs)
+            self.assertEqual(p["verdict"], "見送り")
+            self.assertIn("◎と○が近い", p["reason"])
         probs.update({1: max(0.0, sj["t1"] - 0.05), 2: mid - 0.06})   # ◎が下限に届かない → 見送り
         self.assertEqual(L.predict(jra, TODAY, probs=probs)["verdict"], "見送り")
         # 延長の馬は確率が高くても軸にしない

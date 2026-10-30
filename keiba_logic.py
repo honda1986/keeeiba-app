@@ -794,13 +794,15 @@ MODEL_SELECT = {"t2": 0.60, "gap": 0.0, "a": 0.65}
 #          的中5割。前の基準(◎60%以上・○40〜50%)は 76% / 82% / 93%。どの年も100%には届いていない
 MODEL_SELECT_FIXED = {
     "nar": {"t2": 0.75, "n_min": 9},
-    "jra": {"t1": 0.80, "t2": 0.0, "gap": -1.0, "a_p1": 0.85},
+    # 中央: ◎80%以上で、◎と○の確率の差が15%以上(○も強いと人気どおりで配当が安い。2024・2025年で選び、2026年は 127% → 137%。
+    # tools/experiments/strategy_grid.py)
+    "jra": {"t1": 0.80, "t2": 0.0, "gap": -1.0, "a_p1": 0.85, "g12": 0.15},
 }
 
 
 def model_select(center="nar"):
     """中央(jra)・地方(nar)の買う基準。t1=◎の下限 / t2=○の下限 / t2_max=○の上限 / gap=○と3番手の差 /
-    n_min=頭数の下限 / a=Aにする○の下限(a_p1 があれば◎の下限でAにする)"""
+    g12=◎と○の差の下限 / n_min=頭数の下限 / a=Aにする○の下限(a_p1 があれば◎の下限でAにする)"""
     if MODEL_SELECT_FIXED:
         s = dict(MODEL_SELECT, t1=0.0, t2_max=1.01)
         s.update(MODEL_SELECT_FIXED.get(center) or MODEL_SELECT_FIXED["nar"])
@@ -813,7 +815,7 @@ def model_select(center="nar"):
         sel = sel.get(center, sel)
         if sel.get("t2") is not None:
             s = dict(MODEL_SELECT, t1=0.0, t2_max=1.01)
-            s.update({k: v for k, v in sel.items() if k in ("t1", "t2", "t2_max", "gap", "n_min", "a_p1")})
+            s.update({k: v for k, v in sel.items() if k in ("t1", "t2", "t2_max", "gap", "g12", "n_min", "a_p1")})
             s["a"] = s["t2"] + 0.05
             return s
     except Exception:
@@ -830,13 +832,15 @@ def select_text(sel):
         t.append("○{:.0%}〜{:.0%}".format(sel["t2"], sel["t2_max"]))
     elif sel.get("t2"):
         t.append("○{:.0%}以上".format(sel["t2"]))
+    if sel.get("g12", -1) > 0:
+        t.append("◎と○の差{:.0%}以上".format(sel["g12"]))
     return "・".join(t)
 
 
 def select_ok(sel, p1, p2, p3, n=99):
     """基準に入るか(n=頭数)"""
     return (p1 >= sel["t1"] and sel["t2"] <= p2 < sel["t2_max"] and p2 - p3 >= sel["gap"]
-            and n >= sel.get("n_min", 0))
+            and p1 - p2 >= sel.get("g12", -1.0) and n >= sel.get("n_min", 0))
 
 
 def _predict_model(out, res, rb, horses, race, cs, pace, probs):
@@ -886,6 +890,8 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
             out["reason"] = "少頭数({}頭。{}頭以下はワイドの配当が安いので買わない)".format(len(horses), sel["n_min"] - 1)
         elif p1 < sel["t1"]:
             out["reason"] = "◎が基準未満(◎の3着内{:.0%}で基準{:.0%}に届かない)".format(p1, sel["t1"])
+        elif p1 - p2 < sel.get("g12", -1.0):
+            out["reason"] = "◎と○が近い(◎{:.0%}・○{:.0%}。差が{:.0%}未満だと人気どおりで配当が安い)".format(p1, p2, sel["g12"])
         elif p2 >= sel["t2_max"]:
             out["reason"] = "人気どおり(○の3着内{:.0%}。中央は○{:.0%}〜{:.0%}だけ買う)".format(p2, sel["t2"], sel["t2_max"])
         elif p1 >= sel["t2"] and p1 - p2 >= 0.15:

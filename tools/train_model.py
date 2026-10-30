@@ -195,7 +195,7 @@ def evaluate(rows, p, races_by_id, pick, label, bet="wide"):
             "roi": round(rt / st, 3) if st else 0, "bet": BET_NAME[bet]}
 
 
-def pick_model(t2, gap, pr, axis_ok=True, t1=0.0, t2_max=1.01, n_min=0):
+def pick_model(t2, gap, pr, axis_ok=True, t1=0.0, t2_max=1.01, n_min=0, g12=-1.0):
     """アプリと同じ選び方: ◎○=軸にできる馬(延長などでない)の確率上位2頭、
     相手=残りの確率上位2頭。◎の確率が t1 以上、○の確率が t2 以上 t2_max 未満で、
     残りの1番手との差が gap 以上、頭数が n_min 以上なら買う"""
@@ -209,7 +209,7 @@ def pick_model(t2, gap, pr, axis_ok=True, t1=0.0, t2_max=1.01, n_min=0):
         h, t = ok[0], ok[1]
         rest = [r for r in o if r is not h and r is not t]
         ph, pt, p3 = pr[(h["rid"], h["u"])], pr[(t["rid"], t["u"])], pr[(rest[0]["rid"], rest[0]["u"])]
-        if ph < t1 or pt < t2 or pt >= t2_max or pt - p3 < gap:
+        if ph < t1 or pt < t2 or pt >= t2_max or pt - p3 < gap or ph - pt < g12:
             return None
         return h["u"], t["u"], [r["u"] for r in rest]
     return f
@@ -249,7 +249,7 @@ def of_center(rows, c):
 def pick_sel(sel, pr):
     """model_select の形の基準で選ぶ"""
     return pick_model(sel["t2"], sel.get("gap", 0.0), pr, True, sel.get("t1", 0.0), sel.get("t2_max", 1.01),
-                      sel.get("n_min", 0))
+                      sel.get("n_min", 0), sel.get("g12", -1.0))
 
 
 def check_wf(rows, races_by_id, pw, sel, bet="wide"):
@@ -287,7 +287,7 @@ def show_check(chk):
 
 def fixed_selects():
     """利用者が決めた中央・地方の基準(keiba_logic.MODEL_SELECT_FIXED)を model_select の形で"""
-    return {c: {k: v for k, v in L.model_select(c).items() if k in ("t1", "t2", "t2_max", "gap", "n_min", "a_p1")}
+    return {c: {k: v for k, v in L.model_select(c).items() if k in ("t1", "t2", "t2_max", "gap", "g12", "n_min", "a_p1")}
             for c, _ in CENTERS}
 
 
