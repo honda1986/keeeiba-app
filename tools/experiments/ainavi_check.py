@@ -132,8 +132,8 @@ def pred(X, w):
     return 1 / (1 + np.exp(-(w[0] + X @ w[1:])))
 
 
-dates = np.array([r["d"] for r in rows]); cut = np.quantile(dates.astype(int), 0.6)
-tr, te = dates.astype(int) <= cut, dates.astype(int) > cut
+dates = np.array([int(r["d"]) for r in rows]); cut = np.quantile(dates, 0.6)
+tr, te = dates <= cut, dates > cut
 print("\n■ 混ぜ方を {}〜{} で決め、{}〜{} で確かめる(後半 {}頭)".format(dates[tr].min(), dates[tr].max(), dates[te].min(),
                                                             dates[te].max(), int(te.sum())))
 SETS = [("うちの確率だけ", [lg(p3)]), ("+追切(偏差値・1F・自己ベスト)", [lg(p3), tdz, has_td * 1.0, f1z, has_f1 * 1.0, best]),
