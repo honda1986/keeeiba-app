@@ -67,6 +67,8 @@ for f in sorted(glob.glob(R + "/keiba/days/2026*.json")):
                 continue
             rid = r["id"]
             top3 = set(r["result"]["order"][:3])
+            ng = {x["umaban"] for x in ((r.get("pred") or {}).get("horses") or []) if x.get("axis_ng")}
+            wpay = (r["result"].get("payout") or {}).get("ワイド") or {}
             od = r["result"]["odds"]
             inv = sum(1 / o for o in od.values() if o and o > 1)
             for h in race.get("horses") or []:
@@ -77,7 +79,7 @@ for f in sorted(glob.glob(R + "/keiba/days/2026*.json")):
                 fin = (h.get("training_data") or {}).get("final") or {}
                 f4 = num(fin.get("wood_4f_dev")) if fin.get("wood_4f_dev") is not None else num(fin.get("sakamichi_4f_dev"))
                 f1 = num(fin.get("wood_1f_dev")) if fin.get("wood_1f_dev") is not None else num(fin.get("sakamichi_1f_dev"))
-                rows.append(dict(d=d, rid=rid, y=int(u in top3), p3=p3, q=1 / od[str(u)] / inv,
+                rows.append(dict(d=d, rid=rid, u=u, ng=u in ng, wpay=wpay, y=int(u in top3), p3=p3, q=1 / od[str(u)] / inv,
                                  fi=num(h.get("fukusho_index")), ki=num(h.get("kitaichi_index")),
                                  td=num(h.get("training_deviation")), tb=h.get("training_bunrui") or "-",
                                  f4=f4, f1=f1, r4=num(fin.get("rank_4f")), bb=num(fin.get("bunbo")),
@@ -144,4 +146,41 @@ for name, cols in SETS:
     X = np.column_stack(cols); w = fit(X[tr], y[tr]); p = pred(X[te], w)
     ll = np.mean(y[te] * np.log(p) + (1 - y[te]) * np.log(1 - p))
     print("  {:32s} 対数尤度 {:.5f}  AUC {:.4f}  係数 {}".format(name, ll, auc(p, y[te]), " ".join("%.3f" % v for v in w[1:])))
+
+# 週ごとに5つに分け、ほかの週で混ぜ方を決めた確率(先の週も使うが、そのレース自体は使わない)で ◎○ を選び直してワイドの回収率を見る
+weeks = np.array([int(r["d"]) // 7 for r in rows]); uw = sorted(set(weeks)); fold = {w: i % 5 for i, w in enumerate(uw)}
+fo = np.array([fold[w] for w in weeks])
+rids = np.array([r["rid"] for r in rows])
+
+
+def oof(cols):
+    X = np.column_stack(cols); p = np.zeros(len(rows))
+    for k in range(5):
+        w = fit(X[fo != k], y[fo != k]); p[fo == k] = pred(X[fo == k], w)
+    # レースで合計3にそろえる(アプリの確率と同じ)
+    out = p.copy()
+    for rid in set(rids):
+        m = rids == rid; out[m] = np.minimum(0.99, p[m] * min(3, m.sum()) / p[m].sum())
+    return out
+
+
+CAND = [("うちの確率", p3), ("+複勝能力指数+追切", oof([lg(p3), lg(fi), tdz, has_td * 1.0, f1z, has_f1 * 1.0, best])),
+        ("+追切だけ", oof([lg(p3), tdz, has_td * 1.0, f1z, has_f1 * 1.0, best]))]
+print("\n■ ワイド◎-○(週ごとに5つに分けて、ほかの週で決めた混ぜ方。軸不可はアプリと同じ)  全レース / ◎60%以上 / ◎80%以上")
+for name, pp in CAND:
+    out = []
+    for t1 in (0.0, 0.6, 0.8):
+        n = hit = ret = 0
+        for rid in set(rids):
+            idx = [i for i in np.where(rids == rid)[0] if not rows[i]["ng"]]
+            if len(idx) < 2:
+                continue
+            idx.sort(key=lambda i: -pp[i])
+            h, t = idx[0], idx[1]
+            if pp[h] < t1:
+                continue
+            k = "-".join(str(v) for v in sorted((rows[h]["u"], rows[t]["u"])))
+            v = rows[h]["wpay"].get(k, 0); n += 1; ret += v; hit += v > 0
+        out.append("{:4d}R 的中{:4.0%} {:4.0f}%".format(n, hit / max(n, 1), ret / max(n, 1)))
+    print("  {:20s} {}".format(name, " / ".join(out)))
 print("\n(このサイトのデータは保存していない)")
