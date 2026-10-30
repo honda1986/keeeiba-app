@@ -23,6 +23,7 @@ import java.net.URL;
 /**
  * 2強レース(個人用)。予想アプリ(GitHub Pages)を1画面で出す。
  * ブラウザの予想アプリからは netkeiba を読めないので、オッズをその場で取るときはアプリが代わりに取る(KeibaApp.fetch)。
+ * AI競馬ナビの追切評価も同じようにアプリが取る(この端末で見るだけ。GitHub には保存しない)。
  */
 public class MainActivity extends Activity {
     static final String APP_URL = "https://honda1986.github.io/keeeiba-app/keiba/?app=1";
@@ -73,10 +74,10 @@ public class MainActivity extends Activity {
 
     /** 予想アプリ(Web)から呼ばれる */
     class Bridge {
-        /** netkeiba(race.netkeiba.com だけ)のページを取って、文字を予想アプリに返す(window.kbFetched(id, 文字, エラー)) */
+        /** netkeiba(race.netkeiba.com)・AI競馬ナビ(中央のレースのページ)を取って、文字を予想アプリに返す(window.kbFetched(id, 文字, エラー)) */
         @JavascriptInterface
         public void fetch(String url, String id) {
-            if (url == null || !url.startsWith("https://race.netkeiba.com/")) {
+            if (url == null || !(url.startsWith("https://race.netkeiba.com/") || url.startsWith("https://horse-racing-ai-navi.com/jra/"))) {
                 fetched(id, null, "このアドレスは取れません");
                 return;
             }
@@ -95,10 +96,10 @@ public class MainActivity extends Activity {
                         int n;
                         while ((n = in.read(buf)) > 0) b.write(buf, 0, n);
                     }
-                    // 文字コード: 返事に書いてあればそれ、無ければ API は UTF-8、ページは EUC-JP(netkeiba)
+                    // 文字コード: 返事に書いてあればそれ、無ければ netkeiba のページは EUC-JP、ほか(API・AI競馬ナビ)は UTF-8
                     String ct = c.getContentType() == null ? "" : c.getContentType();
                     String cs = ct.toLowerCase().contains("charset=") ? ct.substring(ct.toLowerCase().indexOf("charset=") + 8).trim()
-                            : url.contains("/api/") ? "UTF-8" : "EUC-JP";
+                            : url.startsWith("https://race.netkeiba.com/") && !url.contains("/api/") ? "EUC-JP" : "UTF-8";
                     body = b.toString(cs.split(";")[0].replace("\"", "").trim());
                 } catch (Exception e) {
                     err = e.toString();

@@ -118,6 +118,8 @@ details>summary::-webkit-details-marker{display:none}
 .tag.m{background:var(--neg-bg);color:var(--neg)}
 .tag.p{background:var(--good-bg);color:var(--good)}
 .tag.o{background:var(--accent-bg);color:var(--accent)}
+.tag.n{background:var(--surface2);color:var(--ink2)}
+a.ext{color:var(--pos);text-decoration:underline;text-underline-offset:2px}
 .skip{display:flex;gap:10px;align-items:baseline;padding:9px 14px;font-size:13px}
 .skip .r{flex:1;color:var(--muted);min-width:0}
 .skip .rs{white-space:nowrap;font-size:12px;color:var(--muted)}
@@ -352,7 +354,7 @@ async function boot() {
     if (pick) { try { state.day = await loadDay(pick); } catch (e) { /* data.json のまま */ } }
   }
   renderRace(); renderMoney(); renderRule(); renderVote();
-  autoOdds();
+  autoOdds(); autoNavi();
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.get("d") && state.days.includes(h.get("d"))) openDay(h.get("d"), h.get("r"));
 }
@@ -361,7 +363,7 @@ async function boot() {
 async function openDay(d, rid) {
   try { state.day = await loadDay(d); } catch (e) { return; }
   renderRace(); renderVote(); showTab("race");
-  autoOdds();
+  autoOdds(); autoNavi();
   if (rid && allRaces().some(r => r.id === rid)) jumpRace(rid, false);
   else { scrollTo(0, 0); setHash(d); }
 }
@@ -610,7 +612,8 @@ function card(r) {
   const p = r.pred, s = r.settle, res = r.result;
   const hv = p.horses.find(h => h.umaban === p.honmei) || {}, tv = p.horses.find(h => h.umaban === p.taikou) || {};
   const ax = (m, u, e) => `<div class="ax"><div class="n"><span class="m">${m}</span>${u} ${esc(hname(r, u))}</div>
-    <div class="s">${esc(e.style || "脚質?")} · ${e.p3 != null ? "3着内 " + Math.round(e.p3 * 100) + "%" : "評価 " + e.score}</div></div>`;
+    <div class="s">${esc(e.style || "脚質?")} · ${e.p3 != null ? "3着内 " + Math.round(e.p3 * 100) + "%" : "評価 " + e.score}</div>
+    <span class="nv" data-u="${u}">${naviTag(r, u)}</span></div>`;
   const bets = p.bets.map(b => `<div class="bet ${b.hit && b.hit.length ? "hit" : ""}">
       <span class="ty">${esc(b.type)}</span>
       <span class="cb">${b.combos.map(c => c.join(b.type === "3連単" ? "→" : "-")).join("  ")}<span class="role">${esc(b.kind)} … ${esc(b.role)}</span></span>
@@ -621,7 +624,7 @@ function card(r) {
       <div class="meta">${esc(p.reason)}${p.pace ? " · 展開: " + esc(p.pace.note) : ""}</div></div></div>
     <div class="axis">${ax("◎", p.honmei, hv)}${ax("○", p.taikou, tv)}</div>
     ${p.notes && p.notes.length ? `<div class="note">${p.notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
-    ${courseBox(p.course)}
+    ${courseBox(p.course)}${naviLine(r)}
     <div class="bets">${bets}
       <div class="total"><span>${p.points}点</span><span>${yen(p.stake)}</span></div>
       <div class="mkrow"><button class="btn sm" data-mk="${esc(r.id)}">ほかの買い目を作る</button></div></div>
@@ -706,7 +709,7 @@ function skipRow(r) {
     ${shortReason(r.pred.reason) !== r.pred.reason ? `<div class="note" style="padding-top:2px">見送り: ${esc(r.pred.reason)}</div>` : ""}
     ${skipRes(r)}
     <div class="mkrow"><button class="btn sm" data-mk="${esc(r.id)}">買い目を作る</button></div>
-    <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${evBox(r)}${r.pred.horses.length ? table(r) : ""}</details>`;
+    <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${naviLine(r)}${evBox(r)}${r.pred.horses.length ? table(r) : ""}</details>`;
 }
 
 // 見送り欄の見出し: 結果が出たレースで、もし◎-○のワイドを買っていたら
@@ -734,6 +737,23 @@ function jockeyTag(r, h) {
   }
   return "";
 }
+// 追切評価(AI競馬ナビ。アプリがその場で取る。下の「追切評価」)。S・A は緑、D は赤
+function naviTag(r, u) {
+  const x = (naviData[r.id] || {})[u];
+  if (!x || !/^[SABCD]$/.test(x[0])) return "";
+  return `<span class="tag ${"SA".includes(x[0]) ? "p" : x[0] === "D" ? "m" : "n"}">追切${x[0]}${x[1] != null ? " " + x[1] : ""}` +
+    `${x[2] ? " · " + esc(x[2]) : ""}${x[3] ? " · 自己ベスト" : ""}</span>`;
+}
+function naviLine(r) {
+  const d = state.day?.date;
+  if (r.center !== "jra" || !d || d < NAVI_FROM || !/^\d{12}$/.test(r.id)) return "";
+  const st = naviState[d + r.id.slice(4, 6)];
+  const s = !canLive() ? "アプリでは馬の札に出ます" : st === "busy" ? "取得中…" : st === "old" ? "アプリを新しくすると馬の札に出ます"
+    : st === "ng" ? "取れませんでした(あとで開き直す)" : st === "none" ? "まだ出ていません"
+    : st === "ok" && !naviData[r.id] ? "このレースは出ていません" : "";
+  return `<div class="note nvl" style="padding-top:2px">追切評価:
+    <a href="${NAVI}${d}/${r.id.slice(4, 6)}/#r${+r.id.slice(10, 12)}" class="ext" target="_blank" rel="noopener">AI競馬ナビ</a>${s ? " · " + s : ""}</div>`;
+}
 const oddsCell = (ho, win) => `${ho.ninki ? ho.ninki + "人" : "-"}<br><span class="muted">${ho.odds ?? ""}</span>` +
   (win && win[ho.umaban] && ho.odds ? `<br><span class="${evCls(win[ho.umaban] * ho.odds)}">期${(win[ho.umaban] * ho.odds).toFixed(2)}</span>` : "");
 function table(r) {
@@ -746,7 +766,7 @@ function table(r) {
       + (h.axis_ng.length && !h.cut ? `<span class="tag o">軸不可: ${esc(h.axis_ng.join("・"))}</span>` : "")
       + (h.cut ? `<span class="tag m"><b>消し</b> ${esc(h.cut_reason)}</span>` : "")
       + (h.odds_note ? `<span class="tag o">${esc(h.odds_note)}</span>` : "")
-      + jockeyTag(r, h);
+      + jockeyTag(r, h) + `<span class="nv" data-u="${h.umaban}">${naviTag(r, h.umaban)}</span>`;
     return `<tr class="${h.cut ? "cut" : ""}" data-u="${h.umaban}"><td class="mk">${h.mark || ""}</td>
       <td class="num">${h.umaban}</td>
       <td class="nm"><b>${esc(ho.name)}</b> <span class="muted">${esc(h.style || "")}</span><br>${tags}</td>
@@ -1005,6 +1025,10 @@ async function modelBox() {
         ? "○が強すぎると人気どおりで配当が安いので、○の確率に上限を置く。" : "◎の確率だけで選ぶ(○の確率・3番手との差では絞らない)。"}
         基準に入らなければ見送り</li>
       <li><b>買い方</b>ワイド◎-○の1点だけ(1レース100円)</li>
+      <li><b>追切評価</b>中央の馬の札に、<a href="https://horse-racing-ai-navi.com/ai-keiba-yosou" class="ext" target="_blank" rel="noopener">AI競馬ナビ</a>の追切評価(S〜D)・
+        追い切り偏差値・最終追い切りの場所とコースを出す(アプリだけ。開いたときにその場で取る)。予想には使っていない。
+        2026年7〜10月の中央では、追切Sの馬の3着内は41%(このモデルの見込み29%)、Aは33%(27%)、Dは16%(19%)と、
+        モデルの見込みより差がついた。ただし単勝オッズにはほぼ織り込まれていて、混ぜてもワイド◎-○の回収率が良くなるとは確かめられなかった</li>
     </ul>
     ${chks ? chkTbl("中央", chks.jra)
       : (m.check && m.check["試験"] ? tbl("試験期間(9月〜。学習にも基準にも使っていない)", m.check["試験"]) : "")}
@@ -1413,6 +1437,67 @@ function autoOdds() {
   refreshOdds(false);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) autoOdds(); });
+
+// ---------------------------------------------------------------- 追切評価(AI競馬ナビ。アプリでその場で取る)
+// 中央の馬の追切評価(S〜D)・追い切り偏差値・最終追い切りの場所とコースを、AI競馬ナビのページ
+// (/jra/<日付>/<場コード>/ に埋め込まれた JSON)からアプリが取って、馬の札に出す。予想(◎○・買う/見送り)には使わない
+// (2026年7〜10月で確かめると、モデルより当たるが単勝オッズには織り込まれていた。README)。
+// よそのサイトの評価なので GitHub には保存せず、この端末にだけ少しの間残す。ブラウザでは取れないのでリンクだけ
+const NAVI = "https://horse-racing-ai-navi.com/jra/", NAVI_FROM = "20260718";     // 過去のページはこの日から
+const naviData = {};    // race id -> 馬番 -> [評価, 偏差値, 場所とコース, 自己ベスト(4Fが2本以上の中で1番)]
+const naviState = {};   // 日付+場コード -> busy / ok / none(ページが無い) / ng(取れない) / old(古いアプリ)
+const jstDate = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10).replace(/-/g, "");
+async function naviFetch(d, v) {
+  const key = "keiba-navi:" + d + v;
+  try {                                     // 前の日は1週間、今日・これからの日は3時間使い回す
+    const c = JSON.parse(store.get(key) || "null");
+    if (c && Date.now() - c.at < (d < jstDate() ? 7 * 864e5 : 3 * 3600e3)) return c.races;
+  } catch (e) { /* 取り直す */ }
+  const el = new DOMParser().parseFromString(await appFetch(NAVI + d + "/" + v + "/"), "text/html").getElementById("jra-index-report-data");
+  if (!el) throw new Error("HTTP 404");
+  const races = {};
+  for (const rc of (JSON.parse(el.textContent).venue || {}).races || []) {
+    const hs = races[+rc.no] = {};
+    for (const h of rc.horses || []) {
+      const f = (h.training_data || {}).final || {};
+      hs[+h.umaban] = [h.training_bunrui || "", h.training_deviation ?? null, (f.place || "") + (f.course || ""),
+                       f.rank_4f === 1 && f.bunbo >= 2 ? 1 : 0];
+    }
+  }
+  try {                                     // 2週間より前の分は消す
+    const old = "keiba-navi:" + dstr(new Date(Date.now() - 14 * 864e5));
+    for (const k of Object.keys(localStorage)) if (k.startsWith("keiba-navi:") && k < old) localStorage.removeItem(k);
+  } catch (e) { /* 残っても困らない */ }
+  store.set(key, JSON.stringify({at: Date.now(), races}));
+  return races;
+}
+function drawNavi(r) {
+  const box = document.getElementById("r-" + r.id);
+  if (!box) return;
+  box.querySelectorAll(".nv[data-u]").forEach(el => { el.innerHTML = naviTag(r, +el.dataset.u); });
+  const l = box.querySelector(".nvl");
+  if (l) l.outerHTML = naviLine(r);
+}
+// 中央の日を開いたとき、場ごとに1ページずつ取る
+async function autoNavi() {
+  if (!canLive() || !state.day || state.day.date < NAVI_FROM) return;
+  const d = state.day.date, byV = {};
+  for (const r of allRaces()) if (r.center === "jra" && /^\d{12}$/.test(r.id)) (byV[r.id.slice(4, 6)] = byV[r.id.slice(4, 6)] || []).push(r);
+  for (const [v, rs] of Object.entries(byV)) {
+    const k = d + v;
+    if (naviState[k] === "busy" || naviState[k] === "ok") continue;
+    naviState[k] = "busy"; rs.forEach(drawNavi);
+    try {
+      const races = await naviFetch(d, v);
+      for (const r of rs) if (races[+r.id.slice(10, 12)]) naviData[r.id] = races[+r.id.slice(10, 12)];
+      naviState[k] = "ok";
+    } catch (e) {
+      const m = String(e && e.message);
+      naviState[k] = /HTTP 404/.test(m) ? "none" : /取れません/.test(m) ? "old" : "ng";
+    }
+    if (state.day && state.day.date === d) rs.forEach(drawNavi);
+  }
+}
 
 // ---------------------------------------------------------------- 買い目を作る
 // 予想に無いレースや券種も、自分で買い目を作って投票タブに入れる(この端末にだけ残る)
