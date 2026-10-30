@@ -242,7 +242,10 @@ TH = {
     # 中央の買い方。trio1=3連複◎-○-▲の1点(▲=◎○の次に確率が高い馬)。wide=上の bet_mode のワイド
     # 2024〜2026年の月ごとの確率で、◎80%以上のレースの回収率は 3連複◎○▲ 110%(745R)、ワイド◎-○ 93%(同じレース)。
     # 年ごとでも 101・118・110%(ワイドは 92・90・97%)。tools/experiments/bet_mix.py
+    # ただし▲が距離延長(軸不可)のレースはワイド◎-○の1点(3連複 77%・ワイド 100%。延長でない▲は3連複 127%)。
+    # 合わせて 112% → 119%、的中 20% → 29%。tools/experiments/trio_third.py
     "jra_bet": "trio1",
+    "trio_wide_if": ("距離延長",),
     "course_style_k": 5.0,   # コースの脚質傾向の効き(比の対数 × これ)
     "course_waku_k": 5.0,    # コースの枠順傾向の効き
 }
@@ -841,7 +844,8 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
     ◎○ … 軸にできる馬(規則 15 延長などでない)のうち、3着以内の確率の上位2頭
     相手 … 残りの確率上位2頭
     買う … 中央・地方で別の基準(model_select)。地方は○の確率、中央は◎の確率と○の確率の帯で決める
-    買い方 … 中央は3連複◎-○-▲の1点(TH["jra_bet"])。地方はワイド(TH["bet_mode"]。wide1 は◎-○の1点)"""
+    買い方 … 中央は3連複◎-○-▲の1点(TH["jra_bet"])。▲が距離延長ならワイド◎-○(TH["trio_wide_if"])。
+              地方はワイド(TH["bet_mode"]。wide1 は◎-○の1点)"""
     center = "jra" if race.get("center") == "jra" else "nar"
     sel = model_select(center)
     for r in res:
@@ -904,9 +908,13 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
     out["aite"] = [r["umaban"] for r in rest[:2]]
     out["ana"] = []
     if out["verdict"] != "見送り":
-        out["bets"] = (make_bets_trio(hon["umaban"], tai["umaban"], out["aite"][0])
-                       if center == "jra" and TH.get("jra_bet") == "trio1" and out["aite"]
+        trio = (center == "jra" and TH.get("jra_bet") == "trio1" and rest
+                and not set(rest[0]["axis_ng"]) & set(TH.get("trio_wide_if", ())))
+        out["bets"] = (make_bets_trio(hon["umaban"], tai["umaban"], rest[0]["umaban"]) if trio
                        else make_bets_wide(hon["umaban"], tai["umaban"], out["aite"]))
+        if center == "jra" and TH.get("jra_bet") == "trio1" and rest and not trio:
+            out["notes"].append("▲{}番が{}なので、3連複ではなくワイド◎-○".format(
+                rest[0]["umaban"], "・".join(sorted(set(rest[0]["axis_ng"]) & set(TH["trio_wide_if"])))))
         out["points"] = sum(len(b["combos"]) for b in out["bets"])
         out["stake"] = sum(len(b["combos"]) * b["unit"] for b in out["bets"])
     return out

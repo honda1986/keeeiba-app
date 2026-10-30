@@ -112,6 +112,12 @@ class Logic(unittest.TestCase):
         st = L.settle(p, {"order": [3, 1, 2], "payout": {"3連複": {"1-2-3": 780}}})
         self.assertEqual((st["hit"], st["ret"]), (True, 780))
         self.assertFalse(L.settle(p, {"order": [1, 2, 4], "payout": {"3連複": {"1-2-4": 500}}})["hit"])
+        # ▲が距離延長(軸不可)なら、3連複ではなくワイド◎-○の1点
+        ext3 = horse(3, [run(1, margin=-0.6, dist=1200)] * 3)
+        p = L.predict(race([strong(1, first=2), strong(2, first=9), ext3] + [middle(u) for u in range(4, 13)]), TODAY, probs=probs)
+        self.assertIn("距離延長", next(h for h in p["horses"] if h["umaban"] == 3)["axis_ng"])
+        self.assertEqual([(b["type"], b["combos"]) for b in p["bets"]], [("ワイド", [[1, 2]])])
+        self.assertTrue(any("ワイド◎-○" in n for n in p["notes"]))
         if sj["t2_max"] <= 1:
             probs[2] = min(0.94, sj["t2_max"] + 0.05)   # ○が帯より強い → 見送り
             self.assertEqual(L.predict(jra, TODAY, probs=probs)["verdict"], "見送り")

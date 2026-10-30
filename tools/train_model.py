@@ -158,7 +158,14 @@ def settle_wide(bets, pay):
     return st, rt, hit
 
 
-BET_NAME = {"wide": "ワイド◎-○", "trio": "3連複◎○▲"}
+BET_NAME = {"wide": "ワイド◎-○", "trio": "3連複◎○▲(▲が距離延長ならワイド◎-○)"}
+
+
+def trio_wide(race, u):
+    """▲(u)が TH["trio_wide_if"] の軸不可(距離延長)なら True(アプリはそのレースをワイド◎-○で買う)。
+    理由は日別ファイルの予想(30か条の評価。モデルの確率には関わらない)から取る"""
+    ng = next((h.get("axis_ng") or [] for h in (race.get("pred") or {}).get("horses") or [] if h["umaban"] == u), [])
+    return bool(set(ng) & set(L.TH.get("trio_wide_if", ())))
 
 
 def evaluate(rows, p, races_by_id, pick, label, bet="wide"):
@@ -168,8 +175,9 @@ def evaluate(rows, p, races_by_id, pick, label, bet="wide"):
         sel = pick(rid, rs, p)
         if not sel or (bet == "trio" and not sel[2]):
             continue
-        pay = (races_by_id[rid]["result"].get("payout") or {}).get("3連複" if bet == "trio" else "ワイド") or {}
-        st, rt, hit = settle_wide([([sel[0], sel[1], sel[2][0]], 1)] if bet == "trio" else wide_bets(*sel), pay)
+        b = "wide" if bet == "trio" and trio_wide(races_by_id[rid], sel[2][0]) else bet
+        pay = (races_by_id[rid]["result"].get("payout") or {}).get("3連複" if b == "trio" else "ワイド") or {}
+        st, rt, hit = settle_wide([([sel[0], sel[1], sel[2][0]], 1)] if b == "trio" else wide_bets(*sel), pay)
         tot[0] += 1
         tot[1] += hit
         tot[2] += st
