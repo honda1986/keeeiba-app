@@ -391,6 +391,32 @@ def fetch_wide_odds(rid):
     return parse_wide_odds(j)
 
 
+def parse_trio_odds(j, pair=None):
+    """API(type=7)の返事から "小さい順の馬番-…" -> 3連複のオッズ。pair(◎, ○)があれば、その2頭を含む組だけ(◎-○-x)"""
+    out = {}
+    try:
+        for k, v in j["data"]["odds"]["7"].items():
+            us = sorted(int(k[i:i + 2]) for i in (0, 2, 4))
+            if pair and not set(pair) <= set(us):
+                continue
+            o = num(str(v[0]).replace(",", ""), float)
+            if o:
+                out["-".join(map(str, us))] = o
+    except (TypeError, KeyError, IndexError, AttributeError, ValueError):
+        return {}
+    return out
+
+
+def fetch_trio_odds(rid, pair):
+    """3連複◎-○-x のオッズ(中央だけ)。アプリの買い目に出す"""
+    if center_of(rid) != "jra":
+        return {}
+    j = get(SITE["jra"] + "/api/api_get_jra_odds.html",
+            {"pid": "api_get_jra_odds", "input": "UTF-8", "output": "json",
+             "race_id": rid, "type": "7", "action": "init", "compress": "0"}, as_json=True)
+    return parse_trio_odds(j, pair)
+
+
 PAY = {"Tansho": ("単勝", 1), "Fukusho": ("複勝", 1), "Wakuren": ("枠連", 2), "Umaren": ("馬連", 2),
        "Wide": ("ワイド", 2), "Umatan": ("馬単", 2), "Fuku3": ("3連複", 3), "Tan3": ("3連単", 3)}
 ORDERED = ("馬単", "3連単")      # 着順どおりの組で払い戻す券種
@@ -702,6 +728,12 @@ def run_day(d, now, backfill=False):
                 wo = fetch_wide_odds(rid)
                 if wo:
                     rc["wide_odds"] = wo
+                # 買うレースは3連複◎-○-x のオッズも(前の更新の予想の◎○で。買い目のオッズとしてアプリに出す)
+                p0 = rc.get("pred") or {}
+                if p0.get("verdict") in ("A", "B") and p0.get("honmei") and p0.get("taikou"):
+                    to = fetch_trio_odds(rid, (p0["honmei"], p0["taikou"]))
+                    if to:
+                        rc["trio_odds"] = to
         # 結果
         if st and now >= st + timedelta(minutes=RESULT_AFTER) and not rc.get("result"):
             html = get(site + "/race/result.html", {"race_id": rid})
@@ -767,8 +799,9 @@ def field_band(n):
     return "〜10頭" if (n or 0) <= 10 else ("11〜14頭" if n <= 14 else "15頭〜")
 
 
-def gap_band(g):
-    return "差6〜" if g >= 6 else ("差4.5〜6" if g >= 4.5 else "差3.5〜4.5")
+def g12_band(g):
+    """◎と○の確率の差(買う基準は15%以上)"""
+    return "?" if g is None else "〜15%" if g < 0.15 else "15〜25%" if g < 0.25 else "25〜40%" if g < 0.40 else "40%〜"
 
 
 def bet_key(b):
@@ -861,7 +894,7 @@ def build_history():
                 "surface": {"芝": "芝", "ダ": "ダート"}.get(rc.get("surface"), "?"),
                 "dist": dist_band(rc.get("dist")), "field": field_band(rc.get("n")),
                 "baba": "道悪" if (rc.get("baba") or "良") in L.HEAVY else "良・稍",
-                "gap": gap_band(p.get("gap") or 0), "pace": (p.get("pace") or {}).get("pace", "?"),
+                "g12": g12_band(p.get("gap12")), "pace": (p.get("pace") or {}).get("pace", "?"),
                 "stake": s["stake"], "ret": s["ret"], "hit": s["hit"],
                 "hr": s.get("honmei_rank"), "tr": s.get("taikou_rank"), "bets": bt,
                 "alt": alt_bets(p, rc.get("result") or {})})

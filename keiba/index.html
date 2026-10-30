@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#101318">
-<title>競馬 2強レース</title>
+<title>競馬 堅軸レース</title>
 <style>
 :root{
   color-scheme:light;
@@ -83,6 +83,8 @@ button.tile[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 
 .badge.B{background:var(--pos-bg);color:var(--pos)}
 .badge.S{background:var(--surface2);color:var(--muted);font-size:11px;padding:0 6px}
 .axis{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 14px 10px}
+.ax3{margin:-4px 14px 10px;padding:6px 10px;border-radius:10px;background:var(--surface2);font-size:13px}
+.ax3 .m{font-weight:800;margin-right:4px}
 .ax{background:var(--surface2);border-radius:10px;padding:8px 10px;min-width:0}
 .ax .m{font-weight:800;margin-right:4px}
 .ax .n{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -252,7 +254,7 @@ dialog.sheet .close{display:block;width:100%;margin-top:10px;padding:9px;border-
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="brand">2強レース<small>中央</small></div>
+    <div class="brand">堅軸レース<small>中央</small></div>
     <div class="stamp" id="stamp"></div>
     <button class="themeb" id="themeb"></button>
   </div>
@@ -573,7 +575,7 @@ function drawNextBuy() {
   const r = races().filter(x => centerOkR(x) && x.pred.verdict !== "見送り" && !x.result && (untilClose(d.date, x) ?? -1) > 0)[0];
   if (!r) { el.innerHTML = ""; return; }
   const m = untilClose(d.date, r), p = r.pred;
-  const bet = p.bets.map(b => `${b.type} ${b.combos.map(c => comboText(b.type, c)).join(",")}`).join(" / ");
+  const bet = p.bets.map(b => `${b.type} ${b.combos.map(c => comboText(b.type, c) + (comboOdds(r, b.type, c) ? `(${comboOdds(r, b.type, c)})` : "")).join(",")}`).join(" / ");
   el.innerHTML = `<button class="nextb" data-rid="${esc(r.id)}"><span class="badge ${p.verdict}">${p.verdict}</span>
     <span class="t"><span class="k">次の買い${m < 120 ? ` · <b>締切まで ${m}分</b>` : ""}</span>
     <b>${head(r)}</b> <span class="num">${esc(bet)}</span></span><span class="muted">›</span></button>`;
@@ -608,6 +610,26 @@ function meta(r) {
 }
 function hname(r, u) { return (r.horses.find(h => h.umaban === u) || {}).name || ""; }
 
+// 買い目のオッズ(3連複は ◎-○-x のオッズ、ワイドは下限〜上限)。取れていなければ空
+function comboOdds(r, type, c) {
+  const k = [...c].sort((a, b) => a - b).join("-");
+  if (type === "3連複") { const o = (r.trio_odds || {})[k]; return o ? `${o}倍` : ""; }
+  if (type === "ワイド") { const o = (r.wide_odds || r.wide_final || {})[k]; return o ? `${o[0]}〜${o[1]}倍` : ""; }
+  return "";
+}
+function betOdds(r, b) {
+  const t = b.combos.map(c => comboOdds(r, b.type, c)).filter(Boolean).join(" / ");
+  return t ? ` <span class="muted">${esc(t)}</span>` : "";
+}
+// 3連複の3頭目(▲)。3連複を買うレースだけ1行で出す
+function thirdLine(r) {
+  const p = r.pred, a = (p.aite || [])[0];
+  if (!a || !(p.bets || []).some(b => b.type === "3連複")) return "";
+  const e = p.horses.find(h => h.umaban === a) || {};
+  return `<div class="ax3"><span class="m">▲</span>${a} ${esc(hname(r, a))}
+    <span class="muted">${esc(e.style || "")} · 3着内 ${e.p3 != null ? Math.round(e.p3 * 100) + "%" : "-"}</span>
+    <span class="nv" data-u="${a}">${naviTag(r, a)}</span></div>`;
+}
 function card(r) {
   const p = r.pred, s = r.settle, res = r.result;
   const hv = p.horses.find(h => h.umaban === p.honmei) || {}, tv = p.horses.find(h => h.umaban === p.taikou) || {};
@@ -616,13 +638,13 @@ function card(r) {
     <span class="nv" data-u="${u}">${naviTag(r, u)}</span></div>`;
   const bets = p.bets.map(b => `<div class="bet ${b.hit && b.hit.length ? "hit" : ""}">
       <span class="ty">${esc(b.type)}</span>
-      <span class="cb">${b.combos.map(c => c.join(b.type === "3連単" ? "→" : "-")).join("  ")}<span class="role">${esc(b.kind)} … ${esc(b.role)}</span></span>
+      <span class="cb">${b.combos.map(c => c.join(b.type === "3連単" ? "→" : "-")).join("  ")}<span class="bo">${betOdds(r, b)}</span><span class="role">${esc(b.kind)} … ${esc(b.role)}</span></span>
       <span class="pt">${b.combos.length}点×${b.unit}円${b.ret ? `<br><b class="good">${yen(b.ret)}</b>` : ""}</span></div>`).join("");
   return `<article class="card ${p.verdict === "A" ? "buyA" : ""}" id="r-${esc(r.id)}">
     <div class="ch"><div class="badge ${p.verdict}">${p.verdict}</div>
       <div class="t"><b>${head(r)}</b>${p.src === "backfill" ? ` <span class="tag o">再現</span>` : ""}<div class="meta">${meta(r)}</div>
       <div class="meta">${esc(p.reason)}${p.pace ? " · 展開: " + esc(p.pace.note) : ""}</div></div></div>
-    <div class="axis">${ax("◎", p.honmei, hv)}${ax("○", p.taikou, tv)}</div>
+    <div class="axis">${ax("◎", p.honmei, hv)}${ax("○", p.taikou, tv)}</div>${thirdLine(r)}
     ${p.notes && p.notes.length ? `<div class="note">${p.notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
     ${courseBox(p.course)}${naviLine(r)}
     <div class="bets">${bets}
@@ -795,7 +817,7 @@ function table(r) {
 
 // ---------------------------------------------------------------- 収支・分析
 const GROUPS = [["判定","verdict"],["芝/ダート","surface"],["距離","dist"],["頭数","field"],
-                ["馬場","baba"],["2強の差","gap"],["展開","pace"],["競馬場","venue"]];
+                ["馬場","baba"],["◎と○の差","g12"],["展開","pace"],["競馬場","venue"]];
 const PERIODS = [["7","7日"],["30","30日"],["month","今月"],["year","今年"],["lastyear","去年"],["all","全期間"]];
 
 function periodRange() {
@@ -1305,6 +1327,18 @@ async function liveWide(rid) {
   return out;
 }
 
+// 3連複 ◎-○-x のオッズ "小さい順-…" -> オッズ(keiba.py の parse_trio_odds と同じ)
+async function liveTrio(rid, pair) {
+  const j = JSON.parse(await appFetch("https://race.netkeiba.com/api/api_get_jra_odds.html?pid=api_get_jra_odds&input=UTF-8" +
+    "&output=json&race_id=" + rid + "&type=7&action=init&compress=0"));
+  const out = {};
+  for (const [k, v] of Object.entries(((j.data || {}).odds || {})["7"] || {})) {
+    const us = [+k.slice(0, 2), +k.slice(2, 4), +k.slice(4, 6)].sort((a, b) => a - b), o = parseFloat(String(v[0]).replace(/,/g, ""));
+    if (o > 0 && pair.every(u => us.includes(u))) out[us.join("-")] = o;
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- 期待値(単勝・ワイド)
 // 期待値 = 当たる確率 × オッズ(100円買って平均いくら戻るか ÷ 100)。1を超えれば、続けて買うと得になる見込み。
 // 1着の確率は、単勝オッズから出る市場の確率 q と、モデルの3着内の確率 p3 を混ぜる: P ∝ q^a × (p3/(1-p3))^b。
@@ -1424,6 +1458,9 @@ function updateOddsDom(r) {
   });
   const ev = box.querySelector(".evin");
   if (ev) ev.innerHTML = evInner(r);
+  const bs = box.querySelectorAll(".bet .bo");
+  (r.pred.bets || []).forEach((b, i) => { if (bs[i]) bs[i].innerHTML = betOdds(r, b); });
+  drawNextBuy();
 }
 async function refreshOdds(manual) {
   if (!canLive() || oddsState.busy || !state.day) return;
@@ -1445,6 +1482,11 @@ async function refreshOdds(manual) {
       for (const h of r.horses) if (o[h.umaban]) { h.odds = o[h.umaban][0]; h.ninki = o[h.umaban][1]; }
       const w = await liveWide(r.id).catch(() => ({}));
       if (Object.keys(w).length) r.wide_odds = w;
+      const p = r.pred || {};
+      if (["A", "B"].includes(p.verdict) && p.honmei && p.taikou) {
+        const t3 = await liveTrio(r.id, [p.honmei, p.taikou]).catch(() => ({}));
+        if (Object.keys(t3).length) r.trio_odds = t3;
+      }
       updateOddsDom(r);
     }
   }));
@@ -1607,7 +1649,11 @@ function openBuilder(o) {
   const rs = allRaces().filter(r => r.horses && r.horses.length);
   if (!d || !rs.length) { alert("出馬表が出ているレースがありません"); return; }
   const r = rs.find(x => x.id === o.rid) || rs.find(x => !x.result && (untilClose(d.date, x) ?? 1) > 0) || rs[0];
-  bst = {d: d.date, rid: r.id, type: o.type || "ワイド", method: o.method || "通常", sel: [...(o.sel || [])], axis: o.axis ?? null,
+  if (!o.type && !o.sel && o.rid) {            // レースから開いたら、そのレースの今の買い方(見送りでも)を入れておく
+    const b = mainBet(r);
+    if (b) { o = Object.assign({}, o, {type: b[0], sel: b[1].split("-").map(Number)}); }
+  }
+  bst = {d: d.date, rid: r.id, type: o.type || "3連複", method: o.method || "通常", sel: [...(o.sel || [])], axis: o.axis ?? null,
          mode: o.axis != null ? "aite" : "axis", unit: o.unit || +store.get("keiba-unit") || 100, edit: o.edit,
          cols: o.cols ? o.cols.map(c => [...c]).concat([[], [], []]).slice(0, 3) : [[], [], []], col: 0};
   drawBuilder();
@@ -1758,15 +1804,15 @@ function renderRule() {
   $("#v-rule").innerHTML = `
     <div class="sec">流れ</div>
     <div class="flow"><div>全レースの各馬に、3着以内に来る確率を出す</div>
-      <div>「来ない」馬の負け要因(距離・展開・枠・斤量・休み明け・クラス差・馬場)を探して消す</div>
-      <div>30か条の評価も材料にした確率モデルで、軸にできる馬の上位2頭を◎○にする(延長の馬は軸にしない)</div>
+      <div>各馬の負け要因(距離・展開・枠・斤量・休み明け・クラス差・馬場)を数える(30か条の評価。確率モデルの材料)</div>
+      <div>軸にできる馬(延長などでない)の確率の上位2頭を◎○、その次を▲にする</div>
       <div>◎の確率が80%以上で、◎と○の差が15%以上のレースだけ買う(◎85%以上はA)。それ以外は見送り</div>
       <div>買い方は3連複◎-○-▲の1点だけ(◎○と▲の3頭が3着内で的中。▲=◎○の次に確率が高い馬)。
         ▲が距離延長ならワイド◎-○の1点</div></div>
     <div class="sec">3着以内の確率モデル(◎○と買うレースを決める)</div>
     <div id="modelbox"><p class="muted" style="font-size:13px">モデルの情報を読み込み中…</p></div>
     <div class="sec">印</div>
-    <div class="flow" style="font-size:13px">◎ 最も崩れにくい軸 / ○ ◎と違う強みの2頭目 / ▲△ 消せない相手 / ☆ 3頭目の穴 / × 消し</div>
+    <div class="flow" style="font-size:13px">◎○ 軸にできる馬の確率の上位2頭 / ▲ その次(3連複の3頭目) / △ 4番目 / × 負け要因が重なる馬(消し)</div>
     <div class="sec">評価の作り方</div>
     <ul class="rules">
       <li><b>能力</b>過去5走の着差(秒)とクラス。人気・オッズは使わない</li>
@@ -1777,7 +1823,9 @@ function renderRule() {
       <li><b>展開</b>逃げ馬3頭以上はハイ(前が不利・差し有利)、1頭以下はスロー(前残り)</li>
       <li><b>枠</b>脚質とセット。コースの枠順成績(下のコース傾向)を使い、記事に無い距離だけ
         短距離の外枠先行・多頭数の内枠差しを減点</li>
-      <li><b>オッズ</b>評価が出た後に人気と見比べるだけ(過剰人気? / 妙味)</li>
+      <li><b>オッズ</b>確率にはそのレースのオッズを使わない。出た後に人気と見比べて札を出す
+        (人気が上=3番人気以内なのに確率は6番目以下 / 人気が下=6番人気以下なのに確率は3番目以内)。
+        3着内は人気の方が当たることが多い: 人気が上の馬は実際 35%(確率の見込み 20%)、人気が下の馬は 22%(35%)。2024〜2026年の中央</li>
     </ul>
     <div class="sec">コース傾向(10場・78コース)</div>
     <ul class="rules">
@@ -1787,8 +1835,8 @@ function renderRule() {
       <li><b>脚質</b>そのコースの逃げ・先行・中団・後方の3着内率を、芝/ダートの全コース平均と比べる。
         得なら加点(最大+3)、損なら減点(最大-4)。大きな損は「弱点」として◎○の重なりにも数える</li>
       <li><b>枠</b>そのコースの枠番別の3着内率を平均と比べて±2.5まで(この場合は一般の枠の決まりを使わない)</li>
-      <li><b>堅さ</b>1・2番人気の3着内率が平均より高い「堅い」コースは2強の基準を0.5下げ、
-        「荒れやすい」コースは0.5上げて穴馬を2頭まで拾う</li>
+      <li><b>堅さ</b>1・2番人気の3着内率が平均より高いと「堅い」、低いと「荒れやすい」。コース傾向の欄に出すだけ
+        (今の買う基準には使っていない)</li>
       <li><b>少ない出走</b>出走が少ないコースは平均に寄せて控えめに効かせる。記事に無い距離は、その場の芝/ダート全体を半分の重みで使う</li>
     </ul>
     <p class="muted" style="font-size:12px;margin:12px 0">閾値は目安。「収支・分析」で条件別の回収率を見て、儲かる条件にレースを絞っていく。</p>

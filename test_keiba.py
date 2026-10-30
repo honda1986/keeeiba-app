@@ -320,6 +320,13 @@ class Parse(unittest.TestCase):
         self.assertEqual(K.parse_odds_form(ODDS_NAR), {8: (2.0, 1), 4: (3.0, 2)})
         self.assertEqual(K.parse_odds_form(ODDS_BEFORE), {})
 
+    def test_trio_odds(self):
+        j = {"status": "middle", "data": {"odds": {"7": {"010203": ["3,602.0", "0", "299"], "020309": ["12.3", "0", "5"],
+                                                          "030409": ["45.1", "0", "40"]}}}}
+        self.assertEqual(K.parse_trio_odds(j), {"1-2-3": 3602.0, "2-3-9": 12.3, "3-4-9": 45.1})
+        self.assertEqual(K.parse_trio_odds(j, (9, 2)), {"2-3-9": 12.3})       # ◎○を含む組だけ
+        self.assertEqual(K.parse_trio_odds({"data": {"odds": {}}}), {})
+
     def test_wide_odds(self):
         # API(type=5)の形(取得の診断で見たもの)。キーは馬番2桁ずつ、値は [下限, 上限, 人気]
         j = {"status": "middle", "data": {"odds": {"5": {"0102": ["133.5", "134.8", "67"], "0310": ["2.1", "2.4", "1"],

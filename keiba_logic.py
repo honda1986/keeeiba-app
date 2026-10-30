@@ -767,9 +767,9 @@ def predict(race, today=None, use_model=True, probs=None):
         if nk:
             rank = res.index(r) + 1
             if nk <= 3 and rank >= 6:
-                r["odds_note"] = "過剰人気?"
+                r["odds_note"] = "人気が上"
             elif nk >= 6 and rank <= 3:
-                r["odds_note"] = "妙味"
+                r["odds_note"] = "人気が下"
     hn = ninki.get(hon["umaban"])
     if hn and hn >= 4:
         out["notes"].append("◎が{}番人気(市場の評価と違う。根拠を確認)".format(hn))
@@ -905,9 +905,9 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
         r["ninki"] = nk
         if nk:
             if nk <= 3 and i >= 5:
-                r["odds_note"] = "過剰人気?"
+                r["odds_note"] = "人気が上"
             elif nk >= 6 and i <= 2:
-                r["odds_note"] = "妙味"
+                r["odds_note"] = "人気が下"
     hn = ninki.get(hon["umaban"])
     if hn and hn >= 4:
         out["notes"].append("◎が{}番人気(市場の評価と違う。根拠を確認)".format(hn))

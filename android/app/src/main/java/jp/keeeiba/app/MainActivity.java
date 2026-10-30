@@ -21,7 +21,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 
 /**
- * 2強レース(個人用)。予想アプリ(GitHub Pages)を1画面で出す。
+ * 堅軸レース(個人用。◎が堅いレースだけ買う)。予想アプリ(GitHub Pages)を1画面で出す。
  * ブラウザの予想アプリからは netkeiba を読めないので、オッズをその場で取るときはアプリが代わりに取る(KeibaApp.fetch)。
  * AI競馬ナビの追切評価も同じようにアプリが取る(この端末で見るだけ。GitHub には保存しない)。
  */
