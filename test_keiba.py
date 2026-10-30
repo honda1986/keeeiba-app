@@ -106,6 +106,12 @@ class Logic(unittest.TestCase):
         probs.update({1: 0.95, 2: mid, 3: 0.20, 4: 0.15})
         p = L.predict(jra, TODAY, probs=probs)
         self.assertEqual(p["verdict"], "A" if 0.95 >= sj.get("a_p1", 1) else "B")
+        # 中央の買い方: 3連複◎-○-▲の1点(▲=◎○の次に確率が高い馬)
+        self.assertEqual([(b["type"], b["combos"], b["unit"]) for b in p["bets"]], [("3連複", [[1, 2, 3]], 100)])
+        self.assertEqual(p["stake"], 100)
+        st = L.settle(p, {"order": [3, 1, 2], "payout": {"3連複": {"1-2-3": 780}}})
+        self.assertEqual((st["hit"], st["ret"]), (True, 780))
+        self.assertFalse(L.settle(p, {"order": [1, 2, 4], "payout": {"3連複": {"1-2-4": 500}}})["hit"])
         if sj["t2_max"] <= 1:
             probs[2] = min(0.94, sj["t2_max"] + 0.05)   # ○が帯より強い → 見送り
             self.assertEqual(L.predict(jra, TODAY, probs=probs)["verdict"], "見送り")
@@ -341,6 +347,11 @@ class Parse(unittest.TestCase):
         # ほかの買い方(参考): ◎3 ○1 なら馬連・馬単は的中、単勝は払戻表に無いので None
         self.assertEqual(K.alt_bets({"honmei": 3, "taikou": 1}, r), {"ワイド": 400, "馬連": 1230, "馬単": 2560, "単勝": None})
         self.assertEqual(K.alt_bets({"honmei": 1, "taikou": 3}, r)["馬単"], 0)  # 逆の順は外れ
+        # 3連複◎○▲(▲=相手の1頭目)。払戻表に3連複が無ければ None
+        self.assertIsNone(K.alt_bets({"honmei": 3, "taikou": 1, "aite": [9, 2]}, r)["3連複"])
+        pay = {"payout": {"3連複": {"1-3-9": 2000}}}
+        self.assertEqual(K.alt_bets({"honmei": 3, "taikou": 1, "aite": [9, 2]}, pay)["3連複"], 2000)
+        self.assertEqual(K.alt_bets({"honmei": 3, "taikou": 1, "aite": [2, 9]}, pay)["3連複"], 0)
         self.assertEqual((r["ninki"]["3"], r["odds"]["3"]), (8, 15.8))
 
     def test_center(self):

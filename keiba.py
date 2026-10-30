@@ -777,13 +777,16 @@ def bet_key(b):
 
 def alt_bets(p, res):
     """同じ◎○で、買い方を変えて1点100円で買っていたらの払戻(参考)。払戻表にその券種が無ければ None
-    ワイド ◎-○(今の買い方) / 馬連 ◎-○ / 馬単 ◎→○ / 単勝 ◎"""
+    3連複 ◎-○-▲(中央の今の買い方。▲は相手の1頭目) / ワイド ◎-○ / 馬連 ◎-○ / 馬単 ◎→○ / 単勝 ◎"""
     pay = res.get("payout") or {}
     h, t = p.get("honmei"), p.get("taikou")
     if not h or not t:
         return {}
     pair = "-".join(str(x) for x in sorted((h, t)))
     keys = {"ワイド": pair, "馬連": pair, "馬単": "{}-{}".format(h, t), "単勝": str(h)}
+    a = (p.get("aite") or [None])[0]
+    if a:
+        keys["3連複"] = "-".join(str(x) for x in sorted((h, t, a)))
     return {typ: ((pay.get(typ) or {}).get(k, 0) * L.UNIT // 100 if typ in pay else None) for typ, k in keys.items()}
 
 

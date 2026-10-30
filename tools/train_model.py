@@ -4,7 +4,7 @@
    python tools/train_model.py [--save]
 期間で分ける(後ろの期間は学習に使わない):
   学習 … 〜6月 / 調整 … 7〜8月(早期終了と、買うレースの基準を決める)/ 試験 … 9月〜(最後に1回だけ見る)
-比べるもの(買い方はどれもアプリと同じワイド。今は◎-○の1点):
+比べるもの(買い方はアプリと同じ。選ぶときはワイド◎-○の1点。月ごとの確率の確かめは、中央は3連複◎-○-▲の1点):
   手作り … 今の30か条の評価で選んだ◎○(A/B)
   モデル … 確率の上位2頭を◎○。買うレースは確率で選ぶ
   市場   … 同じレースで1・2番人気(確定オッズ。参考。実際にはレース前に分からない)
@@ -158,22 +158,25 @@ def settle_wide(bets, pay):
     return st, rt, hit
 
 
-def evaluate(rows, p, races_by_id, pick, label):
-    """pick(rid, rs, p) -> (◎, ○, 相手) か None(見送り)"""
+BET_NAME = {"wide": "ワイド◎-○", "trio": "3連複◎○▲"}
+
+
+def evaluate(rows, p, races_by_id, pick, label, bet="wide"):
+    """pick(rid, rs, p) -> (◎, ○, 相手) か None(見送り)。bet … wide(アプリのワイド)/ trio(3連複◎-○-相手の1頭目の1点)"""
     tot = [0, 0, 0, 0]
     for rid, rs in group(rows).items():
         sel = pick(rid, rs, p)
-        if not sel:
+        if not sel or (bet == "trio" and not sel[2]):
             continue
-        pay = (races_by_id[rid]["result"].get("payout") or {}).get("ワイド") or {}
-        st, rt, hit = settle_wide(wide_bets(*sel), pay)
+        pay = (races_by_id[rid]["result"].get("payout") or {}).get("3連複" if bet == "trio" else "ワイド") or {}
+        st, rt, hit = settle_wide([([sel[0], sel[1], sel[2][0]], 1)] if bet == "trio" else wide_bets(*sel), pay)
         tot[0] += 1
         tot[1] += hit
         tot[2] += st
         tot[3] += rt
     n, hit, st, rt = tot
     return {"label": label, "races": n, "hit": round(hit / n, 3) if n else 0, "stake": st, "ret": rt,
-            "roi": round(rt / st, 3) if st else 0}
+            "roi": round(rt / st, 3) if st else 0, "bet": BET_NAME[bet]}
 
 
 def pick_model(t2, gap, pr, axis_ok=True, t1=0.0, t2_max=1.01, n_min=0):
@@ -233,22 +236,28 @@ def pick_sel(sel, pr):
                       sel.get("n_min", 0))
 
 
-def check_wf(rows, races_by_id, pw, sel):
-    """月ごとの確率で、基準 sel の成績(CHECK_PERIODS ごと / 全期間の同じレースで1・2番人気)。表の行のリスト"""
+def check_wf(rows, races_by_id, pw, sel, bet="wide"):
+    """月ごとの確率で、基準 sel の成績(CHECK_PERIODS ごと / 全期間の同じレースで人気上位)。表の行のリスト"""
     rs = [x for x in rows if (x["rid"], x["u"]) in pw]
     out = []
     for name, a, b in CHECK_PERIODS:
         sub = [x for x in rs if a <= x["date"] < b]
         if sub:
-            out.append(evaluate(sub, None, races_by_id, pick_sel(sel, pw), name))
+            out.append(evaluate(sub, None, races_by_id, pick_sel(sel, pw), name, bet))
     out.append(evaluate(rs, None, races_by_id, by_market(pick_sel(sel, pw)),
-                        "同じレースで1・2番人気({}〜。参考)".format(min(x["date"] for x in rs)[:4] if rs else "")))
+                        "同じレースで{}番人気({}〜。参考)".format("1〜3" if bet == "trio" else "1・2",
+                                                         min(x["date"] for x in rs)[:4] if rs else ""), bet))
     return out
 
 
+def center_bet(c):
+    """アプリの買い方(中央は TH["jra_bet"] が trio1 なら3連複◎○▲)"""
+    return "trio" if c == "jra" and L.TH.get("jra_bet") == "trio1" else "wide"
+
+
 def check_centers(rows, races_by_id, pw, sels):
-    """中央・地方それぞれの基準で、それぞれのレースだけを確かめる"""
-    return {c: check_wf(of_center(rows, c), races_by_id, pw, sels[c]) for c, _ in CENTERS}
+    """中央・地方それぞれの基準で、それぞれのレースだけを、アプリと同じ買い方で確かめる"""
+    return {c: check_wf(of_center(rows, c), races_by_id, pw, sels[c], center_bet(c)) for c, _ in CENTERS}
 
 
 def show_check(chk):

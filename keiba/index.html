@@ -659,19 +659,30 @@ function courseBox(c) {
 function altLine(r) {
   const p = r.pred, pay = (r.result || {}).payout || {};
   if (!p.honmei || !p.taikou || !r.result || (r.result.order || []).length < 3) return "";
-  const pair = [p.honmei, p.taikou].sort((a, b) => a - b).join("-");
-  const xs = [["馬連", pair, "馬連◎-○"], ["馬単", p.honmei + "-" + p.taikou, "馬単◎→○"], ["単勝", String(p.honmei), "単勝◎"]]
-    .filter(([t]) => pay[t]).map(([t, k, label]) => { const y = pay[t][k] || 0;
+  const pair = [p.honmei, p.taikou].sort((a, b) => a - b).join("-"), main = mainBet(r);
+  const xs = [refBet(r, "3連複"), refBet(r, "ワイド"), ["馬連", pair, "馬連◎-○"], ["馬単", p.honmei + "-" + p.taikou, "馬単◎→○"], ["単勝", String(p.honmei), "単勝◎"]]
+    .filter(x => x && pay[x[0]] && !(main && x[0] === main[0])).map(([t, k, label]) => { const y = pay[t][k] || 0;
       return `${label} ${y ? `<b class="good">${yen(y)}</b>` : `<span class="muted">×</span>`}`; });
   return xs.length ? `<div class="muted" style="margin-top:2px">ほかの買い方なら(参考): ${xs.join(" · ")}</div>` : "";
 }
 
-// 見送ったレースで、もし◎-○のワイドを買っていたら(参考。収支には入れない)。結果が無ければ null
+// 参考の買い目 [券種, 払戻表のキー, 名前]。3連複は◎○▲(▲=相手の1頭目)、ワイドは◎-○。組めなければ null
+function refBet(r, typ) {
+  const p = r.pred || {}, a = (p.aite || [])[0];
+  if (!p.honmei || !p.taikou || (typ === "3連複" && !a)) return null;
+  const us = typ === "3連複" ? [p.honmei, p.taikou, a] : [p.honmei, p.taikou];
+  return [typ, us.sort((x, y) => x - y).join("-"), typ === "3連複" ? "3連複◎○▲" : "ワイド◎-○"];
+}
+// そのレースの買い方。買ったレースは実際の券種、見送りは今の買い方(中央は3連複◎○▲、地方はワイド◎-○。keiba_logic の TH["jra_bet"])
+function mainBet(r) {
+  const t = (((r.pred || {}).bets || [])[0] || {}).type;
+  return refBet(r, ["3連複", "ワイド"].includes(t) ? t : r.center === "jra" ? "3連複" : "ワイド") || refBet(r, "ワイド");
+}
+// 見送ったレースで、もし今の買い方で買っていたら(参考。収支には入れない)。結果が無ければ null
 function skipRef(r) {
-  const p = r.pred, res = r.result;
-  if (!res || !res.order || res.order.length < 3 || !p.honmei || !p.taikou) return null;
-  const key = [p.honmei, p.taikou].sort((a, b) => a - b).join("-");
-  return {ret: ((res.payout || {})["ワイド"] || {})[key] || 0};
+  const res = r.result, b = mainBet(r);
+  if (!res || !res.order || res.order.length < 3 || !b) return null;
+  return {ret: ((res.payout || {})[b[0]] || {})[b[1]] || 0, label: b[2]};
 }
 
 function skipRes(r) {
@@ -680,7 +691,7 @@ function skipRes(r) {
   const ref = skipRef(r);
   const names = res.order.slice(0, 3).map((u, i) => `${i + 1}着 ${u} ${esc(hname(r, u))}`).join(" / ");
   return `<div class="res">結果 <b class="num">${res.order.slice(0, 3).join("-")}</b>
-    ${ref ? ` · ◎${s.honmei_rank ?? "-"}着 ○${s.taikou_rank ?? "-"}着 · ワイド◎-○なら
+    ${ref ? ` · ◎${s.honmei_rank ?? "-"}着 ○${s.taikou_rank ?? "-"}着 · ${ref.label}なら
       ${ref.ret ? `<b class="good">的中 ${yen(ref.ret)}</b>` : `<span class="neg">不的中</span>`}
       <span class="muted">(見送ったので収支には入らない)</span>` : ""}
     <div class="muted" style="margin-top:2px">${names}</div></div>`;
@@ -712,12 +723,13 @@ function skipRow(r) {
     <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${naviLine(r)}${evBox(r)}${r.pred.horses.length ? table(r) : ""}</details>`;
 }
 
-// 見送り欄の見出し: 結果が出たレースで、もし◎-○のワイドを買っていたら
+// 見送り欄の見出し: 結果が出たレースで、もし今の買い方(中央は3連複◎○▲)で買っていたら
 function skipHead(rs) {
   const refs = rs.map(skipRef).filter(Boolean);
   if (!refs.length) return `見送り ${rs.length}レース`;
   const hit = refs.filter(x => x.ret).length, ret = refs.reduce((a, x) => a + x.ret, 0);
-  return `見送り ${rs.length}レース <span class="muted" style="font-weight:400">· もし◎-○のワイドを買っていたら
+  const lb = [...new Set(refs.map(x => x.label))].join("・");
+  return `見送り ${rs.length}レース <span class="muted" style="font-weight:400">· もし${lb}を買っていたら
     ${refs.length}レース 的中${hit} 回収率${pct(ret, refs.length * 100)}(参考)</span>`;
 }
 
@@ -905,7 +917,8 @@ function renderMoney() {
       <td class="${x.ret >= x.stake ? "good" : "neg"}"><b>${pct(x.ret, x.stake)}</b></td></tr>`).join("")}</tbody></table>`;
   const srcs = [...new Set((h.races || []).map(r => r.src))];
   // 買い方をくらべる(同じ◎○を1点100円ずつ。払戻表にその券種が無いレースは数えない)
-  const ALT = [["ワイド", "ワイド◎-○(今)"], ["馬連", "馬連◎-○"], ["馬単", "馬単◎→○"], ["単勝", "単勝◎"]];
+  const ALT = [["3連複", "3連複◎○▲(中央の今の買い方)"], ["ワイド", "ワイド◎-○(10月までの買い方)"], ["馬連", "馬連◎-○"],
+               ["馬単", "馬単◎→○"], ["単勝", "単勝◎"]];
   const altRows = ALT.map(([k, label]) => {
     const xs = rs.filter(r => r.alt && r.alt[k] != null);
     const n = xs.length, ret = xs.reduce((a, r) => a + r.alt[k], 0), hitN = xs.filter(r => r.alt[k] > 0).length;
@@ -913,10 +926,11 @@ function renderMoney() {
   });
   const altMissing = rs.filter(r => r.alt && r.alt["馬単"] == null).length;
   const altTbl = `<table class="tbl"><thead><tr><th>買い方</th><th>R</th><th>的中</th><th>収支</th><th>回収率</th></tr></thead><tbody>
-    ${altRows.map(x => `<tr><td>${x.k === "ワイド" ? "<b>" + esc(x.label) + "</b>" : esc(x.label)}</td><td>${x.n}</td><td>${pct(x.hit, x.n)}</td>
+    ${altRows.filter(x => x.n).map(x => `<tr><td>${x.k === "3連複" ? "<b>" + esc(x.label) + "</b>" : esc(x.label)}</td><td>${x.n}</td><td>${pct(x.hit, x.n)}</td>
       <td class="${x.ret >= x.stake ? "good" : "neg"}">${x.n ? yen(x.ret - x.stake) : "-"}</td>
       <td class="${x.ret >= x.stake ? "good" : "neg"}"><b>${pct(x.ret, x.stake)}</b></td></tr>`).join("")}</tbody></table>
-    <p class="legendnote">買ったレースで、同じ◎○を1点${h.unit}円ずつ買っていたら(実際の払戻で計算)。収支に入っているのはワイドだけ。
+    <p class="legendnote">買ったレースで、同じ◎○(3連複は▲も)を1点${h.unit}円ずつ買っていたら(実際の払戻で計算)。
+      収支に入っているのは、そのとき実際に買った買い方(中央は2026-10-31から3連複◎○▲、その前の当日の予想はワイド◎-○)。
       ${altMissing ? `馬単の払戻をまだ取っていないレース(${altMissing}R)は馬単に数えていない。` : ""}</p>`;
 
   el.innerHTML = `
@@ -990,7 +1004,7 @@ async function modelBox() {
   const row = r => `<tr><td>${esc(r.label)}</td><td>${r.races}</td><td>${Math.round(r.hit * 100)}%</td>
     <td class="${r.roi >= 1 ? "good" : "neg"}"><b>${Math.round(r.roi * 100)}%</b></td></tr>`;
   const tbl = (name, rs) => `<div class="legendnote" style="margin-top:8px"><b>${esc(name)}</b></div>
-    <table class="tbl"><thead><tr><th>選び方(買い方はワイド◎-○の1点)</th><th>R</th><th>的中</th><th>回収率</th></tr></thead>
+    <table class="tbl"><thead><tr><th>選び方(買い方は${esc((rs[0] || {}).bet || "ワイド◎-○")}の1点)</th><th>R</th><th>的中</th><th>回収率</th></tr></thead>
     <tbody>${rs.map(row).join("")}</tbody></table>`;
   const el = document.getElementById("modelbox");
   if (!el) return;
@@ -1024,7 +1038,11 @@ async function modelBox() {
       <li><b>買うレース</b>${selText(sels.jra)}。${sels.jra.t2_max && sels.jra.t2_max <= 1
         ? "○が強すぎると人気どおりで配当が安いので、○の確率に上限を置く。" : "◎の確率だけで選ぶ(○の確率・3番手との差では絞らない)。"}
         基準に入らなければ見送り</li>
-      <li><b>買い方</b>ワイド◎-○の1点だけ(1レース100円)</li>
+      <li><b>買い方</b>中央は3連複◎-○-▲の1点だけ(1レース100円。▲は◎○の次に確率が高い馬)。
+        2024〜2026年の月ごとの確率で、◎80%以上のレースの回収率は 3連複◎○▲ 110%(745R・的中20%)、
+        ワイド◎-○ 93%(的中49%)。年ごとでも 101・118・110%(ワイドは 92・90・97%)。
+        ◎○▲が1〜3番人気と違うレースで 127%、同じレースで 91%。人気だけで1〜3番人気の3連複を買うと 2022〜2026年のどの年も 78%前後なので、
+        モデルが選ぶ3頭目までの組み合わせに意味がある。的中は5回に1回なので、外れが続くことが多い</li>
       <li><b>追切評価</b>中央の馬の札に、<a href="https://horse-racing-ai-navi.com/ai-keiba-yosou" class="ext" target="_blank" rel="noopener">AI競馬ナビ</a>の追切評価(S〜D)・
         追い切り偏差値・最終追い切りの場所とコースを出す(アプリだけ。開いたときにその場で取る)。予想には使っていない。
         2026年7〜10月の中央では、追切Sの馬の3着内は41%(このモデルの見込み29%)、Aは33%(27%)、Dは16%(19%)と、
@@ -1032,9 +1050,9 @@ async function modelBox() {
     </ul>
     ${chks ? chkTbl("中央", chks.jra)
       : (m.check && m.check["試験"] ? tbl("試験期間(9月〜。学習にも基準にも使っていない)", m.check["試験"]) : "")}
-    <p class="legendnote">市場=同じレースで1・2番人気のワイド(確定オッズ。実際にはレース前に分からない参考値)。
-      今の基準(2026-10-25 から)は、2024・2025年で選んで2026年で確かめたもの。◎が80%以上のレースは3年とも90%台で、
-      的中は約5割(前の基準 ◎60%以上・○40〜50% は 76〜93%)。ただし、どの年でも100%を超える基準は見つかっていない。
+    <p class="legendnote">市場=同じレースで人気上位(3連複は1〜3番人気、ワイドは1・2番人気。確定オッズ。実際にはレース前に分からない参考値)。
+      今の基準(2026-10-25 から)は、2024・2025年で選んで2026年で確かめたもの。◎が80%以上のレースは、ワイド◎-○では3年とも90%台で
+      的中は約5割(前の基準 ◎60%以上・○40〜50% は 76〜93%)。買い方を3連複◎○▲の1点にすると 101・118・110%(2026-10-31 から)。
       3年そろった傾向は「冬(1〜2月)・寒い日は悪い」だけ。
       週に1回、新しい結果で学び直す。</p>`;
 }
@@ -1738,7 +1756,7 @@ function renderRule() {
       <div>「来ない」馬の負け要因(距離・展開・枠・斤量・休み明け・クラス差・馬場)を探して消す</div>
       <div>30か条の評価も材料にした確率モデルで、軸にできる馬の上位2頭を◎○にする(延長の馬は軸にしない)</div>
       <div>◎の確率が80%以上のレースだけ買う(85%以上はA)。それ以外は見送り</div>
-      <div>買い方はワイド◎-○の1点だけ(◎○が両方3着内で的中)</div></div>
+      <div>買い方は3連複◎-○-▲の1点だけ(◎○と▲の3頭が3着内で的中。▲=◎○の次に確率が高い馬)</div></div>
     <div class="sec">3着以内の確率モデル(◎○と買うレースを決める)</div>
     <div id="modelbox"><p class="muted" style="font-size:13px">モデルの情報を読み込み中…</p></div>
     <div class="sec">印</div>

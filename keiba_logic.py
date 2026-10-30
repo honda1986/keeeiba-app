@@ -239,6 +239,10 @@ TH = {
     "ana_ninki": 6,          # この人気以下を穴とみなす
     "kata_adj": 0.5,         # 堅いコースは2強の基準をこれだけ下げ、荒れやすいコースは上げる
     "bet_mode": "wide1",     # wide1=ワイド◎-○の1点 / wide=ワイド◎-○×5+相手4点 / full=3連複・3連単・馬連・ワイド
+    # 中央の買い方。trio1=3連複◎-○-▲の1点(▲=◎○の次に確率が高い馬)。wide=上の bet_mode のワイド
+    # 2024〜2026年の月ごとの確率で、◎80%以上のレースの回収率は 3連複◎○▲ 110%(745R)、ワイド◎-○ 93%(同じレース)。
+    # 年ごとでも 101・118・110%(ワイドは 92・90・97%)。tools/experiments/bet_mix.py
+    "jra_bet": "trio1",
     "course_style_k": 5.0,   # コースの脚質傾向の効き(比の対数 × これ)
     "course_waku_k": 5.0,    # コースの枠順傾向の効き
 }
@@ -837,7 +841,7 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
     ◎○ … 軸にできる馬(規則 15 延長などでない)のうち、3着以内の確率の上位2頭
     相手 … 残りの確率上位2頭
     買う … 中央・地方で別の基準(model_select)。地方は○の確率、中央は◎の確率と○の確率の帯で決める
-    買い方 … ワイド(TH["bet_mode"]。wide1 は◎-○の1点)"""
+    買い方 … 中央は3連複◎-○-▲の1点(TH["jra_bet"])。地方はワイド(TH["bet_mode"]。wide1 は◎-○の1点)"""
     center = "jra" if race.get("center") == "jra" else "nar"
     sel = model_select(center)
     for r in res:
@@ -900,10 +904,17 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
     out["aite"] = [r["umaban"] for r in rest[:2]]
     out["ana"] = []
     if out["verdict"] != "見送り":
-        out["bets"] = make_bets_wide(hon["umaban"], tai["umaban"], out["aite"])
+        out["bets"] = (make_bets_trio(hon["umaban"], tai["umaban"], out["aite"][0])
+                       if center == "jra" and TH.get("jra_bet") == "trio1" and out["aite"]
+                       else make_bets_wide(hon["umaban"], tai["umaban"], out["aite"]))
         out["points"] = sum(len(b["combos"]) for b in out["bets"])
         out["stake"] = sum(len(b["combos"]) * b["unit"] for b in out["bets"])
     return out
+
+
+def make_bets_trio(h, t, a):
+    """3連複◎-○-▲の1点(中央。◎○と、残りでいちばん確率が高い▲の3頭が3着内で的中)"""
+    return [{"type": "3連複", "role": "◎○▲が3着内", "kind": "◎-○-▲", "combos": [sorted([h, t, a])], "unit": UNIT}]
 
 
 def make_bets_wide(h, t, aite):
