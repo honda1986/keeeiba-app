@@ -948,6 +948,18 @@ def diag(d):
             print("  {} {} {}B".format(path, st, len(b)))
             for tr in soup.select("tr")[:3]:
                 print("   tr:", [(td.get("class"), txt(td)[:20]) for td in tr.find_all("td")][:8])
+    # 3連複(type=7)のオッズの形(◎○▲の組のオッズをアプリに出すため)。今日のレースと、終わったレース(確定オッズ)
+    for rid in jra[:1] + ["202608040811"]:
+        st, b = raw(SITE["jra"] + "/api/api_get_jra_odds.html",
+                    {"pid": "api_get_jra_odds", "input": "UTF-8", "output": "json", "race_id": rid,
+                     "type": "7", "action": "init", "compress": "0"})
+        print("==== 3連複 type=7", rid, st, len(b), decode(b)[:500].replace("\n", " "))
+        try:
+            j = json.loads(decode(b))
+            od = (j.get("data") or {}).get("odds") or {}
+            print("   status", j.get("status"), "odds のキー", list(od), {k: (len(v), list(v.items())[:5]) for k, v in od.items() if isinstance(v, dict)})
+        except Exception as e:
+            print("   JSON にならない", type(e).__name__, e)
     # 終わったレースのワイドのオッズ(確定オッズ)が取れるか
     for rid in ("202608040811", "202408050611", "202205010111"):
         st, b = raw(SITE["jra"] + "/api/api_get_jra_odds.html",
