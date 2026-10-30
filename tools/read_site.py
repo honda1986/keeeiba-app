@@ -4,6 +4,7 @@
    python tools/read_site.py list URL [題名の正規表現]  … カテゴリをたどって記事のURLを出す
    python tools/read_site.py read URL                    … 1記事の本文を出す
    python tools/read_site.py links URL [正規表現]        … ページの中の同じサイトへのリンクを出す(複数可)
+   python tools/read_site.py grep URL 正規表現            … その言葉を含む要素の中身と、元のHTMLの前後を出す(表以外の形で載っているものを探す)
    直接読めない(403など)ときは Wayback Machine の最新のスナップショットを読む"""
 import re
 import sys
@@ -119,6 +120,32 @@ def do_read(u):
     print("##### おわり")
 
 
+def do_grep(u, pat):
+    html = get(u)
+    if not html:
+        print("読めませんでした", u)
+        return
+    rx = re.compile(pat)
+    soup = BeautifulSoup(html, "html.parser")
+    # その言葉を直接含むいちばん内側の要素と、それを囲む入れ物の中身(最初の8つ)
+    hits = [t.parent for t in soup.find_all(string=rx) if t.parent and t.parent.name not in ("script", "style")]
+    print("##### 要素", len(hits), "件", u)
+    for el in hits[:8]:
+        box = el
+        for _ in range(4):                    # 中身が短すぎるときは外側へ
+            if len(box.get_text(" ", strip=True)) >= 300 or not box.parent:
+                break
+            box = box.parent
+        print("--- <{} class={}> 入れ物 <{} class={} id={}>".format(el.name, el.get("class"), box.name, box.get("class"), box.get("id")))
+        print(re.sub(r"\s+", " ", box.get_text(" | ", strip=True))[:1500])
+    # 元のHTML(スクリプトの中のデータも含む)の前後
+    ms = list(rx.finditer(html))
+    print("##### 元のHTML", len(ms), "か所")
+    for m in ms[:6]:
+        print("---", m.start(), html[max(0, m.start() - 400):m.end() + 800].replace("\n", " "))
+    print("##### おわり")
+
+
 def do_links(u, pat):
     html = get(u)
     if not html:
@@ -137,6 +164,10 @@ def do_links(u, pat):
 if __name__ == "__main__":
     if sys.argv[1] == "list":
         do_list(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ".")
+    elif sys.argv[1] == "grep":
+        for u in re.split(r"[\s,]+", sys.argv[2].strip()):
+            if u:
+                do_grep(u, sys.argv[3] if len(sys.argv) > 3 else ".")
     elif sys.argv[1] == "links":
         for u in re.split(r"[\s,]+", sys.argv[2].strip()):
             if u:

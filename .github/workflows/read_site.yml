@@ -8,14 +8,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'list(記事のURLを出す) か read(記事を読む) か links(ページ内のリンクを出す)'
+        description: 'list(記事のURLを出す) か read(記事を読む) か links(ページ内のリンクを出す) か grep(filter の言葉の前後を元のHTMLから出す)'
         required: true
         default: 'list'
       url:
         description: 'URL'
         required: true
       filter:
-        description: 'list のとき、題名の正規表現'
+        description: 'list のとき題名の正規表現 / grep のとき探す言葉'
         required: false
         default: '.'
 
