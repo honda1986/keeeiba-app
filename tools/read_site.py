@@ -213,16 +213,15 @@ def do_probe(tmpl, rng):
     e = datetime.date(int(b[:4]), int(b[4:6]), int(b[6:]))
     found = []
     while d <= e:
-        if d.weekday() in (5, 6) or True:
-            u = tmpl.replace("{d}", d.strftime("%Y%m%d"))
-            try:
-                r = S.get(u, timeout=30)
-                if r.status_code == 200:
-                    found.append(d.strftime("%Y%m%d"))
-                    print("ある", u, len(r.content), flush=True)
-            except requests.RequestException as ex:
-                print("ERR", u, type(ex).__name__, flush=True)
-            time.sleep(0.3)
+        u = tmpl.replace("{d}", d.strftime("%Y%m%d"))
+        try:
+            r = S.get(u, timeout=30)
+            if r.status_code == 200:
+                found.append(d.strftime("%Y%m%d"))
+                print("ある", u, len(r.content), flush=True)
+        except requests.RequestException as ex:
+            print("ERR", u, type(ex).__name__, flush=True)
+        time.sleep(0.3)
         d += datetime.timedelta(days=1)
     print("##### ある日", len(found), found)
 
