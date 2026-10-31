@@ -655,6 +655,39 @@ def refetch_odds(d, now):
     print("{} ワイドの確定オッズ {} / 残り {}".format(d, n, left), flush=True)
 
 
+TRIO_FINAL_P1 = 0.70     # 3連複の確定オッズを取るのは、◎の確率がこれ以上のレースだけ(オッズで絞る買い方を確かめるため)
+
+
+def trio_target(rc):
+    """3連複◎-○-x の確定オッズ(trio_final)を取るレースか。(◎, ○) か None"""
+    p = rc.get("pred") or {}
+    if center_of(rc["id"]) != "jra" or not rc.get("result") or rc.get("trio_final") or not p.get("model"):
+        return None
+    h, t = p.get("honmei"), p.get("taikou")
+    p1 = next((x.get("p3") or 0 for x in p.get("horses") or [] if x["umaban"] == h), 0)
+    return (h, t) if h and t and p1 >= TRIO_FINAL_P1 else None
+
+
+def refetch_trio(d, now):
+    """3連複◎-○-x の確定オッズ(trio_final)を取る。3連複のオッズで絞る買い方を確かめるため(予想・結果はそのまま)"""
+    day = load_day(d)
+
+    def one(rid):
+        pair = trio_target(day["races"][rid])
+        if not pair:
+            return 0
+        to = fetch_trio_odds(rid, pair)
+        if not to:
+            return 0
+        day["races"][rid]["trio_final"] = to
+        return 1
+    n = sum(pmap(one, sorted(day["races"])))
+    if n:
+        save_day(d, day)
+    left = sum(1 for r in day["races"].values() if trio_target(r))
+    print("{} 3連複の確定オッズ {} / 残り {}".format(d, n, left), flush=True)
+
+
 def predict_past(rc, d, today):
     pr = past_probs(rc["id"], d)
     if pr is False:
@@ -1049,6 +1082,8 @@ def main():
                     help="--backfill-dates の日の馬柱だけを今の読み方で取り直す(予想はそのまま)")
     ap.add_argument("--refetch-result", action="store_true",
                     help="--backfill-dates の日の結果(払戻)だけを今の読み方で取り直す(予想はそのまま)")
+    ap.add_argument("--refetch-trio", action="store_true",
+                    help="--backfill-dates の日の、◎70%以上のレースの3連複◎-○-x の確定オッズだけを取る(予想・結果はそのまま)")
     ap.add_argument("--refetch-odds", action="store_true",
                     help="--backfill-dates の日のワイドの確定オッズだけを取る(予想・結果はそのまま)")
     ap.add_argument("--no-history", action="store_true", help="history.json を作らない(並列ジョブ用)")
@@ -1083,9 +1118,10 @@ def main():
                 # 一覧が続けて取れないのは netkeiba のメンテナンスなど。残りは次の再現にまわす
                 print("{} から先は取らない(レース一覧が{}日続けて取れない。メンテナンス中?)".format(d, fails))
                 break
-            if a.refetch_past or a.refetch_result or a.refetch_odds:
+            if a.refetch_past or a.refetch_result or a.refetch_odds or a.refetch_trio:
                 if d < today_s:
-                    (refetch_past if a.refetch_past else refetch_result if a.refetch_result else refetch_odds)(d, datetime.now(JST))
+                    (refetch_past if a.refetch_past else refetch_result if a.refetch_result
+                     else refetch_trio if a.refetch_trio else refetch_odds)(d, datetime.now(JST))
                 continue
             if d >= today_s:
                 print("{} は今日以降なので再現しません".format(d))

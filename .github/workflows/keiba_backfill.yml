@@ -26,7 +26,7 @@ on:
         required: false
         default: '6'
       mode:
-        description: 'predict(予想と結果を再現) / past(馬柱だけを今の読み方で取り直す) / result(結果・払戻だけを取り直す) / odds(ワイドの確定オッズだけを取る)'
+        description: 'predict(予想と結果を再現) / past(馬柱だけを今の読み方で取り直す) / result(結果・払戻だけを取り直す) / odds(ワイドの確定オッズだけを取る) / trio(◎70%以上のレースの3連複◎-○-x の確定オッズだけを取る)'
         required: false
         default: 'predict'
 
@@ -70,6 +70,15 @@ jobs:
                       # ワイドの確定オッズが無い中央のレースが残っている日だけ
                       done = all(r.get("wide_final") for r in day["races"].values()
                                  if r.get("result") and int(r["id"][4:6]) < 30)
+                  elif os.environ.get("MODE") == "trio":
+                      # ◎の確率が70%以上の中央のレースで、3連複の確定オッズが無いものが残っている日だけ(keiba.trio_target と同じ)
+                      def need(r):
+                          p = r.get("pred") or {}
+                          if int(r["id"][4:6]) >= 30 or not r.get("result") or r.get("trio_final") or not p.get("model"):
+                              return False
+                          p1 = next((x.get("p3") or 0 for x in p.get("horses") or [] if x["umaban"] == p.get("honmei")), 0)
+                          return bool(p.get("honmei") and p.get("taikou") and p1 >= 0.70)
+                      done = not any(need(r) for r in day["races"].values())
                   elif os.environ.get("MODE") == "past":
                       # 馬柱の読み方が古いレースが残っている日だけ
                       import re
@@ -79,7 +88,7 @@ jobs:
                   else:
                       done = day.get("complete")
               except Exception:
-                  done = os.environ.get("MODE") in ("past", "result", "odds")
+                  done = os.environ.get("MODE") in ("past", "result", "odds", "trio")
               if not done:
                   todo.append(s)
               d -= timedelta(days=1)
@@ -113,6 +122,7 @@ jobs:
           [ "${{ github.event.inputs.mode }}" = "past" ] && EXTRA="--refetch-past"
           [ "${{ github.event.inputs.mode }}" = "result" ] && EXTRA="--refetch-result"
           [ "${{ github.event.inputs.mode }}" = "odds" ] && EXTRA="--refetch-odds"
+          [ "${{ github.event.inputs.mode }}" = "trio" ] && EXTRA="--refetch-trio"
           python keiba.py --backfill-dates "${{ matrix.chunk.dates }}" --workers "${{ github.event.inputs.workers || 6 }}" --no-history $EXTRA
       - name: このジョブの日だけを渡す
         if: always()
