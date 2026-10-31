@@ -113,7 +113,6 @@ details>summary::-webkit-details-marker{display:none}
 .hs td.nm .muted{white-space:nowrap}
 .hs .tag{white-space:normal}
 .hs .odds{white-space:nowrap;text-align:right}
-.hs tr.cut td{opacity:.55}
 .hs .mk{font-weight:800;font-size:14px;width:18px}
 .hs .sc{text-align:right;font-weight:700;white-space:nowrap}
 .tag{display:inline-block;font-size:11px;padding:0 6px;border-radius:6px;margin:1px 2px 1px 0;line-height:18px;white-space:nowrap}
@@ -801,11 +800,11 @@ function table(r) {
     const ho = r.horses.find(x => x.umaban === h.umaban) || {};
     const tags = h.minus.map(m => `<span class="tag m">${esc(m.t)} ${m.p}</span>`).join("")
       + h.plus.map(m => `<span class="tag p">${esc(m.t)} +${m.p}</span>`).join("")
-      + (h.axis_ng.length && !h.cut ? `<span class="tag o">軸不可: ${esc(h.axis_ng.join("・"))}</span>` : "")
-      + (h.cut ? `<span class="tag m"><b>消し</b> ${esc(h.cut_reason)}</span>` : "")
+      + (h.axis_ng.length ? `<span class="tag o">軸不可: ${esc(h.axis_ng.join("・"))}</span>` : "")
+      + (h.cut ? `<span class="tag m">${esc(h.cut_reason || "負け要因が多い")}</span>` : "")
       + (h.odds_note ? `<span class="tag o">${esc(h.odds_note)}</span>` : "")
       + jockeyTag(r, h) + `<span class="nv" data-u="${h.umaban}">${naviTag(r, h.umaban)}</span>`;
-    return `<tr class="${h.cut ? "cut" : ""}" data-u="${h.umaban}"><td class="mk">${h.mark || ""}</td>
+    return `<tr data-u="${h.umaban}"><td class="mk">${h.mark && h.mark !== "×" ? h.mark : ""}</td>
       <td class="num">${h.umaban}</td>
       <td class="nm"><b>${esc(ho.name)}</b> <span class="muted">${esc(h.style || "")}</span><br>${tags}</td>
       <td class="sc num">${h.p3 != null ? Math.round(h.p3 * 100) + "%" : h.score}</td>
@@ -920,11 +919,12 @@ function renderMoney() {
   for (const d of days) for (const [key, sx] of Object.entries(d.stats || {})) {
     const [sname, cname] = key.split("|");          // 「出どころ|中央/地方」
     if (!srcOk(sname) || (state.mcenter !== "all" && cname !== state.mcenter)) continue;
-    for (const [k, v] of Object.entries(sx.marks)) { const m = marks[k] = marks[k] || [0, 0, 0]; m[0] += v[0]; m[1] += v[1]; m[2] += v[2]; }
+    for (const [k0, v] of Object.entries(sx.marks)) {     // 昔の予想の ×(消し)は無印に入れる(今は × を付けない)
+      const k = k0 === "×" ? "無" : k0, m = marks[k] = marks[k] || [0, 0, 0]; m[0] += v[0]; m[1] += v[1]; m[2] += v[2]; }
     for (const [k, v] of Object.entries(sx.tags)) { const t = tags[k] = tags[k] || [0, 0]; t[0] += v[0]; t[1] += v[1]; }
     base[0] += sx.base[0]; base[1] += sx.base[1];
   }
-  const mk = ["◎","○","▲","△","☆","無","×"].filter(k => marks[k]).map(k => { const m = marks[k];
+  const mk = ["◎","○","▲","△","☆","無"].filter(k => marks[k]).map(k => { const m = marks[k];
     return `<tr><td>${k === "無" ? "無印" : k}</td><td>${m[0]}</td><td>${pct(m[1], m[0])}</td><td><b>${pct(m[2], m[0])}</b></td></tr>`; }).join("");
   const br = base[1] / Math.max(base[0], 1);
   const tg = Object.entries(tags).filter(([, v]) => v[0] >= 5).sort((a, b) => a[1][1] / a[1][0] - b[1][1] / b[1][0]).slice(0, 20)
@@ -990,7 +990,6 @@ function renderMoney() {
     ${GROUPS.map(([t, k]) => `<div class="sec">${esc(t)}別</div>` + grow(agg(rs, r => r[k] ?? "?"), t)).join("")}` : `<div class="empty">この期間に買ったレースの結果はまだありません。</div>`}
     <div class="sec">印の成績(見送りレースも含む)</div>
     <table class="tbl"><thead><tr><th>印</th><th>頭数</th><th>勝率</th><th>3着内</th></tr></thead><tbody>${mk || `<tr><td colspan="4" class="muted">結果が出ると表示されます</td></tr>`}</tbody></table>
-    <p class="legendnote">× (消し) の3着内率が低いほど「来ない馬」を正しく消せている。</p>
     <div class="sec">負けパターン(減点理由ごとの3着内率)</div>
     <table class="tbl"><thead><tr><th>理由</th><th>頭数</th><th>3着内 (全体 ${pct(base[1], base[0])})</th></tr></thead><tbody>${tg || `<tr><td colspan="3" class="muted">5頭以上たまると出ます</td></tr>`}</tbody></table>
     ${pts.length ? `<div class="sec">日別</div>
@@ -1060,7 +1059,7 @@ async function modelBox() {
       <li><b>何を出すか</b>各馬が3着以内に来る確率(LightGBM)。${esc(m.data)}で学習(${esc(m.trained)})</li>
       <li><b>材料</b>過去5走(着差・着順・クラス・通過順・上がり・その時の人気)、
         馬場差で補正した走破タイムと上がり3Fの指数(場ごとの目盛りのずれも補正)、出馬表(枠・斤量・馬体重・性齢)、
-        前走と同じ場か、騎手・厩舎のそれまでの3着内率、コース傾向、30か条の評価(能力・加減点・軸不可・消し)。
+        前走と同じ場か、騎手・厩舎のそれまでの3着内率、コース傾向、30か条の評価(能力・加減点・軸不可・負け要因の重なり)。
         そのレースのオッズは使わない(規則20)。${(m.centers || []).join() === "jra" ? "中央のレースだけで学ぶ" : "今のモデルは地方のレースも混ぜて学んだもの(中央だけで学び直す予定)"}</li>
       <li><b>◎○</b>軸にできる馬(延長などでない。規則15)のうち確率の上位2頭。相手は残りの上位2頭</li>
       <li><b>買うレース</b>${selText(sels.jra)}。○も強いと人気どおりで配当が安いので、◎と○が近いレースは見送る。
@@ -1812,11 +1811,14 @@ function renderRule() {
     <div class="sec">3着以内の確率モデル(◎○と買うレースを決める)</div>
     <div id="modelbox"><p class="muted" style="font-size:13px">モデルの情報を読み込み中…</p></div>
     <div class="sec">印</div>
-    <div class="flow" style="font-size:13px">◎○ 軸にできる馬の確率の上位2頭 / ▲ その次(3連複の3頭目) / △ 4番目 / × 負け要因が重なる馬(消し)</div>
+    <div class="flow" style="font-size:13px">◎○ 軸にできる馬の確率の上位2頭 / ▲ その次(3連複の3頭目) / △ 4番目。
+      印は確率の順だけで付ける。「負け要因が3つ重なる」「能力差が大きい」の札が出ていても、印が付いた馬は買い目から外さない
+      (負け要因は確率にもう入っていて、印の付いた馬は札があっても確率どおりに来ている)</div>
     <div class="sec">評価の作り方</div>
     <ul class="rules">
       <li><b>能力</b>過去5走の着差(秒)とクラス。人気・オッズは使わない</li>
-      <li><b>減点方式</b>来る理由より「飛ぶ理由」を数える。重い減点(-2以下)が重なるほど追加で減点、3つで消し</li>
+      <li><b>減点方式</b>来る理由より「飛ぶ理由」を数える。重い減点(-2以下)が重なるほど追加で減点し、
+        3つ重なると「負け要因が3つ重なる」の札を出す(確率モデルの材料。それだけで買い目から外すことはしない)</li>
       <li><b>コース</b>同じ競馬場・同じ回りでの成績</li>
       <li><b>距離</b>延長は減点し軸にしない。短縮も小さく減点。距離実績を見る</li>
       <li><b>馬場</b>重・不良では道悪の成績を別に見る</li>

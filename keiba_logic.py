@@ -869,9 +869,7 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
     hon["mark"], tai["mark"] = "◎", "○"
     for r, m in zip(rest[:2], ("▲", "△")):
         r["mark"] = m
-    for r in res:
-        if r["cut"] and not r["mark"]:
-            r["mark"] = "×"
+    # 負け要因が重なる馬(cut)にも × の印は付けない(印と紛らわしい。確率に織り込んでいて、買い目からも外さない)
     skipped = [r for r in res[:2] if r["axis_ng"]]
     if skipped:
         out["notes"].append("{}番は確率では上位だが軸にしない({})".format(
