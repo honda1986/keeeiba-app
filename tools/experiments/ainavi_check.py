@@ -79,7 +79,7 @@ for f in sorted(glob.glob(R + "/keiba/days/2026*.json")):
                 fin = (h.get("training_data") or {}).get("final") or {}
                 f4 = num(fin.get("wood_4f_dev")) if fin.get("wood_4f_dev") is not None else num(fin.get("sakamichi_4f_dev"))
                 f1 = num(fin.get("wood_1f_dev")) if fin.get("wood_1f_dev") is not None else num(fin.get("sakamichi_1f_dev"))
-                rows.append(dict(d=d, rid=rid, u=u, ng=u in ng, wpay=wpay, y=int(u in top3), p3=p3, q=1 / od[str(u)] / inv,
+                rows.append(dict(rc=r, d=d, rid=rid, u=u, ng=u in ng, wpay=wpay, y=int(u in top3), p3=p3, q=1 / od[str(u)] / inv,
                                  fi=num(h.get("fukusho_index")), ki=num(h.get("kitaichi_index")),
                                  td=num(h.get("training_deviation")), tb=h.get("training_bunrui") or "-",
                                  f4=f4, f1=f1, r4=num(fin.get("rank_4f")), bb=num(fin.get("bunbo")),
@@ -183,4 +183,59 @@ for name, pp in CAND:
             v = rows[h]["wpay"].get(k, 0); n += 1; ret += v; hit += v > 0
         out.append("{:4d}R 的中{:4.0%} {:4.0f}%".format(n, hit / max(n, 1), ret / max(n, 1)))
     print("  {:20s} {}".format(name, " / ".join(out)))
+
+# 今の買い方(3連複◎-○-▲、▲が距離延長ならワイド◎-○)で、▲や◎○▲を混ぜた確率で選び直したら
+def tpay(rc, us):
+    return ((rc["result"].get("payout") or {}).get("3連複") or {}).get("-".join(str(x) for x in sorted(us)), 0)
+
+
+def wpay2(rc, a, b):
+    return ((rc["result"].get("payout") or {}).get("ワイド") or {}).get("-".join(str(x) for x in sorted((a, b))), 0)
+
+
+def is_ext(rc, u):
+    return any(h["umaban"] == u and "距離延長" in (h.get("axis_ng") or []) for h in (rc.get("pred") or {}).get("horses") or [])
+
+
+def bet_now(rc, h, t, a):
+    return wpay2(rc, h, t) if is_ext(rc, a) else tpay(rc, (h, t, a))
+
+
+by_rid = {}
+for i, r in enumerate(rows):
+    by_rid.setdefault(r["rid"], []).append(i)
+print("\n■ 今の買い方(3連複◎○▲、▲が延長ならワイド)で、混ぜた確率を使ったら(週ごとに5つに分けて、ほかの週で決めた混ぜ方)")
+print("  A: ◎○はアプリのまま、▲だけ混ぜた確率で選ぶ / B: ◎○▲も買うレース(◎80%以上・◎と○の差15%以上)も混ぜた確率で選び直す")
+for name, pp in CAND:
+    a_buy = [0, 0, 0]; a_all = [0, 0, 0]; came = [0, 0]; b_buy = [0, 0, 0]
+    for rid, idx in by_rid.items():
+        rc = rows[idx[0]]["rc"]; pr = rc.get("pred") or {}
+        if not pr.get("model") or not pr.get("honmei") or not pr.get("taikou"):
+            continue
+        h, t = pr["honmei"], pr["taikou"]
+        rest = sorted((i for i in idx if rows[i]["u"] not in (h, t)), key=lambda i: -pp[i])
+        if not rest:
+            continue
+        a = rows[rest[0]]["u"]
+        top3 = set(rc["result"]["order"][:3])
+        if h in top3 and t in top3:
+            came[0] += 1; came[1] += a in top3
+        v = bet_now(rc, h, t, a)
+        p1 = next((x["p3"] for x in pr["horses"] if x["umaban"] == h), 0)
+        if p1 >= .6:
+            a_all[0] += 1; a_all[1] += v; a_all[2] += v > 0
+        if pr.get("verdict") in ("A", "B"):
+            a_buy[0] += 1; a_buy[1] += v; a_buy[2] += v > 0
+        # B: 全部を混ぜた確率で
+        ok = sorted((i for i in idx if not rows[i]["ng"]), key=lambda i: -pp[i])
+        if len(ok) < 2:
+            continue
+        hh, tt = ok[0], ok[1]
+        rr = sorted((i for i in idx if i not in (hh, tt)), key=lambda i: -pp[i])
+        if rr and pp[hh] >= .8 and pp[hh] - pp[tt] >= .15:
+            v = bet_now(rc, rows[hh]["u"], rows[tt]["u"], rows[rr[0]]["u"])
+            b_buy[0] += 1; b_buy[1] += v; b_buy[2] += v > 0
+    f = lambda x: "{:4d}R {:4.0f}% 的中{:3.0%}".format(x[0], x[1] / max(1, x[0]), x[2] / max(1, x[0]))
+    print("  {:20s} A 買うレース {} / A ◎60%以上 {} / ◎○が来たときに▲ {:.0%}({}R) / B {}".format(
+        name, f(a_buy), f(a_all), came[1] / max(1, came[0]), came[0], f(b_buy)))
 print("\n(このサイトのデータは保存していない)")
