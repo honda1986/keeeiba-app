@@ -341,6 +341,7 @@ async function boot() {
   try { state.hist = await getJSON("history.json"); } catch (e) { state.hist = null; }
   state.days = (state.hist?.days || []).filter(d => d.races).map(d => d.date);
   try { state.day = await getJSON("data.json"); } catch (e) { state.day = null; }
+  state.latest = state.day?.updated || "";      // GitHub で最後に更新した時刻(自動の更新が止まっていないかを見る)
   const today = state.day?.date;
   if (state.day) {
     state.cache[today] = state.day;
@@ -470,10 +471,23 @@ function raceMap(rs) {
     <tbody>${rows}</tbody></table><div class="legend">${lg}<span>太枠はA</span></div></div>`;
 }
 
+// 自動の更新(GitHub Actions。パソコンは要らない)が止まっていそうなら知らせる。
+// 中央の開催日の 8:40〜17:30 は10分ごとに更新するので45分、それ以外は2時間ごと(夜は止まる)なので13時間を超えたら
+function staleNote() {
+  const t = Date.parse(state.latest || "");
+  if (isNaN(t)) return "";
+  const now = new Date(Date.now() + 9 * 3600e3), hm = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const today = now.toISOString().slice(0, 10).replace(/-/g, "");
+  const live = state.days.includes(today) && hm >= 8 * 60 + 40 && hm <= 17 * 60 + 30;
+  const min = (Date.now() - t) / 60e3;
+  return min > (live ? 45 : 13 * 60) ? `<br><span class="neg">自動の更新が${min < 120 ? Math.round(min) + "分" : Math.round(min / 60) + "時間"}止まっています</span>` : "";
+}
+
 function renderRace() {
   const el = $("#v-race");
   const d = state.day;
-  $("#stamp").innerHTML = d?.updated ? `更新 ${esc(d.updated.slice(5,10).replace("-","/"))} ${esc(d.updated.slice(11,16))}` : "";
+  const up = state.latest || d?.updated || "";      // GitHub が最後に更新した時刻(開いている日でなく、いちばん新しい更新)
+  $("#stamp").innerHTML = (up ? `更新 ${esc(up.slice(5,10).replace("-","/"))} ${esc(up.slice(11,16))}` : "") + staleNote();
   if (!d) { el.innerHTML = `<div class="empty">まだデータがありません。<br>GitHub Actions の「競馬の予想」が回ると表示されます。</div>`; return; }
   const all = races();
   const rs = all.filter(centerOkR);
