@@ -25,7 +25,8 @@ import os
 import threading
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SPEED_FILE = os.path.join(HERE, "keiba_speed.json")
+SPEED_FILE = os.path.join(HERE, "keiba_speed{}.json".format(
+    ("_" + os.environ["KEIBA_MODEL_TAG"]) if os.environ.get("KEIBA_MODEL_TAG") else ""))   # 高知は keiba_speed_kochi.json
 
 SHRINK_DAY = 4         # 馬場差は、走った数が少ない日は 0 に寄せる
 SHRINK_COURSE = 10     # 走った数が少ないコースは、芝ダ・距離帯の基準に寄せる

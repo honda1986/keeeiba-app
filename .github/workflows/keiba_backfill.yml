@@ -25,6 +25,10 @@ on:
         description: '1ジョブで同時に取るレースの数'
         required: false
         default: '6'
+      site:
+        description: 'jra(中央) / kochi(高知の最終レースのアプリ。高知の全レースを keiba/kochi に)'
+        required: false
+        default: 'jra'
       mode:
         description: 'predict(予想と結果を再現) / past(馬柱だけを今の読み方で取り直す) / result(結果・払戻だけを取り直す) / odds(ワイドの確定オッズだけを取る) / trio(◎70%以上のレースの3連複◎-○-x の確定オッズだけを取る)'
         required: false
@@ -32,6 +36,13 @@ on:
 
 concurrency:
   group: keiba-backfill
+
+# 高知は保存先・対象の場・モデルのファイルを中央と分ける(keiba.py の KEIBA_OUT など)
+env:
+  KEIBA_CENTERS: ${{ github.event.inputs.site == 'kochi' && 'nar' || 'jra' }}
+  KEIBA_NAR_VENUES: ${{ github.event.inputs.site == 'kochi' && '高知' || '' }}
+  KEIBA_OUT: ${{ github.event.inputs.site == 'kochi' && 'keiba/kochi' || 'keiba' }}
+  KEIBA_MODEL_TAG: ${{ github.event.inputs.site == 'kochi' && 'kochi' || '' }}
 
 permissions:
   contents: write
@@ -61,7 +72,7 @@ jobs:
           while d.strftime("%Y%m%d") >= start:
               s = d.strftime("%Y%m%d")
               try:
-                  day = json.load(open("keiba/days/%s.json" % s))
+                  day = json.load(open(os.environ["KEIBA_OUT"] + "/days/%s.json" % s))
                   if os.environ.get("MODE") == "result":
                       # 払戻表に馬単が無いレースが残っている日だけ(中央だけ。地方は2026-10-21にやめた)
                       done = all("馬単" in (r.get("result") or {}).get("payout", {}) for r in day["races"].values()
@@ -129,8 +140,8 @@ jobs:
         run: |
           mkdir -p out/days out/past
           for d in $(echo "${{ matrix.chunk.dates }}" | tr ',' ' '); do
-            [ -f keiba/days/$d.json ] && cp keiba/days/$d.json out/days/
-            [ -f keiba/past/$d.json.gz ] && cp keiba/past/$d.json.gz out/past/
+            [ -f $KEIBA_OUT/days/$d.json ] && cp $KEIBA_OUT/days/$d.json out/days/
+            [ -f $KEIBA_OUT/past/$d.json.gz ] && cp $KEIBA_OUT/past/$d.json.gz out/past/
           done
           ls out/days | wc -l
       - uses: actions/upload-artifact@v4
@@ -161,11 +172,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           for k in 1 2 3 4; do
             git fetch -q origin main && git reset -q --hard origin/main
-            mkdir -p keiba/days keiba/past
-            cp incoming/days/*.json keiba/days/ 2>/dev/null || true
-            cp incoming/past/*.json.gz keiba/past/ 2>/dev/null || true
+            mkdir -p $KEIBA_OUT/days $KEIBA_OUT/past
+            cp incoming/days/*.json $KEIBA_OUT/days/ 2>/dev/null || true
+            cp incoming/past/*.json.gz $KEIBA_OUT/past/ 2>/dev/null || true
             python keiba.py --history-only
-            git add keiba/days keiba/past keiba/history.json
+            git add $KEIBA_OUT/days $KEIBA_OUT/past $KEIBA_OUT/history.json
             if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
             git commit -q -m "keiba: 過去の日を再現($(ls incoming/days | wc -l)日)"
             git push -q origin HEAD:main && exit 0

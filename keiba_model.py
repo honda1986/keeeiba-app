@@ -30,8 +30,10 @@ import keiba_speed as SP
 import keiba_weather as KW
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MODEL_FILE = os.path.join(HERE, "keiba_model.txt")
-META_FILE = os.path.join(HERE, "keiba_model_meta.json")
+# 高知の最終レースのアプリは KEIBA_MODEL_TAG=kochi(keiba_model_kochi.txt。中央のモデルと分ける)
+TAG = ("_" + os.environ["KEIBA_MODEL_TAG"]) if os.environ.get("KEIBA_MODEL_TAG") else ""
+MODEL_FILE = os.path.join(HERE, "keiba_model{}.txt".format(TAG))
+META_FILE = os.path.join(HERE, "keiba_model{}_meta.json".format(TAG))
 
 BABA = {"良": 0, "稍": 1, "重": 2, "不": 3}
 # 気象の材料(気温・湿度・雨量・天気)。2026-10-22 に試したが良くならなかったので、既定では使わない(1 で使う)
