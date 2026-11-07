@@ -64,10 +64,12 @@ jobs:
           fi
           # 高知は最終レース用の確率の式も作り直す(keiba_final.py が使う)
           [ "$KEIBA_OUT" = "keiba/kochi" ] && python tools/kochi_final_fit.py
+          # 中央は荒れ度(1番人気が3着に来ない確率)の式も(アプリが出す。参考)
+          if [ "$KEIBA_OUT" = "keiba" ]; then python tools/chaos_fit.py || echo "荒れ度の式を作れなかった(前のまま)"; fi
           T=${KEIBA_MODEL_TAG:+_$KEIBA_MODEL_TAG}      # 高知は _kochi
           for k in 1 2 3; do
             # あるものだけ足す(無いファイルを1つでも渡すと git add が全部やめてしまう)
-            for f in keiba_model$T.txt keiba_model${T}_meta.json keiba_speed$T.json $KEIBA_OUT/model_wf.json.gz $KEIBA_OUT/final_model.json $KEIBA_OUT/days $KEIBA_OUT/history.json; do
+            for f in keiba_model$T.txt keiba_model${T}_meta.json keiba_speed$T.json $KEIBA_OUT/model_wf.json.gz $KEIBA_OUT/final_model.json $KEIBA_OUT/chaos_model.json $KEIBA_OUT/days $KEIBA_OUT/history.json; do
               [ -e "$f" ] && git add "$f"
             done
             if git diff --cached --quiet; then echo "変更なし"; exit 0; fi

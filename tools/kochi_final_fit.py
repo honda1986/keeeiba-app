@@ -10,12 +10,7 @@ import keiba as K
 import keiba_final as F
 
 
-def fit(X, y, l2=2.0):
-    Z = np.column_stack([np.ones(len(X)), X]); w = np.zeros(Z.shape[1]); R = l2 * np.eye(len(w)); R[0, 0] = 0
-    for _ in range(60):
-        p = 1 / (1 + np.exp(-Z @ w)); H = (Z * (p * (1 - p))[:, None]).T @ Z + R + 1e-6 * np.eye(len(w))
-        w += np.linalg.solve(H, Z.T @ (y - p) - R @ w)
-    return w
+fit = lambda X, y, l2=2.0: F.fit_logit(X, y, l2)
 
 
 X, y, yr, rid = [], [], [], []

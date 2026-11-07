@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """keiba_logic / keiba のパースの確認。  python -m unittest test_keiba"""
 
+import json
 import os
 import unittest
 
@@ -173,6 +174,21 @@ class Logic(unittest.TestCase):
         high = F.chaos(model, {1: 4.5, 2: 5.0, 3: 6.0, 4: 7.0, 5: 8.0})
         self.assertLess(low, high)
         self.assertIsNone(F.chaos(model, {1: 2.0}))
+
+    def test_chaos_model_jra(self):
+        # 中央の荒れ度の式(keiba/chaos_model.json。アプリが出す): 1番人気が堅いほど低く、段の分け方はアプリと同じ
+        import keiba_final as F
+        m = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "chaos_model.json"), encoding="utf-8"))
+        low = F.chaos(m, {1: 1.3, 2: 8.0, 3: 12.0, 4: 20.0, 5: 30.0, 6: 50.0})
+        high = F.chaos(m, {1: 4.5, 2: 5.0, 3: 6.0, 4: 7.0, 5: 8.0, 6: 9.0})
+        self.assertLess(low, 0.3)
+        self.assertGreater(high, 0.5)
+        self.assertEqual([F.chaos_level(v) for v in (0.2, 0.4, 0.55)], ["低", "中", "高"])
+        self.assertEqual(len(m["chaos"]["bands"]), 5)
+        # 式の作り方: はっきり分かれる材料なら係数がプラス
+        import numpy as np
+        X = np.array([[x] for x in np.linspace(-2, 2, 200)]); y = (X[:, 0] > 0).astype(float)
+        self.assertGreater(F.fit_logit(X, y)[1], 1.0)
 
     def test_muddle_is_skipped(self):
         hs = [middle(u, m=0.5 + u * 0.02) for u in range(1, 13)]

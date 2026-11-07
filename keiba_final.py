@@ -64,8 +64,22 @@ def chaos_x(odds):
     return [math.log(min(od)), float(-(q * np.log(q)).sum() / math.log(len(q)))]
 
 
+def chaos_level(p):
+    """荒れ度の段階(高 55%以上・中 40%以上・低)。アプリ(index.html の chaosLevel)と同じ"""
+    return "高" if p >= .55 else "中" if p >= .4 else "低"
+
+
+def fit_logit(X, y, l2=1.0):
+    """L2 付きのロジスティック回帰(ニュートン法)。[切片, 係数...]"""
+    Z = np.column_stack([np.ones(len(X)), X]); w = np.zeros(Z.shape[1]); R = l2 * np.eye(len(w)); R[0, 0] = 0
+    for _ in range(60):
+        p = 1 / (1 + np.exp(-Z @ w)); H = (Z * (p * (1 - p))[:, None]).T @ Z + R + 1e-6 * np.eye(len(w))
+        w += np.linalg.solve(H, Z.T @ (y - p) - R @ w)
+    return w
+
+
 def chaos(model, odds):
-    """1番人気が3着に来ない確率(荒れ度)。式は final_model.json の chaos"""
+    """1番人気が3着に来ない確率(荒れ度)。式は model["chaos"](高知の最終レースは final_model.json、中央は chaos_model.json)"""
     c, x = (model or {}).get("chaos"), chaos_x(odds)
     if not c or not x:
         return None
@@ -116,7 +130,7 @@ def apply(race, pred, model, odds):
     pc = chaos(model, odds)
     if pc is not None:
         fav = min((u for u in odds if odds[u] and odds[u] > 1), key=lambda u: odds[u])
-        lv = "高" if pc >= .55 else "中" if pc >= .4 else "低"
+        lv = chaos_level(pc)
         pred["chaos"] = {"p": round(pc, 3), "fav": fav, "level": lv}
         pred["reason"] = "荒れ度 {}: 1番人気({}番)が3着に来ない確率 {:.0%}(予想だけ。買わない)".format(lv, fav, pc)
     return True

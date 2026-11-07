@@ -127,6 +127,8 @@ a.ext{color:var(--pos);text-decoration:underline;text-underline-offset:2px}
 .skip .r{flex:1;color:var(--muted);min-width:0}
 .skip .rs{white-space:nowrap;font-size:12px;color:var(--muted)}
 .skip .rs.hit{color:var(--pos);font-weight:600}
+.skip .czs{white-space:nowrap}
+.skip .czs .tag{margin:0}
 .sec{font-size:13px;font-weight:800;color:var(--ink2);margin:18px 0 8px}
 .tbl{width:100%;border-collapse:collapse;font-size:13px;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .tbl th{font-size:11px;color:var(--muted);font-weight:600;text-align:right;padding:6px 8px;background:var(--surface2)}
@@ -359,6 +361,7 @@ async function loadDay(d) {
 
 async function boot() {
   drawBrand();
+  const chaosP = KOCHI ? null : getJSON("chaos_model.json").catch(() => null);      // 荒れ度の式(中央)
   try { state.hist = await getJSON(DATA + "history.json"); } catch (e) { state.hist = null; }
   state.days = (state.hist?.days || []).filter(d => d.races).map(d => d.date);
   try { state.day = await getJSON(DATA + "data.json"); } catch (e) { state.day = null; }
@@ -378,6 +381,7 @@ async function boot() {
   }
   // まだ当日の更新(data.json)が無いときは、いちばん新しい日を開く(高知のアプリを始めたときなど)
   if (!state.day && state.days.length) { try { state.day = await loadDay(state.days[state.days.length - 1]); } catch (e) { /* 無いまま */ } }
+  chaosState.model = ((chaosP && await chaosP) || {}).chaos || null;
   renderRace(); renderMoney(); renderRule(); renderVote();
   autoOdds(); autoNavi();
   const h = new URLSearchParams(location.hash.slice(1));
@@ -688,7 +692,8 @@ function card(r) {
   return `<article class="card ${p.verdict === "A" ? "buyA" : ""}" id="r-${esc(r.id)}">
     <div class="ch"><div class="badge ${p.verdict}">${p.verdict}</div>
       <div class="t"><b>${head(r)}</b>${p.src === "backfill" ? ` <span class="tag o">再現</span>` : ""}<div class="meta">${meta(r)}</div>
-      <div class="meta">${esc(p.reason)}${p.pace ? " · 展開: " + esc(p.pace.note) : ""}</div></div></div>
+      <div class="meta">${esc(p.reason)}${p.pace ? " · 展開: " + esc(p.pace.note) : ""}</div>
+      <div class="meta czl">${chaosLine(r)}</div></div></div>
     <div class="axis">${ax("◎", p.honmei, hv)}${ax("○", p.taikou, tv)}</div>${thirdLine(r)}
     ${p.notes && p.notes.length ? `<div class="note">${p.notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
     ${courseBox(p.course)}${naviLine(r)}
@@ -767,6 +772,33 @@ function skipRes(r) {
     <div class="muted" style="margin-top:2px">${names}</div></div>`;
 }
 
+// 荒れ度: 1番人気が3着に来ない確率。中央は chaos_model.json の式(tools/chaos_fit.py。keiba_final.chaos_x・chaos と同じ計算)。
+// 結果が出たレースは確定オッズ、それまでは今のオッズ(アプリで取り直せばその分)から。参考で、買い方には使わない。
+// 高知の最終レースは予想の理由(サーバーで計算)に出す
+const chaosState = {model: null};
+const chaosLevel = p => p >= .55 ? "高" : p >= .4 ? "中" : "低";       // keiba_final.chaos_level と同じ
+function chaosOf(r) {
+  const c = chaosState.model;
+  if (!c || KOCHI || r.center !== "jra") return null;
+  const ro = (r.result || {}).odds, fin = !!(ro && Object.keys(ro).length);
+  const od = (fin ? Object.entries(ro).map(([u, v]) => [+u, +v]) : (r.horses || []).map(h => [h.umaban, +h.odds])).filter(([, v]) => v > 1);
+  if (od.length < 5) return null;
+  const fav = od.reduce((a, b) => b[1] < a[1] ? b : a);
+  const q = od.map(([, v]) => 1 / v), sum = q.reduce((a, b) => a + b, 0);
+  const x = [Math.log(fav[1]), -q.reduce((a, v) => a + v / sum * Math.log(v / sum), 0) / Math.log(od.length)];
+  const z = c.w[0] + x.reduce((a, v, i) => a + c.w[i + 1] * (v - c.mu[i]) / c.sd[i], 0), p = 1 / (1 + Math.exp(-z));
+  return {p, fav: fav[0], level: chaosLevel(p), fin};
+}
+function chaosTag(r, short) {
+  const c = chaosOf(r);
+  if (!c) return "";
+  return `<span class="tag ${c.level === "高" ? "m" : c.level === "中" ? "o" : "n"}">${short ? "荒れ" + c.level : `荒れ度 ${c.level} ${Math.round(c.p * 100)}%`}</span>`;
+}
+function chaosLine(r) {
+  const c = chaosOf(r);
+  return c ? `${chaosTag(r)} 1番人気(${c.fav}番)が3着に来ない確率(${c.fin ? "確定" : "今の"}オッズから。参考)` : "";
+}
+
 // 見送りの理由の短い形(一覧の1行用)。合わない形はそのまま
 function shortReason(t) {
   t = t || "";
@@ -788,8 +820,9 @@ function skipRow(r) {
   const rs = res && res.order && res.order.length >= 3
     ? `<span class="rs num ${ref && ref.ret ? "hit" : ""}">${res.order.slice(0, 3).join("-")}${ref && ref.ret ? " ◎○" : ""}</span>` : "";
   return `<details class="skipd more" id="r-${esc(r.id)}" style="border-top:0;border-bottom:1px solid var(--line)"><summary class="skip">
-    <b>${head(r)}</b><span class="r">${esc(shortReason(r.pred.reason))}</span>${rs}</summary>
+    <b>${head(r)}</b><span class="r">${esc(shortReason(r.pred.reason))}</span><span class="czs">${chaosTag(r, true)}</span>${rs}</summary>
     ${shortReason(r.pred.reason) !== r.pred.reason ? `<div class="note" style="padding-top:2px">見送り: ${esc(r.pred.reason)}</div>` : ""}
+    ${chaosOf(r) ? `<div class="note czl" style="padding-top:2px">${chaosLine(r)}</div>` : ""}
     ${skipRes(r)}
     <div class="mkrow"><button class="btn sm" data-mk="${esc(r.id)}">買い目を作る</button></div>
     <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${naviLine(r)}${evBox(r)}${r.pred.horses.length ? table(r) : ""}</details>`;
@@ -1517,6 +1550,8 @@ function updateOddsDom(r) {
   });
   const ev = box.querySelector(".evin");
   if (ev) ev.innerHTML = evInner(r);
+  box.querySelectorAll(".czl").forEach(el => { el.innerHTML = chaosLine(r); });
+  box.querySelectorAll(".czs").forEach(el => { el.innerHTML = chaosTag(r, true); });
   const bs = box.querySelectorAll(".bet .bo");
   (r.pred.bets || []).forEach((b, i) => { if (bs[i]) bs[i].innerHTML = betOdds(r, b); });
   drawNextBuy();
@@ -1896,6 +1931,25 @@ function renderRuleKochi() {
   modelBox();
 }
 
+// 考え方の「荒れ度」: 段ごとに、1番人気が実際に3着に来なかった率(年ごとに、ほかの年で学んだ式で読んだもの)
+function chaosRule() {
+  const c = chaosState.model;
+  if (!c) return "";
+  const pc = v => v == null ? "-" : Math.round(v * 100) + "%";
+  const rows = (c.bands || []).map(b => `<tr><td>${pc(b.lo)}〜${b.hi >= 1 ? "" : pc(b.hi)}</td><td>${chaosLevel(b.lo)}</td><td>${b.races.toLocaleString()}</td>
+    <td><b>${pc(b.actual)}</b></td><td>${pc(b.expect)}</td></tr>`).join("");
+  return `<div class="sec">荒れ度(参考)</div>
+    <ul class="rules">
+      <li><b>何か</b>1番人気が3着に来ない確率。単勝オッズだけから出す(1番人気のオッズが高いほど、オッズが横並びなほど荒れる)。
+        高 55%以上・中 40%以上・低 それ未満。結果が出たレースは確定オッズ、それまでは今のオッズで計算する</li>
+      <li><b>買い方には使わない</b>買うレースはほとんど◎が1番人気で、荒れ度は低い。買うレースを荒れ度の低い順に4つに分けても、
+        今の買い方の回収率は 137%・131%・120%・127% で、年ごとの上下も入れ替わる。見送ったレースを荒れ度で選んで買っても
+        100%を超えない(2024〜2026年)</li>
+    </ul>
+    <table class="tbl"><thead><tr><th>荒れ度</th><th></th><th>R</th><th>1番人気が3着外</th><th>見込み</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="muted" style="font-size:11px;margin:4px 0 0">中央 ${esc((c.years || []).join("〜"))}年の ${(c.races || 0).toLocaleString()}R(年ごとに、ほかの年で学んだ式で読んだ分)。
+      毎週の学び直しで作り直す(${esc(c.fitted || "")})</p>`;
+}
 function renderRule() {
   if (KOCHI) { renderRuleKochi(); return; }
   $("#v-rule").innerHTML = `
@@ -1908,6 +1962,7 @@ function renderRule() {
         ▲が距離延長ならワイド◎-○の1点</div></div>
     <div class="sec">3着以内の確率モデル(◎○と買うレースを決める)</div>
     <div id="modelbox"><p class="muted" style="font-size:13px">モデルの情報を読み込み中…</p></div>
+    ${chaosRule()}
     <div class="sec">印</div>
     <div class="flow" style="font-size:13px">◎○ 軸にできる馬の確率の上位2頭 / ▲ その次(3連複の3頭目) / △ 4番目。
       印は確率の順だけで付ける。「負け要因が3つ重なる」「能力差が大きい」の札が出ていても、印が付いた馬は買い目から外さない
