@@ -55,6 +55,24 @@ def features(race, pred_horses, odds):
     return out
 
 
+def chaos_x(odds):
+    """荒れ度の材料: [log(1番人気のオッズ), オッズのばらけ方(0〜1。1に近いほど混戦)]。5頭に無ければ None"""
+    od = [v for v in odds.values() if v and v > 1]
+    if len(od) < 5:
+        return None
+    q = np.array([1 / v for v in od]); q = q / q.sum()
+    return [math.log(min(od)), float(-(q * np.log(q)).sum() / math.log(len(q)))]
+
+
+def chaos(model, odds):
+    """1番人気が3着に来ない確率(荒れ度)。式は final_model.json の chaos"""
+    c, x = (model or {}).get("chaos"), chaos_x(odds)
+    if not c or not x:
+        return None
+    z = c["w"][0] + sum(w * (v - m) / s for w, v, m, s in zip(c["w"][1:], x, c["mu"], c["sd"]))
+    return 1 / (1 + math.exp(-z))
+
+
 def probs(model, feats):
     """馬番 -> 3着内の確率(レースで合計3にそろえる)"""
     raw = {}
@@ -95,4 +113,10 @@ def apply(race, pred, model, odds):
         pred["aite"] = [hs[2]["umaban"], hs[3]["umaban"]]
     pred["final_model"] = True
     pred.setdefault("notes", []).append("最終レース用の確率(単勝オッズと前走から。荒れるレースなので今のモデルよりオッズの方が当たる)")
+    pc = chaos(model, odds)
+    if pc is not None:
+        fav = min((u for u in odds if odds[u] and odds[u] > 1), key=lambda u: odds[u])
+        lv = "高" if pc >= .55 else "中" if pc >= .4 else "低"
+        pred["chaos"] = {"p": round(pc, 3), "fav": fav, "level": lv}
+        pred["reason"] = "荒れ度 {}: 1番人気({}番)が3着に来ない確率 {:.0%}(予想だけ。買わない)".format(lv, fav, pc)
     return True

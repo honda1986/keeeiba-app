@@ -167,6 +167,12 @@ class Logic(unittest.TestCase):
         self.assertEqual(p["honmei"], 9)
         self.assertLessEqual(sum(h["p3"] for h in p["horses"]), 3.01)        # レースで合計3(1頭は97%まで)
         self.assertTrue(all("p3_model" in h for h in p["horses"]))
+        # 荒れ度: 1番人気のオッズが高いほど、1番人気が3着に来ない確率が高い
+        model["chaos"] = {"mu": [1.0, 0.9], "sd": [0.5, 0.05], "w": [0.0, 0.8, 0.3]}
+        low = F.chaos(model, {1: 1.3, 2: 8.0, 3: 12.0, 4: 20.0, 5: 30.0})
+        high = F.chaos(model, {1: 4.5, 2: 5.0, 3: 6.0, 4: 7.0, 5: 8.0})
+        self.assertLess(low, high)
+        self.assertIsNone(F.chaos(model, {1: 2.0}))
 
     def test_muddle_is_skipped(self):
         hs = [middle(u, m=0.5 + u * 0.02) for u in range(1, 13)]
