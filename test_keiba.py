@@ -387,6 +387,17 @@ class Centers(unittest.TestCase):
         finally:
             K.get = get
 
+    def test_target_venues(self):
+        # 高知のアプリ: 地方のうち KEIBA_NAR_VENUES の場だけ(高知 54 / 佐賀 55)
+        old = (K.CENTERS, K.NAR_VENUES)
+        try:
+            K.CENTERS, K.NAR_VENUES = ("nar",), ("高知",)
+            self.assertEqual([K.target(x) for x in ("202654110812", "202655110812", "202605040101")], [True, False, False])
+            K.NAR_VENUES = ()
+            self.assertTrue(K.target("202655110812"))
+        finally:
+            K.CENTERS, K.NAR_VENUES = old
+
     def test_jra_only(self):
         self.assertEqual(K.CENTERS, ("jra",))
         page = 'race_id=202605040811 race_id=202644102501 kaisai_id=2026441025'
