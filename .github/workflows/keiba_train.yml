@@ -58,7 +58,10 @@ jobs:
           fi
           T=${KEIBA_MODEL_TAG:+_$KEIBA_MODEL_TAG}      # 高知は _kochi
           for k in 1 2 3; do
-            git add keiba_model$T.txt keiba_model${T}_meta.json keiba_speed$T.json $KEIBA_OUT/model_wf.json.gz $KEIBA_OUT/days $KEIBA_OUT/history.json 2>/dev/null
+            # あるものだけ足す(無いファイルを1つでも渡すと git add が全部やめてしまう)
+            for f in keiba_model$T.txt keiba_model${T}_meta.json keiba_speed$T.json $KEIBA_OUT/model_wf.json.gz $KEIBA_OUT/days $KEIBA_OUT/history.json; do
+              [ -e "$f" ] && git add "$f"
+            done
             if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
             git commit -q -m "keiba: モデルを学び直す"
             if git pull --rebase -X ours -q origin main; then
