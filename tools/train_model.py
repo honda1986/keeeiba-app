@@ -34,6 +34,7 @@ CHECK_PERIODS = (("2024年(基準を選んだ期間)", "20240101", "20250101"),
                  ("2026年1〜8月(基準を選ぶのに使っていない)", "20260101", "20260901"),
                  ("2026年9月〜(基準を選ぶのに使っていない)", "20260901", "99999999"))
 CACHE = os.environ.get("KEIBA_CACHE", "/tmp/keiba_dataset.pkl")
+MIN_GRID_RACES = 150          # 調整期間で基準を探すとき、これより少ない買い方は数えない
 
 
 def load_races():
@@ -395,14 +396,18 @@ def main():
             for axis_ok in (True,):              # 規則 15(延長は軸にしない)は守る
                 r = evaluate([x for x in rows if va[rows.index(x)]] if False else [x for x, m in zip(rows, va) if m],
                              p, races_by_id, by_model(t2, gap, axis_ok), "")
-                if r["races"] >= 150:
+                if r["races"] >= MIN_GRID_RACES:
                     grid.append((r["roi"], t2, gap, axis_ok, r))
     grid.sort(key=lambda g: -g[0])
     for roi, t2, gap, axis_ok, r in grid[:8]:
         print("  t2={:.2f} gap={:.2f} 延長を軸にしない={} → {}R 的中{:.0%} 回収率{:.0%}".format(t2, gap, axis_ok, r["races"], r["hit"], r["roi"]))
-    # 回収率が最良から1ポイント以内の中で、いちばん多くのレースを買える基準にする(たまたまに合わせない)
-    top = grid[0][0]
-    _, t2, gap, axis_ok, _ = max((g for g in grid if g[0] >= top - 0.01), key=lambda g: g[4]["races"])
+    # 回収率が最良から1ポイント以内の中で、いちばん多くのレースを買える基準にする(たまたまに合わせない)。
+    # 調整期間のレースが少ない(高知など)と組が無いので、そのときは基準で絞らない
+    if grid:
+        top = grid[0][0]
+        _, t2, gap, axis_ok, _ = max((g for g in grid if g[0] >= top - 0.01), key=lambda g: g[4]["races"])
+    else:
+        t2, gap, axis_ok = 0.0, 0.0, True
     print("  → 使う基準: t2={:.2f} gap={:.2f}".format(t2, gap))
 
     print("\n■ 結果(買い方はどれもワイドだけ)")
