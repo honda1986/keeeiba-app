@@ -45,7 +45,7 @@ def load_races():
             res = rc.get("result") or {}
             if (rc.get("horses") and rc.get("past_at") and len(res.get("order", [])) >= 3
                     and rc.get("surface") in ("芝", "ダ") and K.venue_of(rid) != "帯広"
-                    and K.center_of(rid) in K.CENTERS):           # 2026-10-21 から中央だけ
+                    and K.target(rid)):           # 2026-10-21 から中央だけ(高知のアプリは KEIBA_NAR_VENUES=高知 で高知だけ)
                 out.append((d, rc))
     return out
 

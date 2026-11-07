@@ -11,11 +11,22 @@ on:
         description: '過去の日の予想も作り直す(on / off)'
         required: false
         default: 'off'
+      site:
+        description: 'jra(中央) / kochi(高知の最終レースのアプリ。keiba/kochi のデータで keiba_model_kochi.txt を作る)'
+        required: false
+        default: 'jra'
   schedule:
     - cron: '7 21 * * 0'        # 月曜 6:07(JST)
 
 concurrency:
   group: keiba-backfill
+
+# 高知は保存先・対象の場・モデルのファイルを中央と分ける(時刻指定で動くときは中央)
+env:
+  KEIBA_CENTERS: ${{ github.event.inputs.site == 'kochi' && 'nar' || 'jra' }}
+  KEIBA_NAR_VENUES: ${{ github.event.inputs.site == 'kochi' && '高知' || '' }}
+  KEIBA_OUT: ${{ github.event.inputs.site == 'kochi' && 'keiba/kochi' || 'keiba' }}
+  KEIBA_MODEL_TAG: ${{ github.event.inputs.site == 'kochi' && 'kochi' || '' }}
 
 permissions:
   contents: write
@@ -44,14 +55,15 @@ jobs:
           if [ "$WF" = "on" ]; then
             python keiba.py --repredict
           fi
+          T=${KEIBA_MODEL_TAG:+_$KEIBA_MODEL_TAG}      # 高知は _kochi
           for k in 1 2 3; do
-            git add keiba_model.txt keiba_model_meta.json keiba_speed.json keiba/model_wf.json.gz keiba/days keiba/history.json 2>/dev/null
+            git add keiba_model$T.txt keiba_model${T}_meta.json keiba_speed$T.json $KEIBA_OUT/model_wf.json.gz $KEIBA_OUT/days $KEIBA_OUT/history.json 2>/dev/null
             if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
             git commit -q -m "keiba: モデルを学び直す"
             if git pull --rebase -X ours -q origin main; then
               # 当日の更新を取り込んだので集計を作り直す
               python keiba.py --history-only
-              git add keiba/history.json
+              git add $KEIBA_OUT/history.json
               git diff --cached --quiet || git commit -q -m "keiba: 集計を作り直す"
               git push -q origin HEAD:main && exit 0
             else
