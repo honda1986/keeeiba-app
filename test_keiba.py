@@ -151,6 +151,23 @@ class Logic(unittest.TestCase):
         self.assertEqual((p["verdict"], p["reason"], p["bets"]), ("見送り", L.PREDICT_ONLY_REASON, []))
         self.assertEqual((p["honmei"], p["taikou"], p["aite"][0]), (1, 2, 3))
 
+    def test_final_model(self):
+        # 高知の最終レース用: 単勝オッズの確率が強く効く式なら、印は人気の順に付け直す。オッズが無ければそのまま
+        import keiba_final as F
+        hs = [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in range(3, 13)]
+        rc = race(hs, center="nar")
+        p = L.predict(rc, TODAY, probs={u: 0.6 - u * 0.04 for u in range(1, 13)})
+        model = {"feats": F.FEATS, "mu": [0.0] * len(F.FEATS), "sd": [1.0] * len(F.FEATS),
+                 "w": [0.0] + [3.0 if k == "lmt3" else 0.0 for k in F.FEATS]}
+        self.assertFalse(F.apply(rc, p, model, {}))                       # オッズが無い
+        odds = {u: 2.0 + abs(u - 9) * 3 for u in range(1, 13)}            # 9番が1番人気、8・10番が次
+        self.assertTrue(F.apply(rc, p, model, odds))
+        marks = {h["umaban"]: h["mark"] for h in p["horses"] if h["mark"]}
+        self.assertEqual(marks[9], "◎")
+        self.assertEqual(p["honmei"], 9)
+        self.assertLessEqual(sum(h["p3"] for h in p["horses"]), 3.01)        # レースで合計3(1頭は97%まで)
+        self.assertTrue(all("p3_model" in h for h in p["horses"]))
+
     def test_muddle_is_skipped(self):
         hs = [middle(u, m=0.5 + u * 0.02) for u in range(1, 13)]
         p = L.predict(race(hs), TODAY, use_model=False)

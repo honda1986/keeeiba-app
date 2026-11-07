@@ -21,14 +21,6 @@ on:
 concurrency:
   group: keiba-backfill
 
-# 高知は保存先・対象の場・モデルのファイルを中央と分ける(時刻指定で動くときは中央)
-env:
-  KEIBA_CENTERS: ${{ github.event.inputs.site == 'kochi' && 'nar' || 'jra' }}
-  KEIBA_NAR_VENUES: ${{ github.event.inputs.site == 'kochi' && '高知' || '' }}
-  KEIBA_OUT: ${{ github.event.inputs.site == 'kochi' && 'keiba/kochi' || 'keiba' }}
-  KEIBA_MODEL_TAG: ${{ github.event.inputs.site == 'kochi' && 'kochi' || '' }}
-  KEIBA_PREDICT_ONLY: ${{ github.event.inputs.site == 'kochi' && '1' || '' }}
-
 permissions:
   contents: write
 
@@ -36,6 +28,19 @@ jobs:
   train:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # 時刻指定(毎週月曜)は中央と高知の両方を順に。手で動かすときは site の1つ
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        site: ${{ fromJSON(github.event_name == 'schedule' && '["jra","kochi"]' || format('["{0}"]', github.event.inputs.site || 'jra')) }}
+    # 高知は保存先・対象の場・モデルのファイルを中央と分ける
+    env:
+      KEIBA_CENTERS: ${{ matrix.site == 'kochi' && 'nar' || 'jra' }}
+      KEIBA_NAR_VENUES: ${{ matrix.site == 'kochi' && '高知' || '' }}
+      KEIBA_OUT: ${{ matrix.site == 'kochi' && 'keiba/kochi' || 'keiba' }}
+      KEIBA_MODEL_TAG: ${{ matrix.site == 'kochi' && 'kochi' || '' }}
+      KEIBA_PREDICT_ONLY: ${{ matrix.site == 'kochi' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -57,10 +62,12 @@ jobs:
           if [ "$WF" = "on" ]; then
             python keiba.py --repredict
           fi
+          # 高知は最終レース用の確率の式も作り直す(keiba_final.py が使う)
+          [ "$KEIBA_OUT" = "keiba/kochi" ] && python tools/kochi_final_fit.py
           T=${KEIBA_MODEL_TAG:+_$KEIBA_MODEL_TAG}      # 高知は _kochi
           for k in 1 2 3; do
             # あるものだけ足す(無いファイルを1つでも渡すと git add が全部やめてしまう)
-            for f in keiba_model$T.txt keiba_model${T}_meta.json keiba_speed$T.json $KEIBA_OUT/model_wf.json.gz $KEIBA_OUT/days $KEIBA_OUT/history.json; do
+            for f in keiba_model$T.txt keiba_model${T}_meta.json keiba_speed$T.json $KEIBA_OUT/model_wf.json.gz $KEIBA_OUT/final_model.json $KEIBA_OUT/days $KEIBA_OUT/history.json; do
               [ -e "$f" ] && git add "$f"
             done
             if git diff --cached --quiet; then echo "変更なし"; exit 0; fi

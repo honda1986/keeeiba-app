@@ -38,6 +38,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 from bs4 import BeautifulSoup
 
+import keiba_final as FINAL
 import keiba_logic as L
 import keiba_model as KM
 import keiba_speed as SP
@@ -697,6 +698,26 @@ def refetch_trio(d, now):
     print("{} 3連複の確定オッズ {} / 残り {}".format(d, n, left), flush=True)
 
 
+def final_rno(races):
+    """その日の対象のレースの最終レースの番号(高知の最終レースのアプリで使う)"""
+    return max([r.get("rno") or 0 for r in races.values() if target(r["id"])] or [0])
+
+
+def apply_final(rc, races):
+    """高知の最終レースなら、最終レース用の確率と印に置き換える(keiba_final。式は OUT/final_model.json。
+    当日は出馬表のオッズ、過去の日は確定オッズ。オッズが無ければそのまま)"""
+    if not rc.get("pred") or rc.get("rno") != final_rno(races):
+        return
+    model = FINAL.load(OUT)
+    if not model:
+        return
+    odds = {h["umaban"]: h.get("odds") for h in rc.get("horses") or [] if h.get("odds")}
+    res_odds = (rc.get("result") or {}).get("odds") or {}
+    if rc["pred"].get("src") == "backfill" and res_odds:
+        odds = {int(u): v for u, v in res_odds.items() if v}
+    FINAL.apply(rc, rc["pred"], model, odds)
+
+
 def predict_past(rc, d, today):
     pr = past_probs(rc["id"], d)
     if pr is False:
@@ -797,6 +818,7 @@ def run_day(d, now, backfill=False):
         if not started and not backfill and rc.get("past_at"):
             rc["pred"] = L.predict(rc, today)
             rc["pred"]["src"] = "live"
+            apply_final(rc, races)
             rc["pred_at"] = now.isoformat(timespec="seconds")
         elif backfill and not rc.get("pred") and rc.get("past_at"):
             res = rc.get("result") or {}
@@ -807,6 +829,7 @@ def run_day(d, now, backfill=False):
                     h["odds"] = (res.get("odds") or {}).get(u)
             rc["pred"] = predict_past(rc, d, today)
             rc["pred"]["src"] = "backfill"
+            apply_final(rc, races)
             rc["pred_at"] = now.isoformat(timespec="seconds")
         if rc.get("result") and rc.get("pred"):
             rc["settle"] = L.settle(rc["pred"], rc["result"])
@@ -1188,6 +1211,7 @@ def repredict():
                 continue
             rc["pred"] = predict_past(rc, d, today)
             rc["pred"]["src"] = "backfill"
+            apply_final(rc, day["races"])
             if rc.get("result"):
                 rc["settle"] = L.settle(rc["pred"], rc["result"])
             n += 1
