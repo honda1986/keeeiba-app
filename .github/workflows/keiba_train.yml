@@ -27,6 +27,7 @@ env:
   KEIBA_NAR_VENUES: ${{ github.event.inputs.site == 'kochi' && '高知' || '' }}
   KEIBA_OUT: ${{ github.event.inputs.site == 'kochi' && 'keiba/kochi' || 'keiba' }}
   KEIBA_MODEL_TAG: ${{ github.event.inputs.site == 'kochi' && 'kochi' || '' }}
+  KEIBA_PREDICT_ONLY: ${{ github.event.inputs.site == 'kochi' && '1' || '' }}
 
 permissions:
   contents: write
@@ -42,7 +43,7 @@ jobs:
           python-version: '3.11'
       - run: pip install requests beautifulsoup4 numpy lightgbm
       - name: テスト(中央の設定で)
-        run: KEIBA_CENTERS=jra KEIBA_NAR_VENUES= KEIBA_OUT=keiba KEIBA_MODEL_TAG= python -m unittest test_keiba
+        run: KEIBA_CENTERS=jra KEIBA_NAR_VENUES= KEIBA_OUT=keiba KEIBA_MODEL_TAG= KEIBA_PREDICT_ONLY= python -m unittest test_keiba
       - name: 学び直して保存
         env:
           WF: ${{ github.event.inputs.walkforward }}

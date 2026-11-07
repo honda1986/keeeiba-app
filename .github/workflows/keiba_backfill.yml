@@ -43,6 +43,7 @@ env:
   KEIBA_NAR_VENUES: ${{ github.event.inputs.site == 'kochi' && '高知' || '' }}
   KEIBA_OUT: ${{ github.event.inputs.site == 'kochi' && 'keiba/kochi' || 'keiba' }}
   KEIBA_MODEL_TAG: ${{ github.event.inputs.site == 'kochi' && 'kochi' || '' }}
+  KEIBA_PREDICT_ONLY: ${{ github.event.inputs.site == 'kochi' && '1' || '' }}
 
 permissions:
   contents: write

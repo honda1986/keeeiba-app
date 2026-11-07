@@ -5,9 +5,21 @@ name: 再現の予想を作り直す
 
 on:
   workflow_dispatch:
+    inputs:
+      site:
+        description: 'jra(中央) / kochi(高知の最終レースのアプリ。keiba/kochi)'
+        required: false
+        default: 'jra'
 
 concurrency:
-  group: keiba-backfill       # 「過去の日を再現」と同時に走らない(終わるのを待つ)
+  group: keiba-backfill
+
+env:
+  KEIBA_CENTERS: ${{ github.event.inputs.site == 'kochi' && 'nar' || 'jra' }}
+  KEIBA_NAR_VENUES: ${{ github.event.inputs.site == 'kochi' && '高知' || '' }}
+  KEIBA_OUT: ${{ github.event.inputs.site == 'kochi' && 'keiba/kochi' || 'keiba' }}
+  KEIBA_MODEL_TAG: ${{ github.event.inputs.site == 'kochi' && 'kochi' || '' }}
+  KEIBA_PREDICT_ONLY: ${{ github.event.inputs.site == 'kochi' && '1' || '' }}       # 「過去の日を再現」と同時に走らない(終わるのを待つ)
 
 permissions:
   contents: write
@@ -22,7 +34,8 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install requests beautifulsoup4 numpy lightgbm
-      - run: python -m unittest test_keiba
+      - name: テスト(中央の設定で)
+        run: KEIBA_CENTERS=jra KEIBA_NAR_VENUES= KEIBA_OUT=keiba KEIBA_MODEL_TAG= KEIBA_PREDICT_ONLY= python -m unittest test_keiba
       - name: 作り直して保存
         run: |
           git config user.name  "github-actions[bot]"
@@ -30,7 +43,7 @@ jobs:
           for k in 1 2 3; do
             git fetch -q origin main && git reset -q --hard origin/main
             python keiba.py --repredict
-            git add keiba/days keiba/past keiba/history.json
+            git add $KEIBA_OUT/days $KEIBA_OUT/past $KEIBA_OUT/history.json
             if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
             git commit -q -m "keiba: 再現の予想を作り直す"
             git push -q origin HEAD:main && exit 0

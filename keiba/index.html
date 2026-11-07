@@ -376,6 +376,8 @@ async function boot() {
     state.noRace = {today, pick, next: pick > today};
     if (pick) { try { state.day = await loadDay(pick); } catch (e) { /* data.json のまま */ } }
   }
+  // まだ当日の更新(data.json)が無いときは、いちばん新しい日を開く(高知のアプリを始めたときなど)
+  if (!state.day && state.days.length) { try { state.day = await loadDay(state.days[state.days.length - 1]); } catch (e) { /* 無いまま */ } }
   renderRace(); renderMoney(); renderRule(); renderVote();
   autoOdds(); autoNavi();
   const h = new URLSearchParams(location.hash.slice(1));
@@ -933,6 +935,11 @@ function wireChart(pts) {
 
 function renderMoney() {
   const el = $("#v-money"), h = state.hist;
+  if (KOCHI) {                       // 高知は予想だけ(買わない)なので収支は無い
+    el.innerHTML = `<div class="empty">高知の最終レースは予想だけで、買う基準を付けていないので収支は出しません。<br>
+      確かめた結果(どの買い方も100%に届かない)は「考え方」にあります。</div>`;
+    return;
+  }
   if (!h || !h.days || !h.days.length) { el.innerHTML = `<div class="empty">まだ成績がありません。</div>`; return; }
   const [from, to] = periodRange();
   const inP = d => d >= from && d <= to;
@@ -1077,6 +1084,14 @@ async function modelBox() {
     <table class="tbl"><thead><tr><th>選び方(買い方は${esc((rs[0] || {}).bet || "ワイド◎-○")}の1点)</th><th>R</th><th>的中</th><th>回収率</th></tr></thead>
     <tbody>${rs.map(row).join("")}</tbody></table>`;
   const el = document.getElementById("modelbox");
+  if (el && KOCHI) {                   // 高知は予想だけなので、モデルの説明だけ
+    el.innerHTML = `<ul class="rules">
+      <li><b>何を出すか</b>各馬が3着以内に来る確率(LightGBM)。高知の${esc(m.data)}で学習(${esc(m.trained)})</li>
+      <li><b>材料</b>中央と同じ(過去5走・タイム指数・出馬表・騎手と厩舎のそれまでの成績・30か条の評価)。そのレースのオッズは使わない</li>
+      <li><b>確かめ方</b>2024年からの月ごとに、その月より前だけで学んだモデルで予想を作り直して確かめた(「再現」)</li>
+    </ul>`;
+    return;
+  }
   if (!el) return;
   // 買う基準は中央・地方で別(古い形は両方同じ)
   const sels = m.select && m.select.nar ? m.select : {nar: m.select || {}, jra: m.select || {}};
@@ -1843,7 +1858,35 @@ function verText() {
   return `画面 ${isNaN(t) ? "-" : `${t.getMonth() + 1}/${t.getDate()} ${hm(t)}`}` + (window.KeibaApp ? ` · アプリ ${app || "?"}` : "");
 }
 
+// 高知の最終レースのアプリの「考え方」
+function renderRuleKochi() {
+  $("#v-rule").innerHTML = `
+    <div class="sec">流れ</div>
+    <div class="flow"><div>高知競馬の全レースの各馬に、3着以内に来る確率を出す(高知のレースで学んだモデル)</div>
+      <div>その日の最終レース(ファイナルレース)だけを出す</div>
+      <div>軸にできる馬(延長などでない)の確率の上位2頭を◎○、その次を▲にする</div>
+      <div><b>買う基準は付けない(予想だけ)</b>。確かめて、勝てる買い方が見つからなかった</div></div>
+    <div class="sec">確かめた結果(2024〜2026年の最終レース 273R)</div>
+    <ul class="rules">
+      <li><b>確率</b>最終レースは確率ほど来ない: ◎ 実際 44%(確率の見込み 51%)、○ 34%(41%)、▲ 34%(36%)。
+        高知の全レースでは確率どおり(◎ 71% / 73%)。最終レースはいちばん下のクラスで荒れやすい</li>
+      <li><b>全部買うと</b>複勝◎ 82%、ワイド◎-○ 71%、単勝◎ 68%、3連複◎○▲ 46%</li>
+      <li><b>選んで買うと</b>2024・2025年で回収率の高い券種・条件を選んでも、2026年には続かない
+        (選んだ期間 171% → 2026年 30% など。選んだ期間と2026年の相関 0.01)。高知の全レースで選んでも、
+        いちばん良い「◎85%以上の複勝◎」で 94〜95%(最終レースでは年に数回しか当てはまらない)</li>
+      <li><b>見送りの欄</b>「もし買っていたら」は参考(ワイド◎-○)。収支には入れない</li>
+    </ul>
+    <div class="sec">確率モデル</div>
+    <div id="modelbox"><p class="muted" style="font-size:13px">モデルの情報を読み込み中…</p></div>
+    <div class="sec">印</div>
+    <div class="flow" style="font-size:13px">◎○ 軸にできる馬の確率の上位2頭 / ▲ その次 / △ 4番目。印は確率の順だけで付ける</div>
+    <p class="muted" style="font-size:12px;margin:12px 0">データがたまったら、同じやり方で確かめ直す(tools/experiments/kochi_final.py)。</p>
+    <p class="muted" style="font-size:11px;margin:12px 0">${esc(verText())}</p>`;
+  modelBox();
+}
+
 function renderRule() {
+  if (KOCHI) { renderRuleKochi(); return; }
   $("#v-rule").innerHTML = `
     <div class="sec">流れ</div>
     <div class="flow"><div>全レースの各馬に、3着以内に来る確率を出す</div>

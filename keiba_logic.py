@@ -792,6 +792,10 @@ MODEL_SELECT = {"t2": 0.60, "gap": 0.0, "a": 0.65}
 #   中央 … ◎の確率80%以上(Aは85%以上)。○の確率・3番手との差では絞らない(gap=-1)(2026-10-25 見直し)。
 #          2024・2025年で選び、2026年で確かめた。ワイド◎-○は月ごとの確率で 2024年 93% / 2025年 92% / 2026年 97%、
 #          的中5割。前の基準(◎60%以上・○40〜50%)は 76% / 82% / 93%。どの年も100%には届いていない
+# 予想だけ出して買わない(高知の最終レースのアプリ。KEIBA_PREDICT_ONLY=1)。2024〜2026年で確かめて、勝てる買い方が無かった
+PREDICT_ONLY = os.environ.get("KEIBA_PREDICT_ONLY") == "1"
+PREDICT_ONLY_REASON = "予想だけ(高知の最終レースは、確かめて勝てる買い方が無かったので買わない)"
+
 MODEL_SELECT_FIXED = {
     "nar": {"t2": 0.75, "n_min": 9},
     # 中央: ◎80%以上で、◎と○の確率の差が15%以上(○も強いと人気どおりで配当が安い。2024・2025年で選び、2026年は 127% → 137%。
@@ -877,7 +881,10 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
     w = sorted(set(hon["weak"]) & set(tai["weak"]))
     if w:
         out["notes"].append("◎○の弱点が重なる({})。同じ負け方に注意".format("・".join(w)))
-    if select_ok(sel, p1, p2, p3, len(horses)):
+    if PREDICT_ONLY:
+        out["verdict"] = "見送り"
+        out["reason"] = PREDICT_ONLY_REASON
+    elif select_ok(sel, p1, p2, p3, len(horses)):
         a = p1 >= sel["a_p1"] if sel.get("a_p1") else p2 >= sel["a"]
         out["verdict"] = "A" if a else "B"
         out["reason"] = ("◎が堅い(◎の3着内{:.0%}・○{:.0%}。中央の基準 {})".format(p1, p2, select_text(sel)) if center == "jra"

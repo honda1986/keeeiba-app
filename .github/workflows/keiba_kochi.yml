@@ -24,6 +24,7 @@ env:
   KEIBA_NAR_VENUES: 高知
   KEIBA_OUT: keiba/kochi
   KEIBA_MODEL_TAG: kochi
+  KEIBA_PREDICT_ONLY: '1'
 
 jobs:
   update:
@@ -36,7 +37,7 @@ jobs:
           python-version: '3.11'
       - run: pip install requests beautifulsoup4 numpy lightgbm
       - name: テスト(中央の設定で)
-        run: KEIBA_CENTERS=jra KEIBA_NAR_VENUES= KEIBA_OUT=keiba KEIBA_MODEL_TAG= python -m unittest test_keiba
+        run: KEIBA_CENTERS=jra KEIBA_NAR_VENUES= KEIBA_OUT=keiba KEIBA_MODEL_TAG= KEIBA_PREDICT_ONLY= python -m unittest test_keiba
       - name: 更新して保存(夕方からは10分ごと)
         run: |
           git config user.name  "github-actions[bot]"

@@ -137,6 +137,20 @@ class Logic(unittest.TestCase):
         self.assertEqual((p["honmei"], p["taikou"]), (1, 2))
         self.assertIn(5, p["aite"])
 
+    def test_predict_only(self):
+        # 高知の最終レースのアプリ: 確率と印は出すが、買わない
+        hs = [strong(1, first=2), strong(2, first=9)] + [middle(u) for u in range(3, 13)]
+        probs = {u: 0.1 for u in range(1, 13)}
+        probs.update({1: 0.95, 2: 0.5, 3: 0.4, 4: 0.3})
+        old = L.PREDICT_ONLY
+        try:
+            L.PREDICT_ONLY = True
+            p = L.predict(race(hs), TODAY, probs=probs)
+        finally:
+            L.PREDICT_ONLY = old
+        self.assertEqual((p["verdict"], p["reason"], p["bets"]), ("見送り", L.PREDICT_ONLY_REASON, []))
+        self.assertEqual((p["honmei"], p["taikou"], p["aite"][0]), (1, 2, 3))
+
     def test_muddle_is_skipped(self):
         hs = [middle(u, m=0.5 + u * 0.02) for u in range(1, 13)]
         p = L.predict(race(hs), TODAY, use_model=False)
