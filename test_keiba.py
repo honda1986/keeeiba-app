@@ -137,6 +137,7 @@ class Logic(unittest.TestCase):
         p = L.predict(r2, TODAY, probs=probs)
         self.assertEqual((p["honmei"], p["taikou"]), (1, 2))
         self.assertIn(5, p["aite"])
+        self.assertIn("5番(距離延長)は確率では上位だが軸にしない。○2番は確率3位", p["notes"])
 
     def test_predict_only(self):
         # 高知の最終レースのアプリ: 確率と印は出すが、買わない

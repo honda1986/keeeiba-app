@@ -874,10 +874,12 @@ def _predict_model(out, res, rb, horses, race, cs, pace, probs):
     for r, m in zip(rest[:2], ("▲", "△")):
         r["mark"] = m
     # 負け要因が重なる馬(cut)にも × の印は付けない(印と紛らわしい。確率に織り込んでいて、買い目からも外さない)
-    skipped = [r for r in res[:2] if r["axis_ng"]]
+    # ○より確率が上なのに軸にしなかった馬(延長など)を全部書く。○が確率の何番目かも(○が人気薄に見える理由)
+    skipped = [r for r in res[:res.index(tai)] if r is not hon and r["axis_ng"]]
     if skipped:
-        out["notes"].append("{}番は確率では上位だが軸にしない({})".format(
-            skipped[0]["umaban"], "・".join(skipped[0]["axis_ng"])))
+        out["notes"].append("{}は確率では上位だが軸にしない{}".format(
+            "・".join("{}番({})".format(r["umaban"], "・".join(r["axis_ng"])) for r in skipped),
+            "。○{}番は確率{}位".format(tai["umaban"], res.index(tai) + 1) if res.index(tai) >= 2 else ""))
     w = sorted(set(hon["weak"]) & set(tai["weak"]))
     if w:
         out["notes"].append("◎○の弱点が重なる({})。同じ負け方に注意".format("・".join(w)))
