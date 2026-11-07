@@ -1,0 +1,66 @@
+name: 高知の予想(最終レース)
+
+# 高知競馬の予想・オッズ・結果・収支を keiba/kochi に更新する(アプリの「高知 最終R」。?site=kochi)。
+# 高知の全レースを取るが、アプリに出して買うのはその日の最終レース(ファイナルレース。20時台)だけ。
+# 朝と昼に出馬表と予想を取り、開催日の夕方(15:41)からは1回の実行の中で10分ごとに、最後のレースの結果まで回り続ける。
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '5 0 * * *'     # JST 9:05(出馬表・予想)
+    - cron: '5 3 * * *'     # JST 12:05
+    - cron: '41 6 * * *'    # JST 15:41 から最後のレースの結果まで10分ごと
+    - cron: '5 13 * * *'    # JST 22:05(結果の取りこぼし)
+
+concurrency:
+  group: keiba-kochi
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  KEIBA_CENTERS: nar
+  KEIBA_NAR_VENUES: 高知
+  KEIBA_OUT: keiba/kochi
+  KEIBA_MODEL_TAG: kochi
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests beautifulsoup4 numpy lightgbm
+      - name: テスト(中央の設定で)
+        run: KEIBA_CENTERS=jra KEIBA_NAR_VENUES= KEIBA_OUT=keiba KEIBA_MODEL_TAG= python -m unittest test_keiba
+      - name: 更新して保存(夕方からは10分ごと)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          save() {
+            git add keiba/kochi
+            if git diff --cached --quiet; then echo "変更なし"; return 0; fi
+            git commit -m "keiba: 高知 更新" -q
+            for i in 1 2 3 4 5; do
+              if git pull --rebase --autostash -X theirs -q; then git push -q && return 0
+              else git rebase --abort 2>/dev/null || true; fi
+              sleep 5
+            done
+            echo "保存できなかった(次の回でまた保存する)"
+          }
+          HOUR=$(TZ=Asia/Tokyo date +%H)
+          while :; do
+            git pull --rebase --autostash -q || git rebase --abort 2>/dev/null || true
+            echo "== $(TZ=Asia/Tokyo date '+%H:%M') 更新"
+            python keiba.py || echo "更新に失敗(次の回でやり直す)"
+            save
+            # 夕方の実行だけ繰り返す(朝・昼・夜は1回)
+            [ "$HOUR" -ge 15 ] && [ "$HOUR" -lt 22 ] || break
+            python tools/raceday.py || break
+            NOW=$(date +%s)
+            sleep $(( 600 - NOW % 600 ))
+          done

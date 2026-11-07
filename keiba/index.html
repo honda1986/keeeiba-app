@@ -48,6 +48,8 @@ button:focus-visible,summary:focus-visible{outline:2px solid var(--pos);outline-
 .top{display:flex;align-items:center;gap:10px;padding:14px 0 6px}
 .brand{font-weight:800;font-size:18px}
 .brand small{font-weight:600;font-size:11px;color:var(--muted);margin-left:6px}
+.brand{white-space:nowrap}
+.sitesw{margin-left:8px;font-size:11px;font-weight:700;padding:2px 8px;border:1px solid var(--line2);border-radius:999px;color:var(--ink2);text-decoration:none}
 .stamp{margin-left:auto;font-size:11px;color:var(--muted);text-align:right;line-height:1.35}
 .themeb{flex:none;height:32px;padding:0 10px;border-radius:999px;border:1px solid var(--line2);background:var(--surface);
   font-size:12px;font-weight:700;color:var(--ink2);white-space:nowrap}
@@ -253,7 +255,7 @@ dialog.sheet .close{display:block;width:100%;margin-top:10px;padding:9px;border-
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="brand">堅軸レース<small>中央</small></div>
+    <div class="brand" id="brand"></div>
     <div class="stamp" id="stamp"></div>
     <button class="themeb" id="themeb"></button>
   </div>
@@ -282,8 +284,26 @@ const fmtD = d => d ? `${d.slice(0,4)}/${+d.slice(4,6)}/${+d.slice(6,8)}(${"日�
 const BABA = {"良":"良","稍":"稍重","重":"重","不":"不良"};
 const yenK = v => { const a = Math.abs(v), sg = v > 0 ? "+" : v < 0 ? "-" : "±";
   return sg + (a >= 10000 ? (a / 10000).toFixed(a >= 100000 ? 0 : 1) + "万" : a.toLocaleString()); };
-// 予想する中央・地方(2026-10-21 から中央だけ。地方の昔の記録はファイルに残るが出さない)
-const CENTERS = ["jra"];
+// どのアプリか。?site=kochi で「高知の最終レース」(データは kochi/、モデルは keiba_model_kochi)。前に見た方を覚えておく
+const SITE = (() => {
+  const q = new URLSearchParams(location.search), s = q.get("site");
+  let saved = null;
+  try { saved = localStorage.getItem("keiba-site"); } catch (e) { /* 覚えられない */ }
+  if (!s && saved === "kochi") { q.set("site", "kochi"); location.replace("?" + q.toString() + location.hash); }
+  try { if (s) localStorage.setItem("keiba-site", s === "kochi" ? "kochi" : "jra"); } catch (e) { /* 覚えられない */ }
+  return s === "kochi" || (!s && saved === "kochi") ? "kochi" : "jra";
+})();
+const KOCHI = SITE === "kochi";
+const DATA = KOCHI ? "kochi/" : "";                // データの置き場所
+// 予想する中央・地方(2026-10-21 から中央だけ。高知のアプリは高知の地方だけ)
+const CENTERS = KOCHI ? ["nar"] : ["jra"];
+// 高知のアプリは、その日の最終レース(ファイナルレース)だけを出す
+function finalOnly(list) {
+  if (!KOCHI) return list;
+  const mx = {};
+  for (const r of Object.values(state.day?.races || {})) if (r.venue && r.rno) mx[r.venue] = Math.max(mx[r.venue] || 0, r.rno);
+  return list.filter(r => r.rno === mx[r.venue]);
+}
 const state = {day: null, hist: null, days: [], filter: "all", center: "all", q: "", cache: {},
                period: "year", src: "all", mcenter: "all", calMonth: null, moneyMonth: null};
 const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
@@ -333,14 +353,15 @@ async function getJSON(u) {
   return r.json();
 }
 async function loadDay(d) {
-  if (!state.cache[d]) state.cache[d] = await getJSON(`days/${d}.json`);
+  if (!state.cache[d]) state.cache[d] = await getJSON(`${DATA}days/${d}.json`);
   return state.cache[d];
 }
 
 async function boot() {
-  try { state.hist = await getJSON("history.json"); } catch (e) { state.hist = null; }
+  drawBrand();
+  try { state.hist = await getJSON(DATA + "history.json"); } catch (e) { state.hist = null; }
   state.days = (state.hist?.days || []).filter(d => d.races).map(d => d.date);
-  try { state.day = await getJSON("data.json"); } catch (e) { state.day = null; }
+  try { state.day = await getJSON(DATA + "data.json"); } catch (e) { state.day = null; }
   state.latest = state.day?.updated || "";      // GitHub で最後に更新した時刻(自動の更新が止まっていないかを見る)
   const today = state.day?.date;
   if (state.day) {
@@ -415,12 +436,12 @@ function openCalendar() {
 $("#calclose").onclick = () => $("#caldlg").close();
 
 function races() {
-  return Object.values(state.day?.races || {}).filter(r => r.pred && r.horses && CENTERS.includes(r.center))
+  return finalOnly(Object.values(state.day?.races || {}).filter(r => r.pred && r.horses && CENTERS.includes(r.center)))
     .sort((a, b) => (a.start || "99").localeCompare(b.start || "99") || a.id.localeCompare(b.id));
 }
 // 表に出すレース(出馬表がまだのレースも「予想前」として出す。ばんえいは除く)
 function allRaces() {
-  return Object.values(state.day?.races || {}).filter(r => r.venue && r.rno && r.venue !== "帯広" && CENTERS.includes(r.center))
+  return finalOnly(Object.values(state.day?.races || {}).filter(r => r.venue && r.rno && r.venue !== "帯広" && CENTERS.includes(r.center)))
     .sort((a, b) => (a.start || "99").localeCompare(b.start || "99") || a.id.localeCompare(b.id));
 }
 const KIND = {buy: "買い", hit: "的中", lose: "外れ", skip: "見送り", ref: "見送り・◎○なら的中", wait: "予想前"};
@@ -471,14 +492,23 @@ function raceMap(rs) {
     <tbody>${rows}</tbody></table><div class="legend">${lg}<span>太枠はA</span></div></div>`;
 }
 
+// 名前と、中央・高知の切り替え
+function drawBrand() {
+  const q = new URLSearchParams(location.search);
+  q.set("site", KOCHI ? "jra" : "kochi");
+  $("#brand").innerHTML = `${KOCHI ? "高知 最終R" : "堅軸レース<small>中央</small>"}
+    <a class="sitesw" href="?${esc(q.toString())}">${KOCHI ? "中央へ" : "高知へ"}</a>`;
+  document.title = KOCHI ? "競馬 高知 最終レース" : "競馬 堅軸レース";
+}
 // 自動の更新(GitHub Actions。パソコンは要らない)が止まっていそうなら知らせる。
-// 中央の開催日の 8:40〜17:30 は10分ごとに更新するので45分、それ以外は2時間ごと(夜は止まる)なので13時間を超えたら
+// 中央の開催日の 8:40〜17:30 は10分ごとに更新するので45分、それ以外は2時間ごと(夜は止まる)なので13時間を超えたら。
+// 高知は開催日の 14:30〜21:30 を10分ごと
 function staleNote() {
   const t = Date.parse(state.latest || "");
   if (isNaN(t)) return "";
   const now = new Date(Date.now() + 9 * 3600e3), hm = now.getUTCHours() * 60 + now.getUTCMinutes();
   const today = now.toISOString().slice(0, 10).replace(/-/g, "");
-  const live = state.days.includes(today) && hm >= 8 * 60 + 40 && hm <= 17 * 60 + 30;
+  const live = state.days.includes(today) && (KOCHI ? hm >= 14 * 60 + 30 && hm <= 21 * 60 + 30 : hm >= 8 * 60 + 40 && hm <= 17 * 60 + 30);
   const min = (Date.now() - t) / 60e3;
   return min > (live ? 45 : 13 * 60) ? `<br><span class="neg">自動の更新が${min < 120 ? Math.round(min) + "分" : Math.round(min / 60) + "時間"}止まっています</span>` : "";
 }
@@ -1040,7 +1070,7 @@ function renderMoney() {
 
 async function modelBox() {
   let m = null;
-  try { m = await getJSON("../keiba_model_meta.json"); } catch (e) { return; }
+  try { m = await getJSON(KOCHI ? "../keiba_model_kochi_meta.json" : "../keiba_model_meta.json"); } catch (e) { return; }
   const row = r => `<tr><td>${esc(r.label)}</td><td>${r.races}</td><td>${Math.round(r.hit * 100)}%</td>
     <td class="${r.roi >= 1 ? "good" : "neg"}"><b>${Math.round(r.roi * 100)}%</b></td></tr>`;
   const tbl = (name, rs) => `<div class="legendnote" style="margin-top:8px"><b>${esc(name)}</b></div>
@@ -1282,7 +1312,7 @@ setInterval(() => { if (!$("#v-vote").hidden) renderVote(); if (!$("#v-race").hi
 // ---------------------------------------------------------------- オッズ(アプリでその場で取る)
 // Androidアプリは netkeiba から直接オッズを取れる(KeibaApp.fetch)。開いたとき・「オッズ更新」で、発走前のレースを取り直す。
 // ブラウザでは GitHub の更新(開催日は10分ごと)のときのオッズのまま
-const canLive = () => !!(window.KeibaApp && typeof window.KeibaApp.fetch === "function");
+const canLive = () => !KOCHI && !!(window.KeibaApp && typeof window.KeibaApp.fetch === "function");
 const fetchWait = {};
 let fetchSeq = 0;
 window.kbFetched = (id, text, err) => { const f = fetchWait[id]; if (f) { delete fetchWait[id]; f(text, err); } };
