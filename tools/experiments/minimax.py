@@ -6,38 +6,16 @@
      ワイド◎-○の期待値を、モデルの確率とオッズの確率の両方で出し、小さい方(ワイドはオッズの下限)がいちばん大きい買い目を買う
   基準(下限)は 2024・2025年で選び、2026年で確かめる。払戻は確定。確定オッズで期待値を出すので、実際より少し良く出る"""
 import glob, json, os, sys
-from itertools import permutations
 import numpy as np
 R = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 sys.path.insert(0, R)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import keiba_final as F
 YS = ("2024", "2025", "2026")
 srt = lambda c: "-".join(str(z) for z in sorted(c))
 
 
-def fit(p3):
-    """3着内の確率に合う Plackett-Luce の強さ"""
-    t = np.clip(np.array(p3, float), .005, .995); t = np.minimum(t * 3 / t.sum(), .995)
-    w = t / t.sum()
-    for _ in range(200):
-        q = F.pl_top3(w); w = w * (t / np.maximum(q, 1e-9)) ** .8; w /= w.sum()
-        if np.abs(q - t).max() < 1e-4:
-            break
-    return w
-
-
-def combo_p(w, us, k):
-    """us の k 頭が全部3着内に入る確率(k=3 は3連複、k=2 はワイド)"""
-    S = w.sum(); n = len(w); p = 0.0
-    if k == 3:
-        for a, b, c in permutations(us):
-            p += w[a] / S * w[b] / (S - w[a]) * w[c] / (S - w[a] - w[b])
-        return p
-    a, b = us                         # ワイド: a,b と、ほかの1頭 c が上位3頭
-    for c in range(n):
-        if c not in (a, b):
-            p += combo_p(w, [a, b, c], 3)
-    return p
+from pl import fit, combo_p
 
 
 races = []
