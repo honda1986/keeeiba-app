@@ -108,62 +108,80 @@ def norm_race(pred):
     return out
 
 
-res = {}
-for name, X in (("今の材料", Xb), ("+前走の強さ", Xn)):
+SEEDS = [int(x) for x in os.environ.get("SEEDS", "1").split(",")]
+VARIANTS = (("今の材料", Xb), ("+前走の強さ", Xn))
+sels = T.fixed_selects()
+jra = T.of_center(rows, "jra")
+jra_g = T.group(jra)
+
+
+def walk(X, seed, show_imp=False):
+    """早期終了で学習の回数を決め(train_model.py と同じ)、2024年1月から月ごとに学び直した確率"""
+    pr = dict(params, seed=seed)
     dtr = lgb.Dataset(X[tr], y[tr], categorical_feature=cat, free_raw_data=False)
     dva = lgb.Dataset(X[va], y[va], categorical_feature=cat, reference=dtr)
-    bst = lgb.train(params, dtr, 3000, valid_sets=[dva], callbacks=[lgb.early_stopping(150, verbose=False)])
+    bst = lgb.train(pr, dtr, 3000, valid_sets=[dva], callbacks=[lgb.early_stopping(150, verbose=False)])
     it = bst.best_iteration
-    if name != "今の材料":
+    if show_imp:
         imp = dict(zip(base_feats + NEW, bst.feature_importance("gain")))
         order = sorted(imp, key=lambda k: -imp[k])
         print("  効き方の順位(全{}個): ".format(len(order)) + " / ".join("{} {}位".format(k, order.index(k) + 1) for k in NEW), flush=True)
     pred = np.full(len(rows), np.nan)
-    months = sorted({d[:6] for d in dts})
-    for mth in [m for m in months if m >= T.WF_FROM]:
+    for mth in [m for m in sorted({d[:6] for d in dts}) if m >= T.WF_FROM]:
         m_tr, m_pr = dts < mth + "01", np.array([d[:6] == mth for d in dts])
-        b = lgb.train(params, lgb.Dataset(X[m_tr], y[m_tr], categorical_feature=cat), it)
+        b = lgb.train(pr, lgb.Dataset(X[m_tr], y[m_tr], categorical_feature=cat), it)
         pred[m_pr] = b.predict(X[m_pr])
-    print("{} 学習の回数 {}、月ごとの学び直し {:.0f}秒".format(name, it, time.time() - t0), flush=True)
-    res[name] = norm_race(pred)
+    return norm_race(pred), it
 
-print("\n■ 当たり方(月ごとの確率。レースで合計3にそろえたもの)  対数尤度(大きいほど良い) / AUC")
-for yy in ("2024", "2025", "2026"):
-    sel = [i for i, r in enumerate(rows) if r["date"][:4] == yy and (r["rid"], r["u"]) in res["今の材料"]]
-    yt = y[sel]
-    line = []
-    for name, pw in res.items():
-        p = np.clip(np.array([pw[(rows[i]["rid"], rows[i]["u"])] for i in sel]), 1e-4, 1 - 1e-4)
-        ll = np.mean(yt * np.log(p) + (1 - yt) * np.log(1 - p))
-        line.append("{} {:.5f} / {:.4f}".format(name, ll, T.auc(yt, p)))
-    print("  {} {:,}頭  {}".format(yy, len(sel), "  |  ".join(line)))
 
-print("\n■ 今の買い方の回収率(中央。◎80%以上・◎と○の差15%以上。3連複◎○▲、▲が延長ならワイド◎-○)")
-sels = T.fixed_selects()
-jra = T.of_center(rows, "jra")
-per = {}
-for name, pw in res.items():
-    print("  " + name)
-    for r in T.check_wf(jra, races_by_id, pw, sels["jra"], "trio"):
-        print("   {:<34} {:>5}R 的中{:>4.0%} 回収率{:>4.0%}".format(r["label"], r["races"], r["hit"], r["roi"]))
-    pick = T.pick_sel(sels["jra"], pw)
-    out = {}
-    for rid, rs in T.group(jra).items():
-        s = pick(rid, rs, None)
-        if not s or not s[2]:
+def per_race(pw):
+    """今の買い方で買ったレース -> 払戻(1点100円)"""
+    pick = T.pick_sel(sels["jra"], pw); out = {}
+    for rid, rs in jra_g.items():
+        s_ = pick(rid, rs, None)
+        if not s_ or not s_[2]:
             continue
-        b = "wide" if T.trio_wide(races_by_id[rid], s[2][0]) else "trio"
+        b = "wide" if T.trio_wide(races_by_id[rid], s_[2][0]) else "trio"
         pay = (races_by_id[rid]["result"].get("payout") or {}).get("3連複" if b == "trio" else "ワイド") or {}
-        out[rid] = pay.get("-".join(str(x) for x in sorted([s[0], s[1], s[2][0]] if b == "trio" else [s[0], s[1]])), 0)
-    per[name] = out
-a, b = per["今の材料"], per["+前走の強さ"]
-ids = sorted(set(a) | set(b))
-rng = np.random.default_rng(0); diffs = []
-A = np.array([a.get(i, np.nan) for i in ids]); Bv = np.array([b.get(i, np.nan) for i in ids])
-for _ in range(2000):
-    k = rng.integers(0, len(ids), len(ids))
-    ra, rb = A[k][~np.isnan(A[k])], Bv[k][~np.isnan(Bv[k])]
-    diffs.append(rb.mean() - ra.mean())
-print("  回収率の差(+前走の強さ − 今の材料) {:+.1f}ポイント(90%の幅 {:+.1f}〜{:+.1f})。買うレースが同じ {}R / 片方だけ {}R".format(
-    (np.nanmean(Bv) - np.nanmean(A)), np.quantile(diffs, .05), np.quantile(diffs, .95), len(set(a) & set(b)), len(set(a) ^ set(b))))
+        out[rid] = pay.get("-".join(str(x) for x in sorted([s_[0], s_[1], s_[2][0]] if b == "trio" else [s_[0], s_[1]])), 0)
+    return out
+
+
+PERIODS = (("2024", "20240101", "20250101"), ("2025", "20250101", "20260101"), ("2026/1-8", "20260101", "20260901"), ("2026/9-", "20260901", "99999999"))
+YRS = ("2024", "2025", "2026")
+summ = {v: [] for v, _ in VARIANTS}
+print("\n■ 種ごと: 今の買い方の回収率 [2024 2025 2026/1-8 2026/9-] 全体 / 対数尤度 [2024 2025 2026]", flush=True)
+for seed in SEEDS:
+    for name, X in VARIANTS:
+        pw, it = walk(X, seed, show_imp=(seed == SEEDS[0] and name != "今の材料"))
+        pr_ = per_race(pw)
+        rid_date = {rid: rs[0]["date"] for rid, rs in jra_g.items()}
+        rois = []
+        for _, a_, b_ in PERIODS:
+            v = [x for rid, x in pr_.items() if a_ <= rid_date[rid] < b_]
+            rois.append((np.mean(v) if v else 0, len(v)))
+        lls = []
+        for yy in YRS:
+            sel = [i for i, r in enumerate(rows) if r["date"][:4] == yy and (r["rid"], r["u"]) in pw]
+            p = np.clip(np.array([pw[(rows[i]["rid"], rows[i]["u"])] for i in sel]), 1e-4, 1 - 1e-4); yt = y[sel]
+            lls.append(float(np.mean(yt * np.log(p) + (1 - yt) * np.log(1 - p))))
+        tot = np.mean(list(pr_.values()))
+        summ[name].append(dict(rois=rois, lls=lls, tot=tot, n=len(pr_), per=pr_))
+        print("  種{} {:10s} 回数{:4d} 回収率 [{}] 全体 {:4.0f}%({}R) / 対数尤度 [{}]  ({:.0f}分)".format(
+            seed, name, it, " ".join("{:4.0f}%({:3d}R)".format(r, n) for r, n in rois), tot, len(pr_),
+            " ".join("{:.5f}".format(x) for x in lls), (time.time() - t0) / 60), flush=True)
+print("\n■ 種の平均")
+for name, _ in VARIANTS:
+    S = summ[name]
+    print("  {:10s} 回収率 [{}] 全体 {:4.0f}%(種ごとの幅 {:.0f}〜{:.0f}%) / 対数尤度 [{}]".format(
+        name, " ".join("{:4.0f}%".format(np.mean([x["rois"][k][0] for x in S])) for k in range(len(PERIODS))),
+        np.mean([x["tot"] for x in S]), min(x["tot"] for x in S), max(x["tot"] for x in S),
+        " ".join("{:.5f}".format(np.mean([x["lls"][k] for x in S])) for k in range(3))))
+# 種ごとに、両方が買ったレースでの差
+d = [b_["tot"] - a_["tot"] for a_, b_ in zip(summ["今の材料"], summ["+前走の強さ"])]
+print("  回収率の差(+前走の強さ − 今の材料)の種ごと: {}".format(" ".join("{:+.1f}".format(x) for x in d)))
+# 今の材料どうし: 種が違うと買うレースがどれだけ変わるか
+if len(SEEDS) >= 2:
+    a0, a1 = set(summ["今の材料"][0]["per"]), set(summ["今の材料"][1]["per"])
+    print("  今の材料で種1と種2の買うレース: 同じ {}R / 片方だけ {}R".format(len(a0 & a1), len(a0 ^ a1)))
 print("かかった時間 {:.0f}分".format((time.time() - t0) / 60))
