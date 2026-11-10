@@ -292,7 +292,14 @@ _MODEL = {"booster": None, "meta": None, "tried": False}
 _LOCK = threading.Lock()
 
 
+def model_files(meta):
+    """保存したモデルのファイル。乱数の種を変えた何本か(meta["models"]。予想はその平均)。古い形は MODEL_FILE の1本"""
+    names = (meta or {}).get("models")
+    return [os.path.join(HERE, n) for n in names] if names else [MODEL_FILE]
+
+
 def load():
+    """([モデル, ...], meta)。読めなければ (None, None)"""
     # 予想は並列に呼ばれる。読み終わる前に「モデルなし」と答えると手作りの評価に落ちるので、読み終わるまで待たせる
     with _LOCK:
         if _MODEL["tried"]:
@@ -300,8 +307,9 @@ def load():
         _MODEL["tried"] = True
         try:
             import lightgbm as lgb
-            _MODEL["booster"] = lgb.Booster(model_file=MODEL_FILE)
-            _MODEL["meta"] = json.load(open(META_FILE, encoding="utf-8"))
+            meta = json.load(open(META_FILE, encoding="utf-8"))
+            _MODEL["booster"] = [lgb.Booster(model_file=f) for f in model_files(meta)]
+            _MODEL["meta"] = meta
         except Exception as e:          # モデルが無い/lightgbm が無いときは手作りの評価だけで動く
             print("モデルを読めません", type(e).__name__, e)
     return _MODEL["booster"], _MODEL["meta"]
@@ -317,8 +325,9 @@ def probs(race, today, pred):
     if not rows:
         return {}
     X = [[_num(f.get(k)) for k in meta["features"]] for _, f in rows]
-    with _LOCK:                         # 1つのモデルを並列に使うので、予測は1つずつ
-        p = bst.predict(X)
+    with _LOCK:                         # 同じモデルを並列に使うので、予測は1つずつ。何本かあれば平均
+        ps = [b.predict(X) for b in bst]
+    p = [sum(v) / len(ps) for v in zip(*ps)]
     # 1レースの3着以内は3頭なので、合計が3になるように揃える(頭数が少ないときは頭数まで)
     tot = sum(p)
     want = min(3, len(p))

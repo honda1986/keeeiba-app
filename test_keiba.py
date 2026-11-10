@@ -524,6 +524,16 @@ class Concurrency(unittest.TestCase):
             KM._MODEL.update(saved)
 
 
+class ModelFiles(unittest.TestCase):
+    def test_model_files(self):
+        """種を変えた何本かのモデル(meta["models"])を全部読む。古い形は keiba_model.txt の1本"""
+        import keiba_model as KM
+        self.assertEqual(KM.model_files({}), [KM.MODEL_FILE])
+        fs = KM.model_files({"models": ["keiba_model.txt", "keiba_model_s2.txt"]})
+        self.assertEqual([os.path.basename(f) for f in fs], ["keiba_model.txt", "keiba_model_s2.txt"])
+        self.assertEqual(os.path.dirname(fs[1]), KM.HERE)
+
+
 class CourseNar(unittest.TestCase):
     def test_nar_course(self):
         """地方のコース傾向(うまめし.com の記事から)を読める。距離が無ければ場全体"""

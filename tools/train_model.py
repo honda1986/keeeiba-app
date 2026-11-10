@@ -34,6 +34,9 @@ CHECK_PERIODS = (("2024年(基準を選んだ期間)", "20240101", "20250101"),
                  ("2026年1〜8月(基準を選ぶのに使っていない)", "20260101", "20260901"),
                  ("2026年9月〜(基準を選ぶのに使っていない)", "20260901", "99999999"))
 CACHE = os.environ.get("KEIBA_CACHE", "/tmp/keiba_dataset.pkl")
+# 乱数の種を変えて何本か学び、確率はその平均にする(1本だと学び直しのたびに予想と成績が大きくぶれる。
+# tools/experiments/ensemble_wf.py)。保存は1本目が keiba_model.txt、ほかは keiba_model_s{種}.txt
+SEEDS = [int(x) for x in os.environ.get("KEIBA_SEEDS", "1").split(",") if x.strip()]
 MIN_GRID_RACES = 150          # 調整期間で基準を探すとき、これより少ない買い方は数えない
 
 
@@ -366,11 +369,19 @@ def main():
     cat = [feats.index(k) for k in ("venue", "style") if k in feats]
     params = {"objective": "binary", "learning_rate": 0.03, "num_leaves": 31, "min_data_in_leaf": 80,
               "feature_fraction": 0.7, "bagging_fraction": 0.8, "bagging_freq": 1, "lambda_l2": 5.0,
-              "verbose": -1, "seed": 1}
+              "verbose": -1, "seed": SEEDS[0]}
     dtr = lgb.Dataset(X[tr], y[tr], categorical_feature=cat, free_raw_data=False)
     dva = lgb.Dataset(X[va], y[va], categorical_feature=cat, reference=dtr)
     bst = lgb.train(params, dtr, 3000, valid_sets=[dva], callbacks=[lgb.early_stopping(150, verbose=False)])
     best_iter = bst.best_iteration
+    iters = {SEEDS[0]: best_iter}               # 種ごとの学習の回数(それぞれ早期終了で決める)
+    for s in SEEDS[1:]:
+        b = lgb.train(dict(params, seed=s), lgb.Dataset(X[tr], y[tr], categorical_feature=cat), 3000,
+                      valid_sets=[lgb.Dataset(X[va], y[va], categorical_feature=cat)],
+                      callbacks=[lgb.early_stopping(150, verbose=False)])
+        iters[s] = b.best_iteration
+    if len(SEEDS) > 1:
+        print("種ごとの学習の回数", iters, "(下の調整・試験の比べは1本目のモデル)")
     p = bst.predict(X, num_iteration=best_iter)
     pr = {(r["rid"], r["u"]): v for r, v in zip(rows, p)}
     rule = np.array([M._num(r["f"].get("rule_score")) for r in rows])
@@ -448,8 +459,8 @@ def main():
         months = sorted({d[:6] for d in dates})
         for mth in [m for m in months[1:] if m >= WF_FROM]:
             m_tr, m_pr = dates < mth + "01", np.array([d[:6] == mth for d in dates])
-            b = lgb.train(params, lgb.Dataset(X[m_tr], y[m_tr], categorical_feature=cat), best_iter)
-            pm = b.predict(X[m_pr])
+            pm = np.mean([lgb.train(dict(params, seed=s), lgb.Dataset(X[m_tr], y[m_tr], categorical_feature=cat),
+                                    iters[s]).predict(X[m_pr]) for s in SEEDS], axis=0)
             sub = [r for r, k in zip(rows, m_pr) if k]
             byr = {}
             for r, v in zip(sub, pm):
@@ -496,8 +507,16 @@ def main():
     if a.save:
         allm = np.ones(len(rows), dtype=bool)
         dall = lgb.Dataset(X[allm], y[allm], categorical_feature=cat)
-        final = lgb.train(params, dall, int(best_iter * 1.15))
-        final.save_model(M.MODEL_FILE)
+        files = []
+        for i, s in enumerate(SEEDS):
+            final = lgb.train(dict(params, seed=s), dall if i == 0 else lgb.Dataset(X[allm], y[allm], categorical_feature=cat),
+                              int(iters[s] * 1.15))
+            f = M.MODEL_FILE if i == 0 else M.MODEL_FILE[:-4] + "_s{}.txt".format(s)
+            final.save_model(f)
+            files.append(os.path.basename(f))
+        for f in glob.glob(M.MODEL_FILE[:-4] + "_s*.txt"):      # 前に保存して、今は使わない種のモデル
+            if os.path.basename(f) not in files:
+                os.remove(f)
         if sp:
             SP.save(sp)
         # 騎手・厩舎は全期間の成績を持たせる(当日の予想ではこれを使う)。乗った数が少ない人は省く
@@ -507,6 +526,7 @@ def main():
                 "data_end": span[1],
                 "data": "{}〜{} {}レース".format(*span),
                 "iterations": int(best_iter * 1.15),
+                "models": files, "seeds": SEEDS, "iterations_by_seed": {str(s): int(iters[s] * 1.15) for s in SEEDS},
                 "select": sels,
                 "centers": list(K.CENTERS),
                 "select_from": select_from,
@@ -515,7 +535,7 @@ def main():
                 "note": "選ぶ基準は調整期間(7〜8月)で決め、試験期間(9月〜)は学習にも基準にも使っていない。"
                         "保存したモデルは全期間で学び直したもの"}
         json.dump(meta, open(M.META_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-        print("保存", M.MODEL_FILE, M.META_FILE)
+        print("保存", " ".join(files), M.META_FILE)
 
 
 if __name__ == "__main__":
