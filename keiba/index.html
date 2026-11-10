@@ -252,6 +252,65 @@ dialog.sheet .close{display:block;width:100%;margin-top:10px;padding:9px;border-
 .evtbl td{padding:4px;border-top:1px solid var(--line);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .evtbl tr.mk td{font-weight:700}
 .cbox .tag{margin-left:2px}
+
+/* ---- 2026-11 作り直し: レースの欄(買い目を先に大きく、理由は「くわしく」の中) ---- */
+.daysum{background:var(--surface);border:1px solid var(--line);border-radius:14px;margin:0 0 12px;box-shadow:var(--shadow);overflow:hidden}
+.daysum .hd{padding:10px 14px 2px;font-size:12px;font-weight:700;color:var(--muted)}
+.dsrow{display:grid;grid-template-columns:minmax(0,1fr) 44px 48px 86px;gap:8px;align-items:center;padding:9px 14px;border-top:1px solid var(--line)}
+.daysum .hd+.dsrow{border-top:0}
+.dsrow .nm{font-weight:800;font-size:15px;min-width:0}
+.dsrow .nm small{display:block;font-weight:500;font-size:11.5px;color:var(--muted);line-height:1.35}
+.dsrow .v{text-align:right;line-height:1.25}
+.dsrow .v b{font-size:16px}
+.dsrow .v small{display:block;font-size:10.5px;color:var(--muted);white-space:nowrap}
+.dsrow .pl{font-weight:800;font-size:16px}
+.daysum .ft{padding:7px 14px 9px;font-size:11.5px;color:var(--muted);border-top:1px solid var(--line)}
+.rc{background:var(--surface);border:1px solid var(--line);border-radius:14px;margin-bottom:14px;box-shadow:var(--shadow);overflow:hidden}
+.rc.flash{outline:2px solid var(--pos);outline-offset:2px}
+.rc-h{display:flex;align-items:baseline;gap:8px;padding:13px 14px 0}
+.rc-h .ti{font-size:18px;font-weight:800}
+.rc-h .tm,.skip .tm{font-size:14px;color:var(--ink2)}
+.rc-h .st{margin-left:auto;font-size:13px;color:var(--ink2);white-space:nowrap}
+.rc-h .st b{font-size:15px;color:var(--ink)}
+.rc-h .st.soon{color:var(--accent);font-weight:700}
+.rc-m{padding:1px 14px 8px;font-size:12.5px;color:var(--muted)}
+.mk3{padding:0 14px 4px}
+.mkr,.mkh{display:grid;grid-template-columns:18px 20px minmax(0,1fr) 40px 52px;gap:5px;align-items:center}
+.mk3.d .mkr,.mk3.d .mkh{grid-template-columns:18px 20px minmax(0,1fr) 40px 52px 36px}
+.mkh{font-size:10.5px;color:var(--muted);padding-bottom:2px}
+.mkh span:nth-child(n+4){text-align:right}
+.mkh span:nth-child(6){text-align:center}
+.mkr{padding:6px 0;border-top:1px solid var(--line)}
+.mkr .m{font-weight:800;font-size:16px}
+.mkr .u{text-align:right;color:var(--ink2);font-weight:700}
+.mkr .n{font-weight:700;font-size:14.5px;min-width:0;overflow-wrap:anywhere;line-height:1.3}
+.mkr .n small{display:block;font-weight:500;font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.mkr .p{font-weight:800;font-size:15px;text-align:right}
+.mkr .o{color:var(--muted);font-size:12.5px;text-align:right}
+.mkr .rk{font-size:12px;font-weight:700;text-align:center;padding:1px 0;border-radius:6px;background:var(--surface2);color:var(--muted)}
+.mkr .rk.in{background:var(--good-bg);color:var(--good)}
+.pk{margin:8px 14px 10px;border:1px solid var(--line2);border-radius:12px;overflow:hidden}
+.pk-h{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 10px;background:var(--surface2);font-size:12px;font-weight:700;color:var(--ink2)}
+.pk-h span:last-child{font-weight:500;color:var(--muted);font-size:11px;text-align:right}
+.pk-h em{font-style:normal;font-size:10.5px;font-weight:700;margin-left:6px;padding:1px 7px;border-radius:999px;background:var(--accent-bg);color:var(--accent)}
+.pk-h em.vB{background:var(--pos-bg);color:var(--pos)}
+.pk-b{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:8px 10px 2px}
+.pk-b .ty{font-weight:700;font-size:13px;color:var(--ink2)}
+.pk-b .cb{font-size:19px;font-weight:800;letter-spacing:.02em}
+.pk-b .od{font-size:12.5px;color:var(--muted)}
+.pk-r{margin-left:auto;font-weight:800;font-size:14.5px;white-space:nowrap}
+.pk-n{padding:0 10px 8px;font-size:12px;color:var(--muted)}
+.pk.hit{border-color:var(--good)}
+.pk.hit .pk-h{background:var(--good-bg)}
+.pk.none .pk-b{padding-bottom:8px;font-size:13.5px;color:var(--ink2);font-weight:700}
+.pk.none .pk-b .od{font-weight:500}
+.skipd{border-top:0;border-bottom:1px solid var(--line)}
+.skipd:last-child{border-bottom:0}
+.skipd[open]{background:var(--surface2)}
+summary.skip{align-items:baseline;padding:11px 14px;font-size:14px}
+summary.skip b{white-space:nowrap}
+summary.skip .r{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+summary.skip .rs{font-size:13px;color:var(--ink2);font-weight:700}
 </style>
 </head>
 <body>
@@ -450,20 +509,28 @@ function allRaces() {
   return finalOnly(Object.values(state.day?.races || {}).filter(r => r.venue && r.rno && r.venue !== "帯広" && CENTERS.includes(r.center)))
     .sort((a, b) => (a.start || "99").localeCompare(b.start || "99") || a.id.localeCompare(b.id));
 }
-const KIND = {buy: "買い", hit: "的中", lose: "外れ", skip: "見送り", ref: "見送り・◎○なら的中", wait: "予想前"};
+const KIND = {buy: "買い目あり", hit: "的中", lose: "外れ", skip: KOCHI ? "予想あり" : "買い目なし", wait: "予想前"};
+// そのレースの買い目(割安ワイド・モデル)。結果が出ていれば払戻も
+function picksOf(r) {
+  const out = [], g = gapOf(r), p = r.pred;
+  if (g && g.buy && !g.void) out.push({k: "gap", stake: 100, done: g.done, ret: g.ret || 0, hit: g.done && g.ret > 0});
+  if (p && r.horses && p.verdict !== "見送り") {
+    const s = r.settle, done = !!(s && r.result);
+    out.push({k: "model", stake: s ? s.stake : p.stake, done, ret: s ? s.ret : 0, hit: !!(s && s.hit)});
+  }
+  return out;
+}
 function raceKind(r) {
-  const p = r.pred;
-  if (!p || !r.horses) return "wait";
-  if (p.verdict !== "見送り") return r.settle && r.result ? (r.settle.hit ? "hit" : "lose") : "buy";
-  const ref = skipRef(r);
-  return ref && ref.ret ? "ref" : "skip";
+  if (!r.pred || !r.horses) return "wait";
+  const ps = picksOf(r);
+  if (!ps.length) return "skip";
+  return ps.every(x => x.done) ? (ps.some(x => x.hit) ? "hit" : "lose") : "buy";
 }
 const centerOkR = r => state.center === "all" || r.center === state.center;
 function raceVisible(r) {
   const k = raceKind(r);
   if (state.filter !== "all") {
-    if (state.filter === "skip") { if (k !== "skip" && k !== "ref") return false; }
-    else if (state.filter === "bought") { if (!["buy", "hit", "lose"].includes(k)) return false; }
+    if (state.filter === "bought") { if (!["buy", "hit", "lose"].includes(k)) return false; }
     else if (k !== state.filter) return false;
   }
   if (!state.q) return true;
@@ -487,15 +554,14 @@ function raceMap(rs) {
     const r = byV.get(v).get(i);
     if (!r) return `<td></td>`;
     const k = raceKind(r);
-    const a = r.pred && r.pred.verdict === "A" ? " a" : "";
-    return `<td><button class="cell ${k}${a}" data-rid="${esc(r.id)}"
-      aria-label="${esc(v)}${i}R ${esc(r.start || "")} ${KIND[k]}${a ? " A" : ""}">${i}</button></td>`;
+    return `<td><button class="cell ${k}" data-rid="${esc(r.id)}"
+      aria-label="${esc(v)}${i}R ${esc(r.start || "")} ${KIND[k]}">${i}</button></td>`;
   }).join("")}</tr>`).join("");
   const seen = new Set(rs.map(raceKind));
-  const lg = ["buy", "hit", "lose", "skip", "ref", "wait"].filter(k => seen.has(k))
+  const lg = ["buy", "hit", "lose", "skip", "wait"].filter(k => seen.has(k))
     .map(k => `<span class="g-${k}"><i></i>${KIND[k]}</span>`).join("");
   return `<div class="map"><table class="grid"><thead><tr><th></th>${cols.map(i => `<th scope="col">${i}</th>`).join("")}</tr></thead>
-    <tbody>${rows}</tbody></table><div class="legend">${lg}<span>太枠はA</span></div></div>`;
+    <tbody>${rows}</tbody></table><div class="legend">${lg}<span>押すとそのレースへ</span></div></div>`;
 }
 
 // 名前と、中央・高知の切り替え
@@ -519,6 +585,35 @@ function staleNote() {
   return min > (live ? 45 : 13 * 60) ? `<br><span class="neg">自動の更新が${min < 120 ? Math.round(min) + "分" : Math.round(min / 60) + "時間"}止まっています</span>` : "";
 }
 
+// その日の買い目のまとめ(割安ワイド・モデル)
+function daySumInner() {
+  const rs = races().filter(centerOkR);
+  if (KOCHI) return `<div class="hd">高知の最終レースは予想だけ(買う基準は付けていません)。全 ${rs.length} レース</div><div style="height:8px"></div>`;
+  const gp = [], mp = [];
+  let fin = 0;
+  for (const r of rs) {
+    for (const x of picksOf(r)) (x.k === "gap" ? gp : mp).push(x);
+    const g = gapOf(r);
+    if (g && g.buy && g.src === "fin") fin++;
+  }
+  const line = (name, sub, ps) => {
+    const dn = ps.filter(x => x.done), st = dn.reduce((a, x) => a + x.stake, 0), rt = dn.reduce((a, x) => a + x.ret, 0);
+    return `<div class="dsrow"><div class="nm">${name}<small>${sub}</small></div>
+      <div class="v"><b class="num">${ps.length}</b><small>レース</small></div>
+      <div class="v"><b class="num">${dn.length ? dn.filter(x => x.hit).length + "/" + dn.length : "-"}</b><small>的中</small></div>
+      <div class="v">${dn.length ? `<span class="pl num ${rt - st >= 0 ? "good" : "neg"}">${yen(rt - st)}</span><small>回収率 ${pct(rt, st)}</small>`
+        : `<span class="pl muted">-</span><small>${ps.length ? "結果待ち" : "なし"}</small>`}</div></div>`;
+  };
+  return `<div class="hd">この日の買い目(1点100円)</div>
+    ${line("割安ワイド", "新しい買い方(確かめ中)", gp)}
+    ${line("モデルの買い目", "3連複 ◎-○-▲", mp)}
+    ${fin ? `<div class="ft">この日の割安ワイドは<b>確定オッズ</b>で選んだものです(買う時点のオッズでは変わることがあります)。</div>` : ""}`;
+}
+function drawDaySum() {
+  const el = $("#daysum");
+  if (el) el.innerHTML = daySumInner();
+}
+
 function renderRace() {
   const el = $("#v-race");
   const d = state.day;
@@ -526,11 +621,6 @@ function renderRace() {
   $("#stamp").innerHTML = (up ? `更新 ${esc(up.slice(5,10).replace("-","/"))} ${esc(up.slice(11,16))}` : "") + staleNote();
   if (!d) { el.innerHTML = `<div class="empty">まだデータがありません。<br>GitHub Actions の「競馬の予想」が回ると表示されます。</div>`; return; }
   const all = races();
-  const rs = all.filter(centerOkR);
-  const buy = rs.filter(r => r.pred.verdict !== "見送り");
-  const nA = buy.filter(r => r.pred.verdict === "A").length;
-  const set = rs.filter(r => r.settle && r.pred.verdict !== "見送り");
-  const st = set.reduce((a, r) => a + r.settle.stake, 0), rt = set.reduce((a, r) => a + r.settle.ret, 0);
   const nback = all.filter(r => r.pred.src === "backfill").length;
   const i = state.days.indexOf(d.date);
   const mapRs = allRaces().filter(centerOkR);
@@ -540,9 +630,8 @@ function renderRace() {
     cnt[k] = (cnt[k] || 0) + 1;
     if (["buy", "hit", "lose"].includes(k)) cnt.bought++;
   }
-  cnt.skip = (cnt.skip || 0) + (cnt.ref || 0);
-  const kinds = [["all", "すべて"], ["bought", "買い"], ["hit", "的中"], ["lose", "外れ"], ["skip", "見送り"],
-                 ["ref", "見送り・◎○なら的中"], ["wait", "予想前"]].filter(([k]) => k === "all" || cnt[k]);
+  const kinds = [["all", "すべて"], ["bought", "買い目あり"], ["hit", "的中"], ["lose", "外れ"], ["skip", KIND.skip],
+                 ["wait", "予想前"]].filter(([k]) => k === "all" || cnt[k]);
   if (!kinds.some(([k]) => k === state.filter)) state.filter = "all";
   el.innerHTML = `
     <div class="datenav">
@@ -552,26 +641,20 @@ function renderRace() {
     </div>
     <div class="oddsbar" id="oddsbar"></div>
     <div id="nextbuy"></div>
-    ${state.noRace && d.date === state.noRace.pick ? `<div class="srcnote">今日 ${fmtD(state.noRace.today).slice(5)} は中央の開催がありません。
+    ${state.noRace && d.date === state.noRace.pick ? `<div class="srcnote">今日 ${fmtD(state.noRace.today).slice(5)} は${KOCHI ? "高知" : "中央"}の開催がありません。
       ${state.noRace.next ? "次の開催の予想を出しています(出馬表は土曜分が木曜、日曜分が金曜に出ます)。" : "最後の開催を出しています。"}</div>` : ""}
-    ${nback ? `<div class="srcnote">${nback === all.length ? "この日" : nback + "レース"}は<b>後から再現した予想</b>です。
-      その日の出馬表と、そのレースより前の過去走だけで予想しています(人気は確定人気)。</div>` : ""}
-    <div class="sum">
-      <button class="tile" data-tf="all" aria-pressed="${state.filter === "all"}"><div class="k">全レース</div><div class="v num">${rs.length}</div></button>
-      <button class="tile" data-tf="bought" aria-pressed="${state.filter === "bought"}"><div class="k">買う (A ${nA})</div><div class="v num">${buy.length}</div></button>
-      ${set.length ? `<div class="tile"><div class="k">収支 ${pct(rt, st)}</div>
-        <div class="v num ${rt - st >= 0 ? "good" : "neg"}">${yen(rt - st)}</div></div>`
-      : `<button class="tile" data-tf="skip" aria-pressed="${state.filter === "skip"}"><div class="k">見送り</div><div class="v num">${rs.length - buy.length}</div></button>`}
-    </div>
+    <div class="daysum" id="daysum">${daySumInner()}</div>
     ${CENTERS.length > 1 ? `<div class="chips" role="group" aria-label="中央・地方">
       ${[["all","中央+地方"],["jra","中央"],["nar","地方"]].map(([k,t]) => `<button class="chip" data-c="${k}" aria-pressed="${state.center===k}">${t}</button>`).join("")}
     </div>` : ""}
     ${raceMap(mapRs)}
-    <div class="tools"><input id="q" type="search" placeholder="場・レース番号・馬名・騎手でしぼる" value="${esc(state.q)}"
-      aria-label="レースをしぼる" enterkeyhint="search"><button class="clr" id="qclr" aria-label="しぼり込みを消す">✕</button></div>
     <div class="chips k" role="group" aria-label="レースの状態">
       ${kinds.map(([k, t]) => `<button class="chip" data-f="${k}" aria-pressed="${state.filter===k}">${t}<b>${cnt[k]}</b></button>`).join("")}
     </div>
+    <div class="tools"><input id="q" type="search" placeholder="場・レース番号・馬名・騎手でさがす" value="${esc(state.q)}"
+      aria-label="レースをしぼる" enterkeyhint="search"><button class="clr" id="qclr" aria-label="しぼり込みを消す">✕</button></div>
+    ${nback ? `<div class="legendnote" style="margin:0 2px 8px">${nback === all.length ? "この日" : nback + "レース"}のモデルの予想は、後から再現したものです
+      (その日の出馬表と、そのレースより前の過去走だけで予想。人気は確定人気)。</div>` : ""}
     <div id="rlist"></div>`;
   $("#prev").onclick = () => goDay(-1);
   $("#next").onclick = () => goDay(1);
@@ -579,11 +662,6 @@ function renderRace() {
   drawNextBuy();
   $("#pick").onclick = () => { state.calMonth = d.date.slice(0, 6); openCalendar(); };
   el.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { state.filter = b.dataset.f; saveRace(); renderRace(); });
-  // 上のマス: 絞り込んで一覧の頭へ
-  el.querySelectorAll("[data-tf]").forEach(b => b.onclick = () => {
-    state.filter = b.dataset.tf; state.q = ""; saveRace(); renderRace();
-    $("#rlist").scrollIntoView({behavior: "smooth", block: "start"});
-  });
   el.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { state.center = b.dataset.c; saveRace(); renderRace(); });
   el.querySelectorAll(".cell[data-rid]").forEach(b => b.onclick = () => jumpRace(b.dataset.rid));
   $("#q").oninput = e => { state.q = e.target.value; drawList(); };
@@ -591,7 +669,7 @@ function renderRace() {
   drawList();
 }
 
-// 買うレース(カード)を先に、見送り・予想前(1行ずつ、1つの枠にまとめる)を後に。どちらも発走順
+// 買い目のあるレース(カード)を先に、無いレース・予想前(1行ずつ、1つの枠にまとめる)を後に。どちらも発走順
 function drawList() {
   const box = $("#rlist");
   if (!box) return;
@@ -602,11 +680,9 @@ function drawList() {
   }
   const isBuy = r => ["buy", "hit", "lose"].includes(raceKind(r));
   const buys = shown.filter(isBuy), rest = shown.filter(r => !isBuy(r));
-  const skips = rest.filter(r => ["skip", "ref"].includes(raceKind(r)));
-  let html = buys.length ? `<div class="sec">買うレース ${buys.length}</div>` + buys.map(card).join("") : "";
+  let html = buys.length ? `<div class="sec">買い目のあるレース ${buys.length}</div>` + buys.map(card).join("") : "";
   if (rest.length) {
-    const nw = rest.length - skips.length;
-    html += `<div class="sec">${skips.length ? skipHead(skips) + (nw ? ` · 予想前 ${nw}` : "") : `予想前 ${nw}`}</div>`
+    html += `<div class="sec">${KOCHI ? "レース" : "買い目のないレース"} ${rest.length}<span class="muted" style="font-weight:400"> · 押すと予想が開きます</span></div>`
       + `<div class="card">${rest.map(r => raceKind(r) === "wait" ? waitRow(r) : skipRow(r)).join("")}</div>`;
   }
   box.innerHTML = html;
@@ -617,17 +693,19 @@ function waitRow(r) {
   return `<div class="waitr" id="r-${esc(r.id)}"><b>${head(r)}</b><span class="r">予想前(出馬表・馬柱を取っているところ)</span></div>`;
 }
 
-// 締切前でいちばん早い買うレース。押すとそのレースへ飛ぶ
+// 締切前でいちばん早い、買い目のあるレース。押すとそのレースへ飛ぶ
 function drawNextBuy() {
   const el = $("#nextbuy"), d = state.day;
   if (!el || !d) return;
-  const r = races().filter(x => centerOkR(x) && x.pred.verdict !== "見送り" && !x.result && (untilClose(d.date, x) ?? -1) > 0)[0];
+  const r = races().filter(x => centerOkR(x) && !x.result && picksOf(x).length && (untilClose(d.date, x) ?? -1) > 0)[0];
   if (!r) { el.innerHTML = ""; return; }
-  const m = untilClose(d.date, r), p = r.pred;
-  const bet = p.bets.map(b => `${b.type} ${b.combos.map(c => comboText(b.type, c) + (comboOdds(r, b.type, c) ? `(${comboOdds(r, b.type, c)})` : "")).join(",")}`).join(" / ");
-  el.innerHTML = `<button class="nextb" data-rid="${esc(r.id)}"><span class="badge ${p.verdict}">${p.verdict}</span>
-    <span class="t"><span class="k">次の買い${m < 120 ? ` · <b>締切まで ${m}分</b>` : ""}</span>
-    <b>${head(r)}</b> <span class="num">${esc(bet)}</span></span><span class="muted">›</span></button>`;
+  const m = untilClose(d.date, r), p = r.pred, g = gapOf(r), bets = [];
+  if (g && g.buy) bets.push(`ワイド ${g.pair.join("-")}(${g.odds[0]}〜${g.odds[1]}倍)`);
+  if (p.verdict !== "見送り") bets.push(...p.bets.map(b => `${b.type} ${b.combos.map(c => comboText(b.type, c)
+    + (comboOdds(r, b.type, c) ? `(${comboOdds(r, b.type, c)})` : "")).join(",")}`));
+  el.innerHTML = `<button class="nextb" data-rid="${esc(r.id)}">
+    <span class="t"><span class="k">次の買い目${m < 120 ? ` · <b>締切まで ${m}分</b>` : ""}</span>
+    <b>${head(r)}</b> <span class="num">${esc(bets.join(" / "))}</span></span><span class="muted">›</span></button>`;
   el.querySelector("button").onclick = () => jumpRace(r.id);
 }
 
@@ -670,42 +748,132 @@ function betOdds(r, b) {
   const t = b.combos.map(c => comboOdds(r, b.type, c)).filter(Boolean).join(" / ");
   return t ? ` <span class="muted">${esc(t)}</span>` : "";
 }
-// 3連複の3頭目(▲)。3連複を買うレースだけ1行で出す
-function thirdLine(r) {
-  const p = r.pred, a = (p.aite || [])[0];
-  if (!a || !(p.bets || []).some(b => b.type === "3連複")) return "";
-  const e = p.horses.find(h => h.umaban === a) || {};
-  return `<div class="ax3"><span class="m">▲</span>${a} ${esc(hname(r, a))}
-    <span class="muted">${esc(e.style || "")} · 3着内 ${e.p3 != null ? Math.round(e.p3 * 100) + "%" : "-"}</span>
-    <span class="nv" data-u="${a}">${naviTag(r, a)}</span></div>`;
+// ---------------------------------------------------------------- 割安なワイド(確かめ中。2026-11-10)
+// 3連複の市場の見込み(0.75 × 組の強さ。組の強さ = その2頭を含む3連複の組の 1/オッズ の合計)が、
+// ワイドの市場の見込み(0.775 ÷ ワイドのオッズ)よりはっきり高い組。3着内の当たり方は3連複の市場の方が正確で、
+// 比が大きい組ほどワイドの回収率が上がる(keiba_logic.GAP・wide_gap と同じ計算。tools/experiments/trio_pair_wide.py)
+const GAP = {lo: 1.5, hi: 15, th: 1.30, pt: 0.75, pw: 0.775};
+function wideGap(tp, wide) {
+  if (!tp || !wide) return null;
+  let best = null;
+  for (const [k, v] of Object.entries(wide)) {
+    const s = tp[k];
+    if (!s) continue;
+    const lo = Array.isArray(v) ? v[0] : v, hi = Array.isArray(v) ? v[1] : v;
+    if (!lo || !hi) continue;
+    const w = (lo + hi) / 2;
+    if (!(w >= GAP.lo && w < GAP.hi)) continue;
+    const ratio = GAP.pt * s * w / GAP.pw;
+    if (!best || ratio > best.ratio || (ratio === best.ratio && k > best.key)) best = {key: k, pair: k.split("-").map(Number), ratio, odds: [lo, hi]};
+  }
+  if (best) best.buy = best.ratio >= GAP.th;
+  return best;
+}
+// 3連複の全部の組のオッズ -> 組ごとの強さ(keiba.py の trio_pair_sums と同じ)
+function trioPairSums(to) {
+  const s = {};
+  for (const [k, o] of Object.entries(to)) {
+    const us = k.split("-");
+    if (us.length !== 3 || !(o > 1)) continue;
+    for (const [a, b] of [[0, 1], [0, 2], [1, 2]]) { const key = us[a] + "-" + us[b]; s[key] = (s[key] || 0) + 1 / o; }
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(s)) if (v >= 0.003) out[k] = Math.round(v * 1e5) / 1e5;
+  return out;
+}
+// そのレースの割安なワイド。発走前のオッズ(当日に取った分・アプリで取り直した分)があればそれで、
+// 無ければ確定オッズで(過去の日。買う時点では分からないので参考)。結果が出ていれば払戻も
+function gapOf(r) {
+  if (KOCHI || r.center !== "jra" || !r.horses) return null;
+  const done = !!(r.result && (r.result.order || []).length >= 3);
+  // gw = 3連複の組の強さ(trio_pair)と同じ時刻のワイドのオッズ(アプリが片方だけ取り直したときに、時刻のちがう2つを比べない)
+  let g = wideGap(r.trio_pair, r.gw || r.wide_odds), src = "pre";
+  if (!g && done) { g = wideGap(r.trio_pair_final, r.wide_final); src = "fin"; }
+  if (!g) return null;
+  g.src = src; g.done = done;
+  if (done) {
+    const out = r.horses.filter(h => h.scratched).map(h => h.umaban);
+    g.void = g.pair.some(u => out.includes(u));
+    g.ret = g.void ? 0 : (((r.result.payout || {})["ワイド"] || {})[g.key] || 0);
+  }
+  return g;
+}
+function gapInner(r) {
+  const g = gapOf(r);
+  if (!g || !g.buy) return "";
+  const st = g.void ? `<span class="pk-r muted">取消で返還</span>`
+    : g.done ? (g.ret ? `<span class="pk-r good">的中 ${yen(g.ret)}</span>` : `<span class="pk-r neg">外れ</span>`) : `<span class="pk-r muted">発走前</span>`;
+  return `<div class="pk gap ${g.done && !g.void ? (g.ret ? "hit" : "lose") : ""}">
+    <div class="pk-h"><span>割安ワイド<em>確かめ中</em></span><span>${g.src === "pre" ? (g.done ? "発走前のオッズで選んだ" : "いまのオッズで") : "確定オッズで選んだ(参考)"}</span></div>
+    <div class="pk-b"><span class="ty">ワイド</span><span class="cb num">${g.pair.join("-")}</span>
+      <span class="od num">${g.odds[0]}〜${g.odds[1]}倍 · 割安度 ${g.ratio.toFixed(2)}</span>${st}</div>
+    <div class="pk-n">${g.pair.map(u => `${u} ${esc(hname(r, u))}`).join(" ・ ")}</div></div>`;
+}
+// モデルの買い目(3連複◎-○-▲、▲が延長ならワイド◎-○)。always なら見送りのときも理由を出す
+function modelPick(r, always) {
+  const p = r.pred, s = r.settle, done = !!(r.result && s);
+  if (p.verdict === "見送り") {
+    return always && !KOCHI ? `<div class="pk none"><div class="pk-h"><span>モデルの買い目</span><span></span></div>
+      <div class="pk-b">見送り<span class="od">${esc(shortReason(p.reason))}</span></div></div>` : "";
+  }
+  const rows = p.bets.map(b => {
+    const st = done ? (b.hit && b.hit.length ? `<span class="pk-r good">的中 ${yen(b.ret || 0)}</span>` : `<span class="pk-r neg">外れ</span>`)
+      : `<span class="pk-r muted">発走前</span>`;
+    return `<div class="pk-b bet"><span class="ty">${esc(b.type)}</span>
+      <span class="cb num">${b.combos.map(c => c.join(b.type === "3連単" ? "→" : "-")).join("  ")}</span>
+      <span class="od num"><span class="bo">${betOdds(r, b)}</span>${b.combos.length * b.unit !== 100 ? ` ${b.combos.length}点×${b.unit}円` : ""}</span>${st}</div>
+      <div class="pk-n">${esc(b.kind)} … ${esc(b.role)}</div>`;
+  }).join("");
+  return `<div class="pk model ${done ? (s.hit ? "hit" : "lose") : ""}">
+    <div class="pk-h"><span>モデルの買い目<em class="v${esc(p.verdict)}">${esc(p.verdict)}</em></span><span>${p.src === "backfill" ? "再現した予想" : ""}</span></div>${rows}</div>`;
+}
+// ◎○▲(確率・オッズ・結果が出ていれば着順)
+function marks(r) {
+  const p = r.pred;
+  if (!p || !p.honmei) return "";
+  const res = r.result, fo = (res || {}).odds || {}, done = res && (res.order || []).length >= 3;
+  const row = (m, u) => {
+    if (!u) return "";
+    const e = p.horses.find(h => h.umaban === u) || {}, ho = r.horses.find(h => h.umaban === u) || {};
+    const rk = done ? res.order.indexOf(u) + 1 : 0, od = fo[u] || ho.odds;
+    return `<div class="mkr"><span class="m">${m}</span><span class="u num">${u}</span>
+      <span class="n">${esc(ho.name || "")}<small>${esc(e.style || "")} <span class="nv" data-u="${u}">${naviTag(r, u)}</span></small></span>
+      <span class="p num">${e.p3 != null ? Math.round(e.p3 * 100) + "%" : ""}</span>
+      <span class="o num" data-mo="${u}">${od ? od + "倍" : ""}</span>
+      ${done ? `<span class="rk ${rk && rk <= 3 ? "in" : ""}">${rk ? rk + "着" : "-"}</span>` : ""}</div>`;
+  };
+  return `<div class="mk3 ${done ? "d" : ""}"><div class="mkh"><span></span><span></span><span>馬</span><span>3着内</span><span>単勝</span>${done ? "<span>結果</span>" : ""}</div>
+    ${row("◎", p.honmei)}${row("○", p.taikou)}${row("▲", (p.aite || [])[0])}</div>`;
+}
+function rcHead(r) {
+  const res = r.result, done = res && (res.order || []).length >= 3;
+  const m = !done && state.day ? untilClose(state.day.date, r) : null;
+  const st = done ? `<span class="st">結果 <b class="num">${res.order.slice(0, 3).join("-")}</b></span>`
+    : m != null && m > 0 && m < 120 ? `<span class="st soon">締切まで ${m}分</span>` : "";
+  return `<div class="rc-h"><span class="ti">${esc(r.venue)} ${r.rno}R</span><span class="tm num">${esc(r.start || "")}</span>${st}</div>
+    <div class="rc-m">${meta(r)} <span class="czs">${chaosTag(r, true)}</span></div>`;
+}
+function resLine(r) {
+  const res = r.result;
+  return `<div class="res">結果 <b class="num">${res.order.slice(0, 3).join("-")}</b>
+    <div class="muted" style="margin-top:2px">${res.order.slice(0, 3).map((u, i) => `${i + 1}着 ${u} ${esc(hname(r, u))}`).join(" / ")}</div>${altLine(r)}</div>`;
+}
+// くわしい中身(理由・荒れ度・コース・期待値・全馬の評価)。カードでも1行のレースでも同じ
+function detailInner(r) {
+  const p = r.pred, res = r.result, g = gapOf(r);
+  return `${p.reason ? `<div class="note"><div>${p.verdict === "見送り" ? "モデルは見送り: " : "モデル: "}${esc(p.reason)}${p.pace ? "(展開: " + esc(p.pace.note) + ")" : ""}</div></div>` : ""}
+    ${p.notes && p.notes.length ? `<div class="note">${p.notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
+    ${g && !g.buy ? `<div class="note"><div>割安ワイド: なし(割安度がいちばん高い組は ${g.pair.join("-")} の ${g.ratio.toFixed(2)}。${GAP.th.toFixed(1)} 以上で買い目にする)</div></div>` : ""}
+    ${chaosOf(r) ? `<div class="note czl">${chaosLine(r)}</div>` : ""}
+    ${res && res.order && res.order.length >= 3 ? resLine(r) : ""}
+    ${courseBox(p.course)}${naviLine(r)}${evBox(r)}
+    <div class="mkrow"><button class="btn sm" data-mk="${esc(r.id)}">買い目を作る</button></div>
+    ${p.horses.length ? table(r) : ""}`;
 }
 function card(r) {
-  const p = r.pred, s = r.settle, res = r.result;
-  const hv = p.horses.find(h => h.umaban === p.honmei) || {}, tv = p.horses.find(h => h.umaban === p.taikou) || {};
-  const ax = (m, u, e) => `<div class="ax"><div class="n"><span class="m">${m}</span>${u} ${esc(hname(r, u))}</div>
-    <div class="s">${esc(e.style || "脚質?")} · ${e.p3 != null ? "3着内 " + Math.round(e.p3 * 100) + "%" : "評価 " + e.score}</div>
-    <span class="nv" data-u="${u}">${naviTag(r, u)}</span></div>`;
-  const bets = p.bets.map(b => `<div class="bet ${b.hit && b.hit.length ? "hit" : ""}">
-      <span class="ty">${esc(b.type)}</span>
-      <span class="cb">${b.combos.map(c => c.join(b.type === "3連単" ? "→" : "-")).join("  ")}<span class="bo">${betOdds(r, b)}</span><span class="role">${esc(b.kind)} … ${esc(b.role)}</span></span>
-      <span class="pt">${b.combos.length}点×${b.unit}円${b.ret ? `<br><b class="good">${yen(b.ret)}</b>` : ""}</span></div>`).join("");
-  return `<article class="card ${p.verdict === "A" ? "buyA" : ""}" id="r-${esc(r.id)}">
-    <div class="ch"><div class="badge ${p.verdict}">${p.verdict}</div>
-      <div class="t"><b>${head(r)}</b>${p.src === "backfill" ? ` <span class="tag o">再現</span>` : ""}<div class="meta">${meta(r)}</div>
-      <div class="meta">${esc(p.reason)}${p.pace ? " · 展開: " + esc(p.pace.note) : ""}</div>
-      <div class="meta czl">${chaosLine(r)}</div></div></div>
-    <div class="axis">${ax("◎", p.honmei, hv)}${ax("○", p.taikou, tv)}</div>${thirdLine(r)}
-    ${p.notes && p.notes.length ? `<div class="note">${p.notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
-    ${courseBox(p.course)}${naviLine(r)}
-    <div class="bets">${bets}
-      <div class="total"><span>${p.points}点</span><span>${yen(p.stake)}</span></div>
-      <div class="mkrow"><button class="btn sm" data-mk="${esc(r.id)}">ほかの買い目を作る</button></div></div>
-    ${res && res.order ? `<div class="res">結果 <b class="num">${res.order.slice(0,3).join("-")}</b>
-      ${s ? ` · ◎${s.honmei_rank ?? "-"}着 ○${s.taikou_rank ?? "-"}着 · ${s.hit ? `<b class="good">的中 ${yen(s.ret)}</b>` : `<span class="neg">不的中</span>`}` : ""}
-      ${altLine(r)}</div>` : ""}
-    ${evBox(r)}
-    <details class="more"><summary>全馬の評価(来ない理由)</summary>${table(r)}</details>
-  </article>`;
+  return `<article class="rc" id="r-${esc(r.id)}">${rcHead(r)}${marks(r)}
+    <div class="gapw">${gapInner(r)}</div>${modelPick(r, true)}
+    <details class="more"><summary>くわしく(理由・コース・全馬の評価)</summary>${detailInner(r)}</details></article>`;
 }
 
 // コース傾向(中央は titanic-online.com の2021〜2025年の集計、地方はうまめし.com の記事)
@@ -816,26 +984,12 @@ function shortReason(t) {
 }
 
 function skipRow(r) {
-  const res = r.result, ref = skipRef(r);
-  const rs = res && res.order && res.order.length >= 3
-    ? `<span class="rs num ${ref && ref.ret ? "hit" : ""}">${res.order.slice(0, 3).join("-")}${ref && ref.ret ? " ◎○" : ""}</span>` : "";
-  return `<details class="skipd more" id="r-${esc(r.id)}" style="border-top:0;border-bottom:1px solid var(--line)"><summary class="skip">
-    <b>${head(r)}</b><span class="r">${esc(shortReason(r.pred.reason))}</span><span class="czs">${chaosTag(r, true)}</span>${rs}</summary>
-    ${shortReason(r.pred.reason) !== r.pred.reason ? `<div class="note" style="padding-top:2px">見送り: ${esc(r.pred.reason)}</div>` : ""}
-    ${chaosOf(r) ? `<div class="note czl" style="padding-top:2px">${chaosLine(r)}</div>` : ""}
-    ${skipRes(r)}
-    <div class="mkrow"><button class="btn sm" data-mk="${esc(r.id)}">買い目を作る</button></div>
-    <div class="note" style="padding-top:4px">${meta(r)}</div>${courseBox(r.pred.course)}${naviLine(r)}${evBox(r)}${r.pred.horses.length ? table(r) : ""}</details>`;
-}
-
-// 見送り欄の見出し: 結果が出たレースで、もし今の買い方(中央は3連複◎○▲)で買っていたら
-function skipHead(rs) {
-  const refs = rs.map(skipRef).filter(Boolean);
-  if (!refs.length) return `見送り ${rs.length}レース`;
-  const hit = refs.filter(x => x.ret).length, ret = refs.reduce((a, x) => a + x.ret, 0);
-  const lb = [...new Set(refs.map(x => x.label))].join("・");
-  return `見送り ${rs.length}レース <span class="muted" style="font-weight:400">· もし${lb}を買っていたら
-    ${refs.length}レース 的中${hit} 回収率${pct(ret, refs.length * 100)}(参考)</span>`;
+  const res = r.result, done = res && (res.order || []).length >= 3;
+  return `<details class="skipd more" id="r-${esc(r.id)}"><summary class="skip">
+    <b>${esc(r.venue)} ${r.rno}R</b><span class="tm num">${esc(r.start || "")}</span>
+    <span class="r">${esc(shortReason(r.pred.reason))}</span><span class="czs">${chaosTag(r, true)}</span>
+    ${done ? `<span class="rs num">${res.order.slice(0, 3).join("-")}</span>` : ""}</summary>
+    <div class="rc-m" style="padding-top:2px">${meta(r)}</div>${marks(r)}<div class="gapw"></div>${detailInner(r)}</details>`;
 }
 
 const evCls = v => v >= 1 ? "ev up" : "ev";
@@ -967,6 +1121,34 @@ function wireChart(pts) {
   svg.addEventListener("pointerleave", hide);
 }
 
+// 割安ワイド(確かめ中)の成績。history.json の gap = [日付, 確定オッズで選んだ点数, 的中, 払戻, 発走前のオッズで選んだ点数, 的中, 払戻]
+function gapMoney(from, to) {
+  const g = (state.hist || {}).gap || [];
+  if (!g.length) return "";
+  const sum = (rows, i) => rows.reduce((a, r) => [a[0] + r[i], a[1] + r[i + 1], a[2] + r[i + 2]], [0, 0, 0]);
+  const inP = g.filter(r => r[0] >= from && r[0] <= to);
+  const [n, hit, ret] = sum(inP, 1), [pn, phit, pret] = sum(g, 4);
+  const years = [...new Set(g.map(r => r[0].slice(0, 4)))].sort();
+  const yr = years.map(y => { const [a, b, c] = sum(g.filter(r => r[0].startsWith(y)), 1); return [y, a, b, c]; });
+  const tot = sum(g, 1);
+  const tr = ([k, a, b, c], bold) => `<tr><td>${bold ? `<b>${k}</b>` : k}</td><td>${a.toLocaleString()}</td><td>${pct(b, a)}</td>
+    <td class="${c >= a * 100 ? "good" : "neg"}">${yen(c - a * 100)}</td><td class="${c >= a * 100 ? "good" : "neg"}"><b>${pct(c, a * 100)}</b></td></tr>`;
+  return `<div class="sec" style="margin-top:4px">割安ワイド(新しい買い方・確かめ中)</div>
+    <p class="muted" style="font-size:12px;margin-bottom:8px">${fmtD(from)} 〜 ${fmtD(to)} · <b>確定オッズで選んだ場合</b>(1点100円)</p>
+    <div class="sum">
+      <div class="tile"><div class="k">回収率</div><div class="v num ${ret >= n * 100 ? "good" : "neg"}">${pct(ret, n * 100)}</div></div>
+      <div class="tile"><div class="k">収支</div><div class="v num ${ret >= n * 100 ? "good" : "neg"} ${yen(ret - n * 100).length > 9 ? "long" : ""}">${yen(ret - n * 100)}</div></div>
+      <div class="tile"><div class="k">的中 ${hit}/${n}R</div><div class="v num">${pct(hit, n)}</div></div>
+    </div>
+    <table class="tbl nw"><thead><tr><th>年</th><th>R</th><th>的中</th><th>収支</th><th>回収率</th></tr></thead>
+      <tbody>${yr.map(x => tr(x)).join("")}${tr(["全部", ...tot], true)}</tbody></table>
+    <div class="srcnote" style="margin-top:8px"><b>発走前のオッズで選んだ場合</b>(実際に買える形): ${pn
+      ? `${pn}R · 的中 ${phit} · 回収率 <b>${pct(pret, pn * 100)}</b> · 収支 ${yen(pret - pn * 100)}`
+      : "まだありません(2026-11-14 の開催からたまります)"}</div>
+    <p class="muted" style="font-size:12px;margin:6px 0 0">上の表は、レースが終わったあとの確定オッズで選んだ場合の成績です。買うときに見えるのは発走の数分前のオッズで、
+      締切の直前に動くので、同じ成績になるとは限りません。発走前のオッズで選んだ成績がたまるまでは、参考として見てください(「考え方」に説明)。</p>`;
+}
+
 function renderMoney() {
   const el = $("#v-money"), h = state.hist;
   if (KOCHI) {                       // 高知は予想だけ(買わない)なので収支は無い
@@ -1055,6 +1237,8 @@ function renderMoney() {
     ${CENTERS.length > 1 ? `<div class="chips" role="group" aria-label="中央・地方">
       ${[["all","中央+地方"],["中央","中央"],["地方","地方"]].map(([k, t]) => `<button class="chip" data-mc="${k}" aria-pressed="${state.mcenter === k}">${t}</button>`).join("")}
     </div>` : ""}
+    ${gapMoney(from, to)}
+    <div class="sec" style="margin-top:14px">モデルの買い目(3連複◎-○-▲)</div>
     <p class="muted" style="font-size:12px;margin-bottom:8px">${fmtD(from)} 〜 ${fmtD(to)}${state.mcenter !== "all" ? " · " + state.mcenter + "のみ" : ""}${state.src !== "all" ? " · " + SRC[state.src] + "のみ" : ""}</p>
     <div class="sum">
       <div class="tile"><div class="k">回収率</div><div class="v num ${R >= S ? "good" : "neg"}">${pct(R, S)}</div></div>
@@ -1234,9 +1418,12 @@ function renderVote() {
   const items = [];
   for (const r of races()) {
     const p = r.pred;
-    if (p.verdict === "見送り") continue;
-    for (const b of p.bets) for (const c of b.combos)
+    if (p.verdict !== "見送り") for (const b of p.bets) for (const c of b.combos)
       items.push({r, type: b.type, c, unit: b.unit, verdict: p.verdict, id: voteId(r.id, b.type, c)});
+    // 割安ワイド(確かめ中)。モデルの買い目と同じ組なら1つにまとめる
+    const g = gapOf(r);
+    if (g && g.buy && !g.void && !items.some(x => x.id === voteId(r.id, "ワイド", g.pair)))
+      items.push({r, type: "ワイド", c: g.pair, unit: 100, verdict: "割安", id: voteId(r.id, "ワイド", g.pair)});
   }
   // 自分で作った買い目(予想に無いレース・券種も)
   for (const t of Object.values(tickets)) {
@@ -1277,7 +1464,7 @@ function renderVote() {
   const rows = items.map((x, n) => {
     const v = bought(x), done = closed(x);
     const tag = x.t ? `<span class="tag o">自分で</span>`
-      : x.verdict ? `<span class="badge ${x.verdict}" style="display:inline-grid;min-width:22px;height:20px;font-size:12px;border-radius:6px;vertical-align:1px">${x.verdict}</span>` : "";
+      : x.verdict ? `<span class="badge ${x.verdict === "割安" ? "A" : x.verdict}" style="display:inline-grid;min-width:22px;height:20px;font-size:12px;border-radius:6px;vertical-align:1px;padding:0 5px">${x.verdict}</span>` : "";
     const what = x.t ? `${esc(x.type)}${x.t.method !== "通常" ? " " + esc(x.t.method) : ""} <b>${esc(selText(x.t))}</b>
         ${x.cs.length > 1 ? `${x.cs.length}点×${x.unit}円` : x.unit + "円"}`
       : `${esc(x.type)} <b>${esc(comboText(x.type, x.c))}</b> ${x.unit}円`;
@@ -1431,14 +1618,14 @@ async function liveWide(rid) {
   return out;
 }
 
-// 3連複 ◎-○-x のオッズ "小さい順-…" -> オッズ(keiba.py の parse_trio_odds と同じ)
+// 3連複のオッズ "小さい順-…" -> オッズ(keiba.py の parse_trio_odds と同じ)。pair があればその2頭を含む組だけ
 async function liveTrio(rid, pair) {
   const j = JSON.parse(await appFetch("https://race.netkeiba.com/api/api_get_jra_odds.html?pid=api_get_jra_odds&input=UTF-8" +
     "&output=json&race_id=" + rid + "&type=7&action=init&compress=0"));
   const out = {};
   for (const [k, v] of Object.entries(((j.data || {}).odds || {})["7"] || {})) {
     const us = [+k.slice(0, 2), +k.slice(2, 4), +k.slice(4, 6)].sort((a, b) => a - b), o = parseFloat(String(v[0]).replace(/,/g, ""));
-    if (o > 0 && pair.every(u => us.includes(u))) out[us.join("-")] = o;
+    if (o > 0 && (!pair || pair.every(u => us.includes(u)))) out[us.join("-")] = o;
   }
   return out;
 }
@@ -1564,10 +1751,18 @@ function updateOddsDom(r) {
   if (ev) ev.innerHTML = evInner(r);
   box.querySelectorAll(".czl").forEach(el => { el.innerHTML = chaosLine(r); });
   box.querySelectorAll(".czs").forEach(el => { el.innerHTML = chaosTag(r, true); });
+  box.querySelectorAll("[data-mo]").forEach(el => {
+    const ho = r.horses.find(h => h.umaban === +el.dataset.mo);
+    if (ho && ho.odds) el.textContent = ho.odds + "倍";
+  });
+  const gw = box.querySelector(".gapw");
+  if (gw && box.tagName !== "DETAILS") gw.innerHTML = gapInner(r);
   const bs = box.querySelectorAll(".bet .bo");
   (r.pred.bets || []).forEach((b, i) => { if (bs[i]) bs[i].innerHTML = betOdds(r, b); });
   drawNextBuy();
 }
+// 割安ワイドの買い目の並び(オッズを取り直して変わったら、一覧を作り直す)
+const gapSig = () => allRaces().map(r => { const g = gapOf(r); return g && g.buy ? r.id + ":" + g.key : ""; }).join(",");
 async function refreshOdds(manual) {
   if (!canLive() || oddsState.busy || !state.day) return;
   const d = state.day;
@@ -1577,6 +1772,7 @@ async function refreshOdds(manual) {
     return;
   }
   oddsState.busy = true; drawOddsBar();
+  const sig0 = gapSig();
   let ok = 0, ng = 0;
   const q = todo.slice();
   await Promise.all([0, 1, 2, 3].map(async () => {          // 4つずつ並べて取る
@@ -1587,15 +1783,28 @@ async function refreshOdds(manual) {
       ok++;
       for (const h of r.horses) if (o[h.umaban]) { h.odds = o[h.umaban][0]; h.ninki = o[h.umaban][1]; }
       const w = await liveWide(r.id).catch(() => ({}));
-      if (Object.keys(w).length) r.wide_odds = w;
-      const p = r.pred || {};
-      if (["A", "B"].includes(p.verdict) && p.honmei && p.taikou) {
-        const t3 = await liveTrio(r.id, [p.honmei, p.taikou]).catch(() => ({}));
-        if (Object.keys(t3).length) r.trio_odds = t3;
+      if (Object.keys(w).length) {
+        if (r.trio_pair && !r.gw) r.gw = r.wide_odds;      // サーバーが同じ時刻に取った組を、割安ワイド用に残しておく
+        r.wide_odds = w;
+      }
+      // 3連複の全部の組(割安ワイド用の組ごとの強さ)。締切まで90分以内のレースと、モデルが買うレース(買い目のオッズ)だけ
+      const p = r.pred || {}, ab = ["A", "B"].includes(p.verdict) && p.honmei && p.taikou;
+      if (ab || (untilClose(d.date, r) ?? 999) <= 90) {
+        const ta = await liveTrio(r.id).catch(() => ({}));
+        if (Object.keys(ta).length) {
+          const tp = trioPairSums(ta);
+          if (Object.keys(tp).length && Object.keys(w).length) { r.trio_pair = tp; r.gw = w; }
+          if (ab) {
+            const t3 = Object.fromEntries(Object.entries(ta).filter(([k]) => { const us = k.split("-").map(Number); return us.includes(p.honmei) && us.includes(p.taikou); }));
+            if (Object.keys(t3).length) r.trio_odds = t3;
+          }
+        }
       }
       updateOddsDom(r);
     }
   }));
+  if (gapSig() !== sig0) drawList();          // 割安ワイドの買い目が変わった
+  drawDaySum();
   Object.assign(oddsState, {at: Date.now(), day: d.date, busy: false, ok, ng});
   drawOddsBar();
 }
@@ -1962,10 +2171,32 @@ function chaosRule() {
     <p class="muted" style="font-size:11px;margin:4px 0 0">中央 ${esc((c.years || []).join("〜"))}年の ${(c.races || 0).toLocaleString()}R(年ごとに、ほかの年で学んだ式で読んだ分)。
       毎週の学び直しで作り直す(${esc(c.fitted || "")})</p>`;
 }
+// 割安ワイドの説明
+function gapRule() {
+  const g = (state.hist || {}).gap || [];
+  const t = g.reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);
+  return `<div class="sec">割安ワイド(新しい買い方・確かめ中。2026-11-10)</div>
+    <ul class="rules">
+      <li><b>何か</b>同じ「2頭とも3着内」を、3連複を買う人たちとワイドを買う人たちがどう見ているかをくらべ、
+        <b>3連複の市場は来ると見ているのに、ワイドではまだ売れていない組</b>のワイドを買う</li>
+      <li><b>なぜ</b>3着内に来る馬は、単勝オッズよりワイドのオッズ、ワイドより3連複のオッズの方が正確に当てている
+        (売上がいちばん大きく、よく調べて買う人が多い)。ワイドの値段は3連複に追いついていないことがある</li>
+      <li><b>割安度</b>= 3連複の見込み(0.75 × その2頭を含む3連複の組の 1/オッズ の合計)÷ ワイドの見込み(0.775 ÷ ワイドのオッズ)。
+        1レースで割安度がいちばん高い組(ワイド ${GAP.lo}〜${GAP.hi}倍の中で)が <b>${GAP.th.toFixed(1)} 以上</b>なら、その1点を買い目にする。5レースに1つくらい出る</li>
+      <li><b>確かめたこと</b>2022〜2026年の中央の全レース(確定オッズ)で、どのオッズの帯・どの年でも、割安度が高い組ほどワイドの的中も回収率も上がる。
+        買い目にする組は${t[0] ? ` ${t[0].toLocaleString()}R・的中 ${pct(t[1], t[0])}・回収率 <b>${pct(t[2], t[0] * 100)}</b>` : " 約109%"}(年ごとは「収支・分析」)</li>
+      <li><b>まだ分からないこと</b>上の成績は<b>確定オッズ</b>で選んだ場合。買うときに見えるのは発走の数分前のオッズで、締切の直前に大きく動く。
+        発走前のオッズで選んでも同じように当たるかは、2026-11-14 の開催から記録して確かめている。それまでは参考</li>
+      <li><b>見方</b>レースの欄の「割安ワイド」に、買い目・ワイドのオッズ・割安度・結果を出す。過去の日は確定オッズで選んだもの、
+        当日は発走前に取ったオッズ(アプリは開いたときに取り直す)で選んだもの</li>
+    </ul>`;
+}
+
 function renderRule() {
   if (KOCHI) { renderRuleKochi(); return; }
   $("#v-rule").innerHTML = `
-    <div class="sec">流れ</div>
+    ${gapRule()}
+    <div class="sec">モデルの買い目の流れ</div>
     <div class="flow"><div>全レースの各馬に、3着以内に来る確率を出す</div>
       <div>各馬の負け要因(距離・展開・枠・斤量・休み明け・クラス差・馬場)を数える(30か条の評価。確率モデルの材料)</div>
       <div>軸にできる馬(延長などでない)の確率の上位2頭を◎○、その次を▲にする</div>

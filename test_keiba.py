@@ -4,6 +4,7 @@
 
 import json
 import os
+import re
 import unittest
 
 import keiba as K
@@ -380,6 +381,30 @@ class Parse(unittest.TestCase):
         self.assertEqual(K.parse_trio_odds(j), {"1-2-3": 3602.0, "2-3-9": 12.3, "3-4-9": 45.1})
         self.assertEqual(K.parse_trio_odds(j, (9, 2)), {"2-3-9": 12.3})       # ◎○を含む組だけ
         self.assertEqual(K.parse_trio_odds({"data": {"odds": {}}}), {})
+
+    def test_wide_gap(self):
+        # 割安ワイド: ワイド1.5〜15倍の中で、3連複の見込み÷ワイドの見込みがいちばん大きい組。1.3以上で買い目
+        tp = {"1-2": 0.30, "1-3": 0.20, "2-3": 0.05, "1-4": 0.9}
+        wide = {"1-2": [2.0, 2.4], "1-3": [6.0, 8.0], "2-3": [30, 40], "1-4": [1.1, 1.3], "3-4": [5.0, 6.0]}
+        g = L.wide_gap(tp, wide)
+        self.assertEqual((g["key"], g["pair"], g["odds"], g["buy"]), ("1-3", [1, 3], [6.0, 8.0], True))
+        self.assertAlmostEqual(g["ratio"], 0.75 * 0.20 * 7.0 / 0.775, places=3)      # 1.355
+        self.assertFalse(L.wide_gap({"1-2": 0.30}, {"1-2": [2.0, 2.4]})["buy"])       # 0.64
+        self.assertIsNone(L.wide_gap({"2-3": 0.05}, {"2-3": [30, 40]}))               # オッズが範囲の外
+        self.assertIsNone(L.wide_gap(None, wide))
+        self.assertIsNone(L.wide_gap(tp, None))
+        # アプリの計算(index.html の GAP)と同じ数字
+        html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "index.html"), encoding="utf-8").read()
+        m = re.search(r"const GAP = \{lo: ([\d.]+), hi: ([\d.]+), th: ([\d.]+), pt: ([\d.]+), pw: ([\d.]+)\};", html)
+        self.assertEqual([float(x) for x in m.groups()], [L.GAP[k] for k in ("lo", "hi", "th", "pt", "pw")])
+
+    def test_gap_pay(self):
+        rc = {"horses": [{"umaban": 1}, {"umaban": 3}, {"umaban": 5, "scratched": True}],
+              "result": {"order": [1, 3, 2], "payout": {"ワイド": {"1-3": 520, "1-2": 300, "2-3": 900}}}}
+        self.assertEqual(K.gap_pay(rc, {"key": "1-3", "pair": [1, 3]}), 520)
+        self.assertEqual(K.gap_pay(rc, {"key": "1-4", "pair": [1, 4]}), 0)
+        self.assertIsNone(K.gap_pay(rc, {"key": "1-5", "pair": [1, 5]}))                # 取消は数えない
+        self.assertIsNone(K.gap_pay({"horses": []}, {"key": "1-3", "pair": [1, 3]}))    # 結果がまだ
 
     def test_trio_pair_sums(self):
         # 2頭を含む3連複の組の 1/オッズ の合計。小さい組は保存しない

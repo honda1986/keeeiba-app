@@ -951,6 +951,44 @@ def alt_bets(p, res):
 HISTORY_FROM = "20240101"
 
 
+def gap_pay(rc, g):
+    """割安なワイドの組 g(L.wide_gap の返り)の払戻(100円あたり)。結果が無い・その馬が取消なら None"""
+    res = rc.get("result") or {}
+    if not g or len(res.get("order") or []) < 3:
+        return None
+    out = {h["umaban"] for h in rc.get("horses") or [] if h.get("scratched")}
+    if out & set(g["pair"]):
+        return None
+    return ((res.get("payout") or {}).get("ワイド") or {}).get(g["key"], 0)
+
+
+def gap_history():
+    """割安なワイド(L.wide_gap)の日ごとの成績。確定オッズで選んだ場合(2022年〜の全部の日)と、
+    発走前のオッズで選んだ場合(当日に取った日だけ)。[日付, 確定の点数, 的中, 払戻, 発走前の点数, 的中, 払戻]"""
+    out = []
+    if "jra" not in CENTERS:
+        return out
+    for f in sorted(glob.glob(OUT + "/days/*.json")):
+        day = load(f, None)
+        if not day:
+            continue
+        row = [day["date"], 0, 0, 0, 0, 0, 0]
+        for rid, rc in day.get("races", {}).items():
+            if center_of(rid) != "jra" or not target(rid):
+                continue
+            for i, (kt, kw) in ((1, ("trio_pair_final", "wide_final")), (4, ("trio_pair", "wide_odds"))):
+                g = L.wide_gap(rc.get(kt), rc.get(kw))
+                pay = gap_pay(rc, g) if g and g["buy"] else None
+                if pay is None:
+                    continue
+                row[i] += 1
+                row[i + 1] += pay > 0
+                row[i + 2] += pay
+        if row[1] or row[4]:
+            out.append(row)
+    return out
+
+
 def build_history():
     """日別ファイルから、期間で絞れる形の成績を作る。
     days  … 日ごとの合計と、印・負けパターンの集計(アプリが期間で足し合わせる)
@@ -1024,7 +1062,7 @@ def build_history():
                 "alt": alt_bets(p, rc.get("result") or {})})
         days.append(row)
     hist = {"updated": datetime.now(JST).isoformat(timespec="seconds"), "unit": L.UNIT,
-            "days": days, "races": races}
+            "days": days, "races": races, "gap": gap_history()}
     save(OUT + "/history.json", hist)
     return hist
 

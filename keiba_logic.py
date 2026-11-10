@@ -251,6 +251,37 @@ TH = {
 }
 UNIT = 100                   # 1点あたりの金額(円)
 
+# 割安なワイド(確かめ中。2026-11-10): 3連複の市場の見込みがワイドの市場の見込みよりはっきり高い組。
+# 3連複の見込み = pt × 組の強さ(その2頭を含む3連複の組の 1/オッズ の合計。keiba.trio_pair_sums)、ワイドの見込み = pw ÷ ワイドのオッズ。
+# 3着内の当たり方は3連複の市場の方がワイドより正確で、比が大きい組ほどワイドの回収率が上がる(2022〜2026年の確定オッズで、
+# 1レースで比がいちばん大きい組が th 以上の 3,279R は 109%。tools/experiments/trio_pair_wide.py)。
+# 発走前のオッズで同じことが起きるかは確かめている途中なので、アプリでは参考として出す
+GAP = {"lo": 1.5, "hi": 15.0, "th": 1.30, "pt": 0.75, "pw": 0.775}
+
+
+def wide_gap(tp, wide):
+    """割安なワイドの組。tp = 組ごとの強さ("小さい馬番-大きい馬番" -> 合計)、wide = ワイドのオッズ(同じキー -> [下限, 上限])。
+    ワイドのオッズ(下限と上限の中央)が lo〜hi 倍の組の中で、比(3連複の見込み ÷ ワイドの見込み)がいちばん大きい組を返す。
+    -> {"key": "a-b", "pair": [a, b], "ratio": 比, "odds": [下限, 上限], "buy": 比が th 以上か}。組が無ければ None"""
+    best = None
+    for k, v in (wide or {}).items():
+        s = (tp or {}).get(k)
+        if not s:
+            continue
+        lo, hi = (v[0], v[1]) if isinstance(v, (list, tuple)) else (v, v)
+        if not lo or not hi:
+            continue
+        w = (lo + hi) / 2
+        if not GAP["lo"] <= w < GAP["hi"]:
+            continue
+        ratio = GAP["pt"] * s * w / GAP["pw"]
+        if best is None or (ratio, k) > (best["ratio"], best["key"]):
+            best = {"key": k, "pair": [int(x) for x in k.split("-")], "ratio": ratio, "odds": [lo, hi]}
+    if best:
+        best["buy"] = best["ratio"] >= GAP["th"]
+        best["ratio"] = round(best["ratio"], 3)
+    return best
+
 
 # ---------------------------------------------------------------- 文字の整理
 def nfkc(s):
