@@ -30,7 +30,7 @@ on:
         required: false
         default: 'jra'
       mode:
-        description: 'predict(予想と結果を再現) / past(馬柱だけを今の読み方で取り直す) / result(結果・払戻だけを取り直す) / odds(ワイドの確定オッズだけを取る) / trio(◎70%以上のレースの3連複◎-○-x の確定オッズだけを取る)'
+        description: 'predict(予想と結果を再現) / past(馬柱だけを今の読み方で取り直す) / result(結果・払戻だけを取り直す) / odds(ワイドの確定オッズだけを取る) / trio(◎70%以上のレースの3連複◎-○-x の確定オッズだけを取る) / triopair(3連複の確定オッズから組ごとの強さだけを取る)'
         required: false
         default: 'predict'
 
@@ -91,6 +91,10 @@ jobs:
                           p1 = next((x.get("p3") or 0 for x in p.get("horses") or [] if x["umaban"] == p.get("honmei")), 0)
                           return bool(p.get("honmei") and p.get("taikou") and p1 >= 0.70)
                       done = not any(need(r) for r in day["races"].values())
+                  elif os.environ.get("MODE") == "triopair":
+                      # 3連複の組ごとの強さが無い中央のレースが残っている日だけ
+                      done = all(r.get("trio_pair_final") for r in day["races"].values()
+                                 if r.get("result") and int(r["id"][4:6]) < 30)
                   elif os.environ.get("MODE") == "past":
                       # 馬柱の読み方が古いレースが残っている日だけ
                       import re
@@ -100,7 +104,7 @@ jobs:
                   else:
                       done = day.get("complete")
               except Exception:
-                  done = os.environ.get("MODE") in ("past", "result", "odds", "trio")
+                  done = os.environ.get("MODE") in ("past", "result", "odds", "trio", "triopair")
               if not done:
                   todo.append(s)
               d -= timedelta(days=1)
@@ -135,6 +139,7 @@ jobs:
           [ "${{ github.event.inputs.mode }}" = "result" ] && EXTRA="--refetch-result"
           [ "${{ github.event.inputs.mode }}" = "odds" ] && EXTRA="--refetch-odds"
           [ "${{ github.event.inputs.mode }}" = "trio" ] && EXTRA="--refetch-trio"
+          [ "${{ github.event.inputs.mode }}" = "triopair" ] && EXTRA="--refetch-trio-pairs"
           python keiba.py --backfill-dates "${{ matrix.chunk.dates }}" --workers "${{ github.event.inputs.workers || 6 }}" --no-history $EXTRA
       - name: このジョブの日だけを渡す
         if: always()

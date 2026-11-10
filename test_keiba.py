@@ -381,6 +381,12 @@ class Parse(unittest.TestCase):
         self.assertEqual(K.parse_trio_odds(j, (9, 2)), {"2-3-9": 12.3})       # ◎○を含む組だけ
         self.assertEqual(K.parse_trio_odds({"data": {"odds": {}}}), {})
 
+    def test_trio_pair_sums(self):
+        # 2頭を含む3連複の組の 1/オッズ の合計。小さい組は保存しない
+        to = {"1-2-3": 5.0, "1-2-4": 10.0, "1-3-4": 20.0, "2-3-4": 40.0, "1-2-10": 1000.0}
+        self.assertEqual(K.trio_pair_sums(to), {"1-2": 0.301, "1-3": 0.25, "2-3": 0.225, "1-4": 0.15, "2-4": 0.125, "3-4": 0.075})
+        self.assertEqual(K.trio_pair_sums({}), {})
+
     def test_wide_odds(self):
         # API(type=5)の形(取得の診断で見たもの)。キーは馬番2桁ずつ、値は [下限, 上限, 人気]
         j = {"status": "middle", "data": {"odds": {"5": {"0102": ["133.5", "134.8", "67"], "0310": ["2.1", "2.4", "1"],

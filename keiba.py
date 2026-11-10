@@ -427,6 +427,33 @@ def fetch_trio_odds(rid, pair):
     return parse_trio_odds(j, pair)
 
 
+TRIO_PAIR_MIN = 0.003     # これより小さい組(ワイドで 250倍くらいから上)は保存しない
+
+
+def trio_pair_sums(to):
+    """3連複の全部の組のオッズ -> "小さい馬番-大きい馬番" -> その2頭を含む組の 1/オッズ の合計。
+    3連複の市場が見ている「2頭とも3着内」の強さ(0.75 を掛けると確率の見込み)。ワイドのオッズ(見込みは 0.775/オッズ)と比べる。
+    3連複の市場の方がワイドより正確で、3連複が高く見ているのにワイドで売れていない組は回収率が高い(tools/experiments/trio_vs_wide.py)"""
+    s = {}
+    for k, o in to.items():
+        us = k.split("-")
+        if len(us) == 3 and o and o > 1.0:
+            for a, b in ((0, 1), (0, 2), (1, 2)):
+                key = us[a] + "-" + us[b]
+                s[key] = s.get(key, 0.0) + 1.0 / o
+    return {k: round(v, 5) for k, v in s.items() if v >= TRIO_PAIR_MIN}
+
+
+def fetch_trio_all(rid):
+    """3連複の全部の組のオッズ(中央だけ)"""
+    if center_of(rid) != "jra":
+        return {}
+    j = get(SITE["jra"] + "/api/api_get_jra_odds.html",
+            {"pid": "api_get_jra_odds", "input": "UTF-8", "output": "json",
+             "race_id": rid, "type": "7", "action": "init", "compress": "0"}, as_json=True)
+    return parse_trio_odds(j)
+
+
 PAY = {"Tansho": ("単勝", 1), "Fukusho": ("複勝", 1), "Wakuren": ("枠連", 2), "Umaren": ("馬連", 2),
        "Wide": ("ワイド", 2), "Umatan": ("馬単", 2), "Fuku3": ("3連複", 3), "Tan3": ("3連単", 3)}
 ORDERED = ("馬単", "3連単")      # 着順どおりの組で払い戻す券種
@@ -665,6 +692,26 @@ def refetch_odds(d, now):
     print("{} ワイドの確定オッズ {} / 残り {}".format(d, n, left), flush=True)
 
 
+def refetch_trio_pairs(d, now):
+    """3連複の確定オッズから、2頭の組ごとの強さ(trio_pair_final)を取る。ワイドの確定オッズとのずれを確かめるため(予想・結果はそのまま)"""
+    day = load_day(d)
+
+    def one(rid):
+        rc = day["races"][rid]
+        if center_of(rid) != "jra" or not rc.get("result") or rc.get("trio_pair_final"):
+            return 0
+        tp = trio_pair_sums(fetch_trio_all(rid))
+        if not tp:
+            return 0
+        rc["trio_pair_final"] = tp
+        return 1
+    n = sum(pmap(one, sorted(day["races"])))
+    if n:
+        save_day(d, day)
+    left = sum(1 for r in day["races"].values() if center_of(r["id"]) == "jra" and r.get("result") and not r.get("trio_pair_final"))
+    print("{} 3連複の組ごとの強さ {} / 残り {}".format(d, n, left), flush=True)
+
+
 TRIO_FINAL_P1 = 0.70     # 3連複の確定オッズを取るのは、◎の確率がこれ以上のレースだけ(オッズで絞る買い方を確かめるため)
 
 
@@ -791,13 +838,21 @@ def run_day(d, now, backfill=False):
                 wo = fetch_wide_odds(rid)
                 if wo:
                     rc["wide_odds"] = wo
-            # 買うレースは3連複◎-○-x のオッズも(前の更新の予想の◎○で。買い目のオッズとしてアプリに出す)。
+            # 3連複の全部の組のオッズ(中央)。2頭の組ごとの強さを残す(発走前のワイドのオッズとのずれを後で確かめる)。
             # 単勝より先に前日発売のオッズが出ていることがあるので、単勝が取れなくても取る
-            p0 = rc.get("pred") or {}
-            if p0.get("verdict") in ("A", "B") and p0.get("honmei") and p0.get("taikou"):
-                to = fetch_trio_odds(rid, (p0["honmei"], p0["taikou"]))
-                if to:
-                    rc["trio_odds"] = to
+            ta = fetch_trio_all(rid)
+            if ta:
+                tp = trio_pair_sums(ta)
+                if tp:
+                    rc["trio_pair"] = tp
+                    rc["trio_pair_at"] = now.isoformat(timespec="seconds")
+                # 買うレースは3連複◎-○-x のオッズも(前の更新の予想の◎○で。買い目のオッズとしてアプリに出す)
+                p0 = rc.get("pred") or {}
+                if p0.get("verdict") in ("A", "B") and p0.get("honmei") and p0.get("taikou"):
+                    pair = {p0["honmei"], p0["taikou"]}
+                    to = {k: v for k, v in ta.items() if pair <= {int(x) for x in k.split("-")}}
+                    if to:
+                        rc["trio_odds"] = to
         # 結果
         if st and now >= st + timedelta(minutes=RESULT_AFTER) and not rc.get("result"):
             html = get(site + "/race/result.html", {"race_id": rid})
@@ -807,6 +862,9 @@ def run_day(d, now, backfill=False):
                 wf = fetch_wide_odds(rid)            # ワイドの確定オッズ(期待値を後で確かめるため)
                 if wf:
                     rc["wide_final"] = wf
+                tp = trio_pair_sums(fetch_trio_all(rid))      # 3連複の確定オッズから、組ごとの強さ
+                if tp:
+                    rc["trio_pair_final"] = tp
 
     def two(rid):
         """予想。当日は発走後に固定。過去の日は予想が無いときだけ作る(人気は確定人気)"""
@@ -1116,6 +1174,8 @@ def main():
                     help="--backfill-dates の日の結果(払戻)だけを今の読み方で取り直す(予想はそのまま)")
     ap.add_argument("--refetch-trio", action="store_true",
                     help="--backfill-dates の日の、◎70%以上のレースの3連複◎-○-x の確定オッズだけを取る(予想・結果はそのまま)")
+    ap.add_argument("--refetch-trio-pairs", action="store_true",
+                    help="--backfill-dates の日の、3連複の確定オッズから出した組ごとの強さだけを取る(予想・結果はそのまま)")
     ap.add_argument("--refetch-odds", action="store_true",
                     help="--backfill-dates の日のワイドの確定オッズだけを取る(予想・結果はそのまま)")
     ap.add_argument("--no-history", action="store_true", help="history.json を作らない(並列ジョブ用)")
@@ -1150,10 +1210,11 @@ def main():
                 # 一覧が続けて取れないのは netkeiba のメンテナンスなど。残りは次の再現にまわす
                 print("{} から先は取らない(レース一覧が{}日続けて取れない。メンテナンス中?)".format(d, fails))
                 break
-            if a.refetch_past or a.refetch_result or a.refetch_odds or a.refetch_trio:
+            if a.refetch_past or a.refetch_result or a.refetch_odds or a.refetch_trio or a.refetch_trio_pairs:
                 if d < today_s:
                     (refetch_past if a.refetch_past else refetch_result if a.refetch_result
-                     else refetch_trio if a.refetch_trio else refetch_odds)(d, datetime.now(JST))
+                     else refetch_trio if a.refetch_trio else refetch_trio_pairs if a.refetch_trio_pairs
+                     else refetch_odds)(d, datetime.now(JST))
                 continue
             if d >= today_s:
                 print("{} は今日以降なので再現しません".format(d))
