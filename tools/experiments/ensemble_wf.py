@@ -134,4 +134,22 @@ for name, pw in ens.items():
     cur = next(g for g in grid if g[2] == .8 and g[3] == .15) if any(g[2] == .8 and g[3] == .15 for g in grid) else None
     if cur:
         print("    (今の基準 ◎80%以上・差15%以上  2024・2025 {:4.0f}% → 2026 {:4.0f}%({}R))".format(cur[0], cur[6], cur[7]))
+
+# 4本の平均のぶれ: 8本から4本を選ぶ70通りすべてで、今の基準の回収率がどれだけ散らばるか(1本ずつの散らばりとくらべる)
+from itertools import combinations
+if len(SEEDS) >= 8:
+    v4 = []
+    for ss in combinations(SEEDS, 4):
+        v4.append(roi(per_race(norm_race(np.mean([raw[s] for s in ss], axis=0)), .8, .15))[0])
+    print("\n■ 4本の平均の組み合わせ {}通り: 全体の回収率 平均 {:.0f}%・幅 {:.0f}〜{:.0f}%・標準偏差 {:.1f}(1本ずつは {:.1f})".format(
+        len(v4), np.mean(v4), min(v4), max(v4), np.std(v4), np.std(v1)))
+# たまたまの幅: レースを選び直して(ブートストラップ)、回収率がどこまで動くか
+rng = np.random.default_rng(0)
+for name, pw in ens.items():
+    pr_ = per_race(pw, .8, .15); rids = sorted(pr_)
+    for lab, a, b in (("全体", "0", "9"), ("2026年", "20260101", "99999999")):
+        v = np.array([pr_[r] for r in rids if a <= rdate[r] < b], dtype=float)
+        bs = np.array([rng.choice(v, len(v)).mean() for _ in range(5000)])
+        print("  {:14s} {:6s} {:4.0f}%({}R) 95%の幅 {:.0f}〜{:.0f}%・100%を超える見込み {:.0%}・的中 {:.0%}".format(
+            name, lab, v.mean(), len(v), np.percentile(bs, 2.5), np.percentile(bs, 97.5), (bs > 100).mean(), (v > 0).mean()))
 print("かかった時間 {:.0f}分".format((time.time() - t0) / 60))

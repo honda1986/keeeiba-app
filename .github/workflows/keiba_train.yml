@@ -41,6 +41,9 @@ jobs:
       KEIBA_OUT: ${{ matrix.site == 'kochi' && 'keiba/kochi' || 'keiba' }}
       KEIBA_MODEL_TAG: ${{ matrix.site == 'kochi' && 'kochi' || '' }}
       KEIBA_PREDICT_ONLY: ${{ matrix.site == 'kochi' && '1' || '' }}
+      # 中央は乱数の種を変えた4本を学び、予想はその平均(1本だと学び直すたびに買うレースが1/4ほど入れ替わる。
+      # tools/experiments/ensemble_wf.py)。高知は1本のまま
+      KEIBA_SEEDS: ${{ matrix.site == 'kochi' && '1' || '1,2,3,4' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
