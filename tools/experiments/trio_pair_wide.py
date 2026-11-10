@@ -81,3 +81,19 @@ for ix in by.values():
     best[ix[int(np.argmax(ev[ix]))]] = True
 for a_ in (0, .9, 1.0, 1.1, 1.2):
     line("いちばん高い組の期待値が {:.1f} 以上".format(a_), best & (ev >= a_))
+
+print("\n■ ずれの大きい側を細かく: 見込みの比(3連複 ÷ ワイド)が X 以上の組を全部買う")
+for lo, hi in ((1.5, 4), (4, 8), (8, 15), (1.5, 15)):
+    print("  ワイド {}〜{}倍".format(lo, hi))
+    for a_, b_ in ((1.10, 1.15), (1.15, 1.20), (1.20, 1.25), (1.25, 1.30), (1.30, 1.40), (1.40, 1.60), (1.60, 99)):
+        line("    比 {:.2f}〜{:.2f}".format(a_, b_), (W >= lo) & (W < hi) & (ratio >= np.log(a_)) & (ratio < np.log(b_)))
+print("\n■ 1レースで比がいちばん大きい組だけ(ワイド 1.5〜15倍の中で)")
+best2 = np.zeros(len(rows), dtype=bool)
+by2 = defaultdict(list)
+for i in range(len(rows)):
+    if 1.5 <= W[i] < 15:
+        by2[rid[i]].append(i)
+for ix in by2.values():
+    best2[ix[int(np.argmax(ratio[ix]))]] = True
+for a_ in (1.0, 1.15, 1.2, 1.25, 1.3, 1.4):
+    line("いちばん大きい比が {:.2f} 以上".format(a_), best2 & (ratio >= np.log(a_)))
