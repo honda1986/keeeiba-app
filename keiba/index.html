@@ -1226,11 +1226,29 @@ function renderMoney() {
     return {k, label, n, hit: hitN, stake: n * h.unit, ret};
   });
   const altMissing = rs.filter(r => r.alt && r.alt["馬単"] == null).length;
+  const mixTbl = (() => {
+    const ks = Object.keys(bt).sort().join();
+    if (ks !== "3連複,ワイド" || !rs.every(r => r.alt)) return "";
+    const of = t => rs.filter(r => r.bets && r.bets[t]);
+    const alt = (xs, k) => { const v = xs.filter(r => r.alt[k] != null); return v.length ? [v.reduce((a, r) => a + r.alt[k], 0), v.length * h.unit] : [0, 0]; };
+    const cell = (xs, k, real) => { const [rt, st] = alt(xs, k);
+      return st ? `<td class="${rt >= st ? "good" : "neg"}">${real ? `<b>${pct(rt, st)}</b><br><small class="muted">実際</small>` : pct(rt, st)}</td>` : `<td class="muted">-</td>`; };
+    const row = (label, xs, real) => `<tr><td>${label}</td><td>${xs.length}</td>${cell(xs, "3連複", real === "3連複")}${cell(xs, "ワイド", real === "ワイド")}</tr>`;
+    const a = of("3連複"), b = of("ワイド");
+    return `<table class="tbl"><thead><tr><th>レース</th><th>R</th><th>3連複◎○▲なら</th><th>ワイド◎-○なら</th></tr></thead><tbody>
+      ${row("3連複で買ったレース<br><small class='muted'>▲が距離延長でない</small>", a, "3連複")}
+      ${row("ワイドで買ったレース<br><small class='muted'>▲が距離延長</small>", b, "ワイド")}
+      ${row("全部(上の表と同じ)", rs, "")}</tbody></table>
+      <p class="legendnote">実際の買い方は、▲が距離延長でないレースは3連複◎-○-▲、▲が距離延長のレースはワイド◎-○(太字が実際に買った方)。
+        上の表は全部のレースを同じ券種で買っていた場合なので、数字が違う。実際の合計は ${rs.length}R・${pct(R, S)}。
+        この使い分けは 2024〜2026年の成績を見て決めたもので、選ぶのに使っていない 2022・2023年では続いていない(「考え方」)。</p>`;
+  })();
   const altTbl = `<table class="tbl"><thead><tr><th>買い方</th><th>R</th><th>的中</th><th>収支</th><th>回収率</th></tr></thead><tbody>
     ${altRows.filter(x => x.n).map(x => `<tr><td>${x.k === "3連複" ? "<b>" + esc(x.label) + "</b>" : esc(x.label)}</td><td>${x.n}</td><td>${pct(x.hit, x.n)}</td>
       <td class="${x.ret >= x.stake ? "good" : "neg"}">${x.n ? yen(x.ret - x.stake) : "-"}</td>
       <td class="${x.ret >= x.stake ? "good" : "neg"}"><b>${pct(x.ret, x.stake)}</b></td></tr>`).join("")}</tbody></table>
-    <p class="legendnote">買ったレースで、同じ◎○(3連複は▲も)を1点${h.unit}円ずつ買っていたら(実際の払戻で計算)。
+    <p class="legendnote">買ったレース<b>全部</b>で、同じ◎○(3連複は▲も)を1点${h.unit}円ずつ買っていたら(実際の払戻で計算)。
+      実際の買い方はレースによって3連複とワイドを使い分けていて、その内訳は下の「実際に買った券種ごと」。
       収支に入っているのは、そのとき実際に買った買い方(中央は2026-10-31から3連複◎○▲。▲が距離延長のレースはワイド◎-○。
       その前の当日の予想はワイド◎-○)。
       ${altMissing ? `馬単の払戻をまだ取っていないレース(${altMissing}R)は馬単に数えていない。` : ""}</p>`;
@@ -1321,8 +1339,8 @@ function renderMoney() {
       <p class="muted" style="font-size:12px;margin-bottom:8px">${fmtD(from)} 〜 ${fmtD(to)}${state.mcenter !== "all" ? " · " + state.mcenter + "のみ" : ""}${state.src !== "all" ? " · " + SRC[state.src] + "のみ" : ""}
         · ${rs.length}R · 的中 ${pct(hit, rs.length)} · 回収率 ${pct(R, S)}</p>
       ${state.mcenter === "all" && split.length > 1 ? `<div class="sec" style="margin-top:4px">中央・地方の内訳</div>${splitTbl}` : ""}
-      ${rs.some(r => r.alt) ? `<div class="sec" style="margin-top:4px">買い方をくらべる(同じ◎○)</div>${altTbl}` : ""}
-      ${rs.length ? `<div class="sec">券種別(役割ごと)</div>${grow(Object.entries(bt), "券種")}
+      ${rs.some(r => r.alt) ? `<div class="sec" style="margin-top:4px">もし全部のレースを同じ買い方で買っていたら(参考)</div>${altTbl}` : ""}
+      ${rs.length ? `<div class="sec">実際に買った券種ごと</div>${mixTbl || grow(Object.entries(bt), "券種")}
       ${GROUPS.map(([t, k]) => `<div class="sec">${esc(t)}別</div>` + grow(agg(rs, r => r[k] ?? "?"), t)).join("")}` : `<p class="muted" style="font-size:13px">この期間に買ったレースの結果はまだありません。</p>`}
       <div class="sec">印の成績(見送りレースも含む)</div>
       <table class="tbl"><thead><tr><th>印</th><th>頭数</th><th>勝率</th><th>3着内</th></tr></thead><tbody>${mk || `<tr><td colspan="4" class="muted">結果が出ると表示されます</td></tr>`}</tbody></table>
