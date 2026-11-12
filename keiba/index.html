@@ -14,6 +14,7 @@
   --pos:#1c5cab; --pos-bg:#e3eefb; --neg:#c22f2f; --neg-bg:#fbe7e6;
   --good:#0b6e0b; --good-bg:#e2f3e2;
   --shadow:0 1px 2px rgba(20,20,20,.06);
+  --s1:#2a78d6; --s2:#eb6834;
   --font:system-ui,-apple-system,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Segoe UI",sans-serif;
 }
 @media (prefers-color-scheme:dark){
@@ -24,7 +25,7 @@
     --accent:#efb54c; --accent-bg:#3a2d12; --accent-line:#6e5420;
     --pos:#7fb2f0; --pos-bg:#1d3150; --neg:#f08a8a; --neg-bg:#3d2020;
     --good:#5bd35b; --good-bg:#16301a;
-    --shadow:none;
+    --shadow:none; --s1:#3987e5; --s2:#d95f2a;
   }
 }
 :root[data-theme="dark"]{
@@ -34,7 +35,7 @@
   --accent:#efb54c; --accent-bg:#3a2d12; --accent-line:#6e5420;
   --pos:#7fb2f0; --pos-bg:#1d3150; --neg:#f08a8a; --neg-bg:#3d2020;
   --good:#5bd35b; --good-bg:#16301a;
-  --shadow:none;
+  --shadow:none; --s1:#3987e5; --s2:#d95f2a;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
@@ -313,6 +314,19 @@ summary.skip{align-items:baseline;padding:11px 14px;font-size:14px}
 summary.skip b{white-space:nowrap}
 summary.skip .r{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 summary.skip .rs{font-size:13px;color:var(--ink2);font-weight:700}
+
+/* ---- 収支・分析(2026-11 作り直し) ---- */
+.dsrow.w{grid-template-columns:minmax(0,1fr) 44px 50px 90px}
+.lgd{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12.5px;color:var(--ink2);margin:0 2px 6px}
+.lgd i,.chart .tip i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.lgd b{color:var(--ink);margin-left:2px}
+.chart svg{height:200px}
+.chart .dot{position:absolute;width:10px;height:10px;border-radius:50%;box-shadow:0 0 0 2px var(--surface);display:none;transform:translate(-50%,-50%);pointer-events:none}
+.mdet{border-top:0;border-bottom:1px solid var(--line)}
+.mdet:last-child{border-bottom:0}
+.mdet>summary{padding:12px 14px;font-size:14px;font-weight:700;color:var(--ink)}
+.mdin{padding:2px 12px 14px}
+.mdin .sec{margin-top:14px}
 </style>
 </head>
 <body>
@@ -484,10 +498,13 @@ function calendar(month, stat, selected, ids) {
       <button data-cm="${months[mi + 1] || ""}" aria-label="次の月" ${mi < 0 || mi >= months.length - 1 ? "disabled" : ""}>▶</button>
     </div><div class="calg" id="${ids}">${cells}</div></div>`;
 }
+// 日付を選ぶカレンダーの1日分。買い目の数と収支は、割安ワイドとモデルの買い目の合計
 function dayStat(d) {
   const x = (state.hist?.days || []).find(r => r.date === d);
-  if (!x) return state.day && state.day.date === d ? {races: 1, buy: 0, settled: 0, pl: 0} : null;
-  return {races: x.races, buy: x.buy, settled: x.settled, pl: x.ret - x.stake};
+  const g = (state.hist?.gap || []).find(r => r[0] === d);
+  const gn = g ? g[7] ?? g[1] : 0, gpl = g ? (g[9] ?? g[3]) - gn * 100 : 0;
+  if (!x && !g) return state.day && state.day.date === d ? {races: 1, buy: 0, settled: 0, pl: 0} : null;
+  return {races: x ? x.races : 1, buy: (x ? x.buy : 0) + gn, settled: (x ? x.settled : 0) + gn, pl: (x ? x.ret - x.stake : 0) + gpl};
 }
 function openCalendar() {
   const dlg = $("#caldlg");
@@ -1081,80 +1098,63 @@ function hasLastYear() {
 const srcOk = s => state.src === "all" || s === state.src;
 const centerOk = c => state.mcenter === "all" || c === state.mcenter;
 
+// 累積収支のグラフ。pts: [{date, g, m, cg, cm}] 日付順(g = 割安ワイド、m = モデルの買い目。その日の収支と累積)。
+// 2本とも同じ円の軸。色は --s1(割安ワイド)・--s2(モデル)。上の凡例と、なぞったときの数字で見分けられる
 function cumChart(pts) {
-  // pts: [{date, pl, cum}] 日付順。1系列なので凡例は付けない(見出しが系列名)
   if (pts.length < 2) return "";
-  const W = 600, H = 190, L = 52, R = 10, T = 10, B = 24;
-  const lo = Math.min(0, ...pts.map(p => p.cum)), hi = Math.max(0, ...pts.map(p => p.cum));
-  const span = hi - lo || 1;
+  const W = 600, H = 200, L = 52, R = 10, T = 10, B = 24;
+  const vals = pts.flatMap(p => [p.cg, p.cm]);
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals), span = hi - lo || 1;
   const x = i => L + (W - L - R) * i / (pts.length - 1);
   const y = v => T + (H - T - B) * (hi - v) / span;
-  const line = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.cum).toFixed(1)}`).join("");
-  const ticks = [...new Set([hi, 0, lo])];
-  return `<div class="chart" id="cum">
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="累積収支の推移(下の日別の表と同じ数字)">
-      ${ticks.map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1" ${v === 0 ? 'stroke-dasharray="4 3" stroke="var(--line2)"' : ""} vector-effect="non-scaling-stroke"/>
+  // 線は、その買い方の成績がある最初の日から引く(モデルの買い目は2024年から)
+  const path = (k, has) => { const i0 = Math.max(0, pts.findIndex(p => p[has])), q = pts.slice(i0);
+    return q.map((p, i) => `${i ? "L" : "M"}${x(i0 + i).toFixed(1)},${y(p[k]).toFixed(1)}`).join(""); };
+  const ticks = [...new Set([hi, 0, lo])].filter(v => v === 0 || Math.abs(y(v) - y(0)) >= 16);     // 0 の目盛りと重なるものは出さない
+  const last = pts[pts.length - 1];
+  const md = d => `${d.slice(2, 4)}/${+d.slice(4, 6)}/${+d.slice(6)}`;
+  return `<div class="lgd"><span><i style="background:var(--s1)"></i>割安ワイド <b class="num">${yen(last.cg)}</b></span>
+      <span><i style="background:var(--s2)"></i>モデルの買い目 <b class="num">${yen(last.cm)}</b></span></div>
+    <div class="chart" id="cum">
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="累積収支の推移(下の表と同じ数字)">
+      ${ticks.map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${v === 0 ? "var(--line2)" : "var(--line)"}" stroke-width="1" ${v === 0 ? 'stroke-dasharray="4 3"' : ""} vector-effect="non-scaling-stroke"/>
         <text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${yenK(v)}</text>`).join("")}
-      <text x="${L}" y="${H - 6}" font-size="11" fill="var(--muted)">${+pts[0].date.slice(4,6)}/${+pts[0].date.slice(6)}</text>
-      <text x="${W - R}" y="${H - 6}" font-size="11" fill="var(--muted)" text-anchor="end">${+pts[pts.length-1].date.slice(4,6)}/${+pts[pts.length-1].date.slice(6)}</text>
-      <path d="${line}" fill="none" stroke="var(--pos)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      <text x="${L}" y="${H - 6}" font-size="11" fill="var(--muted)">${md(pts[0].date)}</text>
+      <text x="${W - R}" y="${H - 6}" font-size="11" fill="var(--muted)" text-anchor="end">${md(last.date)}</text>
+      <path d="${path("cm", "hm")}" fill="none" stroke="var(--s2)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      <path d="${path("cg", "hg")}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
       <line id="cx" y1="${T}" y2="${H - B}" stroke="var(--muted)" stroke-width="1" vector-effect="non-scaling-stroke" visibility="hidden"/>
       <rect x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent" id="hit"/>
     </svg>
-    <div class="dot" id="cdot" style="position:absolute;width:10px;height:10px;border-radius:50%;background:var(--pos);box-shadow:0 0 0 2px var(--surface);display:none;transform:translate(-50%,-50%);pointer-events:none"></div>
+    <div class="dot" id="cdot1" style="background:var(--s1)"></div><div class="dot" id="cdot2" style="background:var(--s2)"></div>
     <div class="tip" id="ctip"></div></div>`;
 }
 function wireChart(pts) {
   const box = $("#cum"); if (!box) return;
-  const svg = box.querySelector("svg"), tip = $("#ctip"), dot = $("#cdot"), cx = $("#cx");
-  const W = 600, L = 52, R = 10, T = 10, B = 24, H = 190;
-  const lo = Math.min(0, ...pts.map(p => p.cum)), hi = Math.max(0, ...pts.map(p => p.cum)), span = hi - lo || 1;
+  const svg = box.querySelector("svg"), tip = $("#ctip"), d1 = $("#cdot1"), d2 = $("#cdot2"), cx = $("#cx");
+  const W = 600, H = 200, L = 52, R = 10, T = 10, B = 24;
+  const vals = pts.flatMap(p => [p.cg, p.cm]);
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals), span = hi - lo || 1;
   const show = ev => {
-    const rc = svg.getBoundingClientRect();
+    const rc = svg.getBoundingClientRect(), bx = box.getBoundingClientRect();
     const vx = (ev.clientX - rc.left) / rc.width * W;
     const i = Math.max(0, Math.min(pts.length - 1, Math.round((vx - L) / (W - L - R) * (pts.length - 1))));
-    const p = pts[i], px = L + (W - L - R) * i / (pts.length - 1), py = T + (H - T - B) * (hi - p.cum) / span;
+    const p = pts[i], px = L + (W - L - R) * i / (pts.length - 1);
+    const sx = px / W * rc.width + (rc.left - bx.left);
+    const sy = v => (T + (H - T - B) * (hi - v) / span) / H * rc.height + (rc.top - bx.top);
     cx.setAttribute("x1", px); cx.setAttribute("x2", px); cx.setAttribute("visibility", "visible");
-    const sx = px / W * rc.width + (rc.left - box.getBoundingClientRect().left), sy = py / H * rc.height + (rc.top - box.getBoundingClientRect().top);
-    dot.style.display = "block"; dot.style.left = sx + "px"; dot.style.top = sy + "px";
-    tip.innerHTML = `${fmtD(p.date)}<br>その日 ${yen(p.pl)} / 累積 <b>${yen(p.cum)}</b>`;
+    for (const [dot, v] of [[d1, p.cg], [d2, p.cm]]) { dot.style.display = "block"; dot.style.left = sx + "px"; dot.style.top = sy(v) + "px"; }
+    tip.innerHTML = `${fmtD(p.date)}<br><i style="background:var(--s1)"></i>割安ワイド ${yen(p.g)} / 累積 <b>${yen(p.cg)}</b>
+      <br><i style="background:var(--s2)"></i>モデル ${yen(p.m)} / 累積 <b>${yen(p.cm)}</b>`;
     tip.style.display = "block";
     const tw = tip.offsetWidth, bw = box.clientWidth;
     tip.style.left = Math.max(4, Math.min(bw - tw - 4, sx - tw / 2)) + "px";
-    tip.style.top = Math.max(4, sy - tip.offsetHeight - 12) + "px";
+    tip.style.top = Math.max(4, Math.min(sy(p.cg), sy(p.cm)) - tip.offsetHeight - 12) + "px";
   };
-  const hide = () => { tip.style.display = "none"; dot.style.display = "none"; cx.setAttribute("visibility", "hidden"); };
+  const hide = () => { tip.style.display = "none"; d1.style.display = d2.style.display = "none"; cx.setAttribute("visibility", "hidden"); };
   svg.addEventListener("pointermove", show);
   svg.addEventListener("pointerdown", show);
   svg.addEventListener("pointerleave", hide);
-}
-
-// 割安ワイド(確かめ中)の成績。history.json の gap = [日付, 確定オッズで選んだ点数, 的中, 払戻, 発走前のオッズで選んだ点数, 的中, 払戻]
-function gapMoney(from, to) {
-  const g = (state.hist || {}).gap || [];
-  if (!g.length) return "";
-  const sum = (rows, i) => rows.reduce((a, r) => [a[0] + r[i], a[1] + r[i + 1], a[2] + r[i + 2]], [0, 0, 0]);
-  const inP = g.filter(r => r[0] >= from && r[0] <= to);
-  const [n, hit, ret] = sum(inP, 1), [pn, phit, pret] = sum(g, 4);
-  const years = [...new Set(g.map(r => r[0].slice(0, 4)))].sort();
-  const yr = years.map(y => { const [a, b, c] = sum(g.filter(r => r[0].startsWith(y)), 1); return [y, a, b, c]; });
-  const tot = sum(g, 1);
-  const tr = ([k, a, b, c], bold) => `<tr><td>${bold ? `<b>${k}</b>` : k}</td><td>${a.toLocaleString()}</td><td>${pct(b, a)}</td>
-    <td class="${c >= a * 100 ? "good" : "neg"}">${yen(c - a * 100)}</td><td class="${c >= a * 100 ? "good" : "neg"}"><b>${pct(c, a * 100)}</b></td></tr>`;
-  return `<div class="sec" style="margin-top:4px">割安ワイド(新しい買い方・確かめ中)</div>
-    <p class="muted" style="font-size:12px;margin-bottom:8px">${fmtD(from)} 〜 ${fmtD(to)} · <b>確定オッズで選んだ場合</b>(1点100円)</p>
-    <div class="sum">
-      <div class="tile"><div class="k">回収率</div><div class="v num ${ret >= n * 100 ? "good" : "neg"}">${pct(ret, n * 100)}</div></div>
-      <div class="tile"><div class="k">収支</div><div class="v num ${ret >= n * 100 ? "good" : "neg"} ${yen(ret - n * 100).length > 9 ? "long" : ""}">${yen(ret - n * 100)}</div></div>
-      <div class="tile"><div class="k">的中 ${hit}/${n}R</div><div class="v num">${pct(hit, n)}</div></div>
-    </div>
-    <table class="tbl nw"><thead><tr><th>年</th><th>R</th><th>的中</th><th>収支</th><th>回収率</th></tr></thead>
-      <tbody>${yr.map(x => tr(x)).join("")}${tr(["全部", ...tot], true)}</tbody></table>
-    <div class="srcnote" style="margin-top:8px"><b>発走前のオッズで選んだ場合</b>(実際に買える形): ${pn
-      ? `${pn}R · 的中 ${phit} · 回収率 <b>${pct(pret, pn * 100)}</b> · 収支 ${yen(pret - pn * 100)}`
-      : "まだありません(2026-11-14 の開催からたまります)"}</div>
-    <p class="muted" style="font-size:12px;margin:6px 0 0">上の表は、レースが終わったあとの確定オッズで選んだ場合の成績です。買うときに見えるのは発走の数分前のオッズで、
-      締切の直前に動くので、同じ成績になるとは限りません。発走前のオッズで選んだ成績がたまるまでは、参考として見てください(「考え方」に説明)。</p>`;
 }
 
 function renderMoney() {
@@ -1235,52 +1235,109 @@ function renderMoney() {
       その前の当日の予想はワイド◎-○)。
       ${altMissing ? `馬単の払戻をまだ取っていないレース(${altMissing}R)は馬単に数えていない。` : ""}</p>`;
 
+  // ---- 割安ワイド(history.json の gap。アプリに出している買い目 = 発走前のオッズがあればそれ、無ければ確定オッズで選んだもの)
+  const G = h.gap || [];
+  const gFrom = state.period === "all" && G.length && G[0][0] < from ? G[0][0] : from;     // 全期間は、割安ワイドのいちばん古い日から
+  const gIn = G.filter(r => r[0] >= gFrom && r[0] <= to);
+  const gDay = {};
+  for (const r of gIn) gDay[r[0]] = {n: r[7] ?? r[1], hit: r[8] ?? r[2], ret: r[9] ?? r[3]};
+  const gs = Object.values(gDay).reduce((a, x) => [a[0] + x.n, a[1] + x.hit, a[2] + x.ret], [0, 0, 0]);
+  const gPre = G.reduce((a, r) => [a[0] + r[4], a[1] + r[5], a[2] + r[6]], [0, 0, 0]);
+  // 日ごと(2つの買い方を並べる。グラフ・表・カレンダー)
+  const dates = [...new Set([...Object.keys(gDay), ...Object.keys(byDay)])].sort();
+  let cg = 0, cm = 0;
+  const pts2 = dates.map(d => {
+    const g = gDay[d] ? gDay[d].ret - gDay[d].n * 100 : 0, m = byDay[d] ? byDay[d].ret - byDay[d].stake : 0;
+    cg += g; cm += m;
+    return {date: d, g, m, cg, cm, hg: !!gDay[d], hm: !!byDay[d]};
+  });
+  // 期間が長ければ月ごと、短ければ日ごとの表
+  const byMonth = dates.length > 45;
+  const per = {};
+  for (const d of dates) {
+    const k = byMonth ? d.slice(0, 6) : d, x = per[k] = per[k] || {gn: 0, gst: 0, grt: 0, mn: 0, mst: 0, mrt: 0};
+    if (gDay[d]) { x.gn += gDay[d].n; x.gst += gDay[d].n * 100; x.grt += gDay[d].ret; }
+    if (byDay[d]) { x.mn += byDay[d].n; x.mst += byDay[d].stake; x.mrt += byDay[d].ret; }
+  }
+  const plc = (rt, st, n) => n ? `<td class="${rt >= st ? "good" : "neg"}"><b>${yen(rt - st)}</b></td>` : `<td class="muted">-</td>`;
+  const perTbl = `<table class="tbl nw"><thead><tr><th>${byMonth ? "月" : "日"}</th><th>割安 R</th><th>割安 収支</th><th>モデル R</th><th>モデル 収支</th></tr></thead><tbody>
+    ${Object.keys(per).sort().reverse().map(k => { const x = per[k];
+      return `<tr ${byMonth ? "" : `class="link" tabindex="0" data-day="${k}"`}><td>${byMonth ? `${k.slice(0, 4)}/${+k.slice(4)}` : fmtD(k).slice(5)}</td>
+        <td>${x.gn || "-"}</td>${plc(x.grt, x.gst, x.gn)}<td>${x.mn || "-"}</td>${plc(x.mrt, x.mst, x.mn)}</tr>`; }).join("")}</tbody></table>`;
+  // 年ごと(期間に関係なく全部)
+  const yrs = {};
+  for (const r of G) { const x = yrs[r[0].slice(0, 4)] = yrs[r[0].slice(0, 4)] || {gn: 0, grt: 0, mn: 0, mst: 0, mrt: 0}; x.gn += r[7] ?? r[1]; x.grt += r[9] ?? r[3]; }
+  for (const r of (h.races || [])) { const x = yrs[r.date.slice(0, 4)] = yrs[r.date.slice(0, 4)] || {gn: 0, grt: 0, mn: 0, mst: 0, mrt: 0}; x.mn++; x.mst += r.stake; x.mrt += r.ret; }
+  const rc = (rt, st) => st ? `<td class="${rt >= st ? "good" : "neg"}"><b>${pct(rt, st)}</b></td>` : `<td class="muted">-</td>`;
+  const yrTot = Object.values(yrs).reduce((a, x) => ({gn: a.gn + x.gn, grt: a.grt + x.grt, mn: a.mn + x.mn, mst: a.mst + x.mst, mrt: a.mrt + x.mrt}), {gn: 0, grt: 0, mn: 0, mst: 0, mrt: 0});
+  const yrRow = (k, x, bold) => `<tr><td>${bold ? `<b>${k}</b>` : k}</td><td>${x.gn ? x.gn.toLocaleString() : "-"}</td>${rc(x.grt, x.gn * 100)}
+    <td>${x.mn ? x.mn.toLocaleString() : "-"}</td>${rc(x.mrt, x.mst)}</tr>`;
+  const yrTbl = `<table class="tbl nw"><thead><tr><th>年</th><th>割安 R</th><th>割安 回収率</th><th>モデル R</th><th>モデル 回収率</th></tr></thead><tbody>
+    ${Object.keys(yrs).sort().map(k => yrRow(k, yrs[k])).join("")}${yrRow("全部", yrTot, true)}</tbody></table>`;
+  const sumRow = (name, sub, n, hitN, st, rt) => `<div class="dsrow w"><div class="nm">${name}<small>${sub}</small></div>
+    <div class="v"><b class="num">${n.toLocaleString()}</b><small>レース</small></div>
+    <div class="v"><b class="num">${n ? pct(hitN, n) : "-"}</b><small>的中</small></div>
+    <div class="v">${n ? `<span class="pl num ${rt >= st ? "good" : "neg"}">${yen(rt - st)}</span><small>回収率 ${pct(rt, st)}</small>`
+      : `<span class="pl muted">-</span><small>なし</small>`}</div></div>`;
+  const calStat2 = d => {
+    const x = calStat(d), g = gDay[d];
+    if (!x && !g) return null;
+    const o = x || {races: 0, buy: 0, settled: 0, pl: 0};
+    return {races: o.races, buy: o.buy + (g ? g.n : 0), settled: o.settled + (g ? g.n : 0), pl: o.pl + (g ? g.ret - g.n * 100 : 0)};
+  };
+  const open = state.mOpen = state.mOpen || {};
+  const det = (key, title, body) => `<details class="more mdet" data-md="${key}" ${open[key] ? "open" : ""}><summary>${title}</summary><div class="mdin">${body}</div></details>`;
+
   el.innerHTML = `
     <div class="chips" role="group" aria-label="期間" style="margin-top:12px">
       ${PERIODS.filter(([k]) => k !== "lastyear" || hasLastYear()).map(([k, t]) => `<button class="chip" data-p="${k}" aria-pressed="${state.period === k}">${t}</button>`).join("")}
     </div>
-    ${srcs.length > 1 ? `<div class="chips" role="group" aria-label="予想の出どころ">
-      ${[["all","すべて"],["live","当日の予想"],["backfill","再現"]].map(([k, t]) => `<button class="chip" data-s="${k}" aria-pressed="${state.src === k}">${t}</button>`).join("")}
-    </div>` : ""}
-    ${CENTERS.length > 1 ? `<div class="chips" role="group" aria-label="中央・地方">
-      ${[["all","中央+地方"],["中央","中央"],["地方","地方"]].map(([k, t]) => `<button class="chip" data-mc="${k}" aria-pressed="${state.mcenter === k}">${t}</button>`).join("")}
-    </div>` : ""}
-    ${gapMoney(from, to)}
-    <div class="sec" style="margin-top:14px">モデルの買い目(3連複◎-○-▲)</div>
-    <p class="muted" style="font-size:12px;margin-bottom:8px">${fmtD(from)} 〜 ${fmtD(to)}${state.mcenter !== "all" ? " · " + state.mcenter + "のみ" : ""}${state.src !== "all" ? " · " + SRC[state.src] + "のみ" : ""}</p>
-    <div class="sum">
-      <div class="tile"><div class="k">回収率</div><div class="v num ${R >= S ? "good" : "neg"}">${pct(R, S)}</div></div>
-      <div class="tile"><div class="k">収支</div><div class="v num ${R >= S ? "good" : "neg"} ${yen(R - S).length > 9 ? "long" : ""}">${yen(R - S)}</div></div>
-      <div class="tile"><div class="k">的中 ${hit}/${rs.length}R</div><div class="v num">${pct(hit, rs.length)}</div></div>
+    <div class="daysum">
+      <div class="hd">${fmtD(gFrom)} 〜 ${fmtD(to)} の成績(1点${h.unit}円)</div>
+      ${sumRow("割安ワイド", "確かめ中の買い方", gs[0], gs[1], gs[0] * 100, gs[2])}
+      ${sumRow("モデルの買い目", "3連複 ◎-○-▲", rs.length, hit, S, R)}
+      <div class="ft">割安ワイドは、過去の日は<b>確定オッズ</b>で選んだ場合の成績です(買う時点のオッズでは変わることがあります)。
+        発走前のオッズで選んだ分(実際に買える形): ${gPre[0] ? `<b>${gPre[0]}R · 的中 ${gPre[1]} · 回収率 ${pct(gPre[2], gPre[0] * 100)}</b>` : "まだありません(2026-11-14 の開催からたまります)"}。
+        モデルの買い目は2024年から(その日より前のレースだけで学んだモデルで再現)。</div>
     </div>
-    ${state.mcenter === "all" && split.length > 1 ? `<div class="sec" style="margin-top:4px">中央・地方の内訳</div>${splitTbl}
-      <p class="legendnote">行を押すとその分だけの収支に切り替わります。</p>` : ""}
-    ${rs.some(r => r.alt) ? `<div class="sec" style="margin-top:4px">買い方をくらべる(同じ◎○)</div>${altTbl}` : ""}
-    <p class="muted" style="font-size:12px">1点${h.unit}円で記録した買い目を、実際の払戻で計算。的中率より回収率で見る。
-      「再現」は過去の日を後から予想したもの(その日の馬柱で予想、人気は確定人気)。
-      2月以降の再現は、その月より前のレースだけで学んだモデルで予想している(先の結果は使っていない)。</p>
-    ${pts.length >= 2 ? `<div class="sec">累積収支</div>${cumChart(pts)}<p class="legendnote">指でなぞると日ごとの数字が出ます。</p>` : ""}
+    ${pts2.length >= 2 ? `<div class="sec">累積収支</div>${cumChart(pts2)}<p class="legendnote">指でなぞると日ごとの数字が出ます。</p>` : ""}
+    ${dates.length ? `<div class="sec">${byMonth ? "月ごと" : "日ごと"}の収支</div>${perTbl}
+      ${byMonth ? "" : `<p class="legendnote">行を押すとその日のレースを開きます。</p>`}` : `<div class="empty">この期間の結果はまだありません。</div>`}
+    <div class="sec">年ごとの回収率(全期間)</div>${yrTbl}
+    <p class="legendnote">モデルの買い目は、買い方を選ぶのに使った2024〜2026年の成績です。選ぶのに使っていない2022・2023年に当てはめると 71% でした(「考え方」に説明)。</p>
     <div class="sec">カレンダー</div>
-    <div id="mcal">${calendar(state.moneyMonth, calStat, null, "calg2")}</div>
-    <p class="legendnote">日付を押すとその日の予想を開きます。数字はその日の収支(+ 黒字 / - 赤字)。</p>
-    ${rs.length ? `<div class="sec">券種別(役割ごと)</div>${grow(Object.entries(bt), "券種")}
-    ${GROUPS.map(([t, k]) => `<div class="sec">${esc(t)}別</div>` + grow(agg(rs, r => r[k] ?? "?"), t)).join("")}` : `<div class="empty">この期間に買ったレースの結果はまだありません。</div>`}
-    <div class="sec">印の成績(見送りレースも含む)</div>
-    <table class="tbl"><thead><tr><th>印</th><th>頭数</th><th>勝率</th><th>3着内</th></tr></thead><tbody>${mk || `<tr><td colspan="4" class="muted">結果が出ると表示されます</td></tr>`}</tbody></table>
-    <div class="sec">負けパターン(減点理由ごとの3着内率)</div>
-    <table class="tbl"><thead><tr><th>理由</th><th>頭数</th><th>3着内 (全体 ${pct(base[1], base[0])})</th></tr></thead><tbody>${tg || `<tr><td colspan="3" class="muted">5頭以上たまると出ます</td></tr>`}</tbody></table>
-    ${pts.length ? `<div class="sec">日別</div>
-    <table class="tbl"><thead><tr><th>日付</th><th>R</th><th>的中</th><th>投資</th><th>収支</th></tr></thead><tbody>
-      ${pts.slice().reverse().map(p => { const x = byDay[p.date];
-        return `<tr class="link" tabindex="0" data-day="${p.date}"><td>${fmtD(p.date)}</td><td>${x.n}</td><td>${x.hit}</td><td>${yen(x.stake)}</td>
-        <td class="${p.pl >= 0 ? "good" : "neg"}"><b>${yen(p.pl)}</b></td></tr>`; }).join("")}</tbody></table>
-    <div class="sec">買ったレース(新しい順)</div>
-    <table class="tbl"><thead><tr><th>レース</th><th>判定</th><th>◎○</th><th>収支</th></tr></thead><tbody>
+    <div id="mcal">${calendar(state.moneyMonth, calStat2, null, "calg2")}</div>
+    <p class="legendnote">日付を押すとその日のレースを開きます。数字はその日の収支(2つの買い方の合計)。</p>
+    <div class="sec">くわしく</div>
+    <div class="card">
+    ${det("model", "モデルの買い目の分析(券種・条件・印・負けパターン)", `
+      ${srcs.length > 1 ? `<div class="chips" role="group" aria-label="予想の出どころ">
+        ${[["all","すべて"],["live","当日の予想"],["backfill","再現"]].map(([k, t]) => `<button class="chip" data-s="${k}" aria-pressed="${state.src === k}">${t}</button>`).join("")}
+      </div>` : ""}
+      ${CENTERS.length > 1 ? `<div class="chips" role="group" aria-label="中央・地方">
+        ${[["all","中央+地方"],["中央","中央"],["地方","地方"]].map(([k, t]) => `<button class="chip" data-mc="${k}" aria-pressed="${state.mcenter === k}">${t}</button>`).join("")}
+      </div>` : ""}
+      <p class="muted" style="font-size:12px;margin-bottom:8px">${fmtD(from)} 〜 ${fmtD(to)}${state.mcenter !== "all" ? " · " + state.mcenter + "のみ" : ""}${state.src !== "all" ? " · " + SRC[state.src] + "のみ" : ""}
+        · ${rs.length}R · 的中 ${pct(hit, rs.length)} · 回収率 ${pct(R, S)}</p>
+      ${state.mcenter === "all" && split.length > 1 ? `<div class="sec" style="margin-top:4px">中央・地方の内訳</div>${splitTbl}` : ""}
+      ${rs.some(r => r.alt) ? `<div class="sec" style="margin-top:4px">買い方をくらべる(同じ◎○)</div>${altTbl}` : ""}
+      ${rs.length ? `<div class="sec">券種別(役割ごと)</div>${grow(Object.entries(bt), "券種")}
+      ${GROUPS.map(([t, k]) => `<div class="sec">${esc(t)}別</div>` + grow(agg(rs, r => r[k] ?? "?"), t)).join("")}` : `<p class="muted" style="font-size:13px">この期間に買ったレースの結果はまだありません。</p>`}
+      <div class="sec">印の成績(見送りレースも含む)</div>
+      <table class="tbl"><thead><tr><th>印</th><th>頭数</th><th>勝率</th><th>3着内</th></tr></thead><tbody>${mk || `<tr><td colspan="4" class="muted">結果が出ると表示されます</td></tr>`}</tbody></table>
+      <div class="sec">負けパターン(減点理由ごとの3着内率)</div>
+      <table class="tbl"><thead><tr><th>理由</th><th>頭数</th><th>3着内 (全体 ${pct(base[1], base[0])})</th></tr></thead><tbody>${tg || `<tr><td colspan="3" class="muted">5頭以上たまると出ます</td></tr>`}</tbody></table>
+      <p class="legendnote">1点${h.unit}円で記録した買い目を、実際の払戻で計算。「再現」は過去の日を後から予想したもの(その月より前のレースだけで学んだモデル。人気は確定人気)。</p>`)}
+    ${det("races", `モデルが買ったレース(新しい順 ${Math.min(rs.length, 150)}件)`, rs.length ? `
+      <table class="tbl"><thead><tr><th>レース</th><th>判定</th><th>◎○</th><th>収支</th></tr></thead><tbody>
       ${rs.slice().reverse().slice(0, 150).map(r => `<tr class="link" tabindex="0" data-day="${r.date}" data-rid="${esc(r.id)}">
         <td>${+r.date.slice(4,6)}/${+r.date.slice(6)} ${esc(r.venue)}${r.rno}R${r.src === "backfill" ? ` <span class="tag o">再現</span>` : ""}</td>
         <td>${esc(r.verdict)}</td><td class="num">${r.hr ?? "-"}着 ${r.tr ?? "-"}着</td>
-        <td class="${r.ret - r.stake >= 0 ? "good" : "neg"}"><b>${yen(r.ret - r.stake)}</b></td></tr>`).join("")}</tbody></table>` : ""}`;
+        <td class="${r.ret - r.stake >= 0 ? "good" : "neg"}"><b>${yen(r.ret - r.stake)}</b></td></tr>`).join("")}</tbody></table>
+      <p class="legendnote">行を押すとそのレースを開きます。割安ワイドの買い目は、レースの画面で日付を選ぶと見られます。</p>` : `<p class="muted" style="font-size:13px">この期間に買ったレースはありません。</p>`)}
+    </div>`;
 
+  el.querySelectorAll("details[data-md]").forEach(dt => dt.ontoggle = () => { open[dt.dataset.md] = dt.open; });
   el.querySelectorAll("[data-p]").forEach(b => b.onclick = () => { state.period = b.dataset.p; saveMoney(); renderMoney(); });
   el.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { state.src = b.dataset.s; saveMoney(); renderMoney(); });
   el.querySelectorAll("[data-mc]").forEach(b => {
@@ -1290,7 +1347,7 @@ function renderMoney() {
   const wireCal = () => {
     $("#mcal").querySelectorAll("[data-cm]").forEach(b => b.onclick = () => {
       if (!b.dataset.cm) return; state.moneyMonth = b.dataset.cm;
-      $("#mcal").innerHTML = calendar(state.moneyMonth, calStat, null, "calg2"); wireCal(); });
+      $("#mcal").innerHTML = calendar(state.moneyMonth, calStat2, null, "calg2"); wireCal(); });
     $("#mcal").querySelectorAll("[data-day]").forEach(b => b.onclick = () => openDay(b.dataset.day));
   };
   wireCal();
@@ -1298,7 +1355,7 @@ function renderMoney() {
     const go = () => openDay(tr.dataset.day, tr.dataset.rid);
     tr.onclick = go; tr.onkeydown = e => { if (e.key === "Enter") go(); };
   });
-  wireChart(pts);
+  wireChart(pts2);
 }
 
 async function modelBox() {

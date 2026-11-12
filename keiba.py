@@ -963,8 +963,11 @@ def gap_pay(rc, g):
 
 
 def gap_history():
-    """割安なワイド(L.wide_gap)の日ごとの成績。確定オッズで選んだ場合(2022年〜の全部の日)と、
-    発走前のオッズで選んだ場合(当日に取った日だけ)。[日付, 確定の点数, 的中, 払戻, 発走前の点数, 的中, 払戻]"""
+    """割安なワイド(L.wide_gap)の日ごとの成績。
+    [日付, 確定オッズで選んだ点数, 的中, 払戻, 発走前のオッズで選んだ点数, 的中, 払戻, アプリに出している買い目の点数, 的中, 払戻]
+    確定オッズ … 2022年〜の全部の日。発走前のオッズ … 当日に取った日だけ(実際に買える形)。
+    アプリに出している買い目 … レースごとに、発走前のオッズがあればそれで、無ければ確定オッズで選んだもの
+    (アプリの gapOf と同じ。レースの画面の「この日の買い目」と同じ数字になる)"""
     out = []
     if "jra" not in CENTERS:
         return out
@@ -972,18 +975,23 @@ def gap_history():
         day = load(f, None)
         if not day:
             continue
-        row = [day["date"], 0, 0, 0, 0, 0, 0]
-        for rid, rc in day.get("races", {}).items():
-            if center_of(rid) != "jra" or not target(rid):
-                continue
-            for i, (kt, kw) in ((1, ("trio_pair_final", "wide_final")), (4, ("trio_pair", "wide_odds"))):
-                g = L.wide_gap(rc.get(kt), rc.get(kw))
-                pay = gap_pay(rc, g) if g and g["buy"] else None
-                if pay is None:
-                    continue
+        row = [day["date"], 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+        def add(i, rc, g):
+            pay = gap_pay(rc, g) if g and g["buy"] else None
+            if pay is not None:
                 row[i] += 1
                 row[i + 1] += pay > 0
                 row[i + 2] += pay
+
+        for rid, rc in day.get("races", {}).items():
+            if center_of(rid) != "jra" or not target(rid):
+                continue
+            fin = L.wide_gap(rc.get("trio_pair_final"), rc.get("wide_final"))
+            pre = L.wide_gap(rc.get("trio_pair"), rc.get("wide_odds"))
+            add(1, rc, fin)
+            add(4, rc, pre)
+            add(7, rc, pre or fin)
         if row[1] or row[4]:
             out.append(row)
     return out
