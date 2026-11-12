@@ -106,3 +106,22 @@ for nm, sel in (("5年 全部", bets), ("5年 基準以上だけ", [b for b in b
     v = np.array([b[3] for b in sel], dtype=float)
     bs = np.array([rng.choice(v, len(v)).mean() for _ in range(5000)])
     print("  {} {:.0f}%({}R) 95%の幅 {:.0f}〜{:.0f}%・100%を超えている見込み {:.0%}".format(nm, v.mean(), len(v), np.percentile(bs, 2.5), np.percentile(bs, 97.5), (bs > 100).mean()))
+
+# オッズの帯ごと(どの帯が良いか。買い方を選んだ年・選んでいない年でそろうか)
+print("\n■ オッズの帯ごとの回収率  5年 [2022 2023 2024 2025 2026] / 2022・2023年 / 2024〜2026年")
+for t, bands in (("ワイド", ((0, 1.5), (1.5, 2), (2, 2.5), (2.5, 3), (3, 4), (4, 99))),
+                 ("3連複", ((0, 3), (3, 4), (4, 5), (5, 7), (7, 10), (10, 15), (15, 25), (25, 999)))):
+    for a, b_ in bands:
+        sel = [b for b in bets if b[1] == t and a <= b[2] < b_]
+        if not sel:
+            continue
+        f = lambda ys: [b[3] for b in sel if b[0] in ys]
+        o, n = f(("2022", "2023")), f(("2024", "2025", "2026"))
+        by_ = defaultdict(list)
+        for b in sel:
+            by_[b[0]].append(b[3])
+        v = np.array([b[3] for b in sel], dtype=float)
+        bs = np.array([rng.choice(v, len(v)).mean() for _ in range(3000)])
+        print("  {} {:>4}〜{:<4}倍 {:4d}R {:5.0f}% [{}] 的中 {:3.0%} | 22-23 {:4.0f}%({:3d}R) | 24-26 {:4.0f}%({:3d}R) | 95%の幅 {:.0f}〜{:.0f}%".format(
+            t, a, b_ if b_ < 99 else "", len(sel), v.mean(), " ".join("{:4.0f}".format(np.mean(by_[y])) if by_[y] else "   -" for y in YS),
+            (v > 0).mean(), np.mean(o) if o else 0, len(o), np.mean(n) if n else 0, len(n), np.percentile(bs, 2.5), np.percentile(bs, 97.5)))
