@@ -383,20 +383,29 @@ class Parse(unittest.TestCase):
         self.assertEqual(K.parse_trio_odds({"data": {"odds": {}}}), {})
 
     def test_wide_gap(self):
-        # 割安ワイド: ワイド1.5〜15倍の中で、3連複の見込み÷ワイドの見込みがいちばん大きい組。1.3以上で買い目
-        tp = {"1-2": 0.30, "1-3": 0.20, "2-3": 0.05, "1-4": 0.9}
+        # 割安ワイド: ワイドの真ん中が1.5〜15倍の中で、期待値 = 0.75×組の強さ×(下限 + 0.35×幅) がいちばん大きい組。1.0以上で買い目
+        tp = {"1-2": 0.30, "1-3": 0.22, "2-3": 0.05, "1-4": 0.9}
         wide = {"1-2": [2.0, 2.4], "1-3": [6.0, 8.0], "2-3": [30, 40], "1-4": [1.1, 1.3], "3-4": [5.0, 6.0]}
         g = L.wide_gap(tp, wide)
         self.assertEqual((g["key"], g["pair"], g["odds"], g["buy"]), ("1-3", [1, 3], [6.0, 8.0], True))
-        self.assertAlmostEqual(g["ratio"], 0.75 * 0.20 * 7.0 / 0.775, places=3)      # 1.355
-        self.assertFalse(L.wide_gap({"1-2": 0.30}, {"1-2": [2.0, 2.4]})["buy"])       # 0.64
-        self.assertIsNone(L.wide_gap({"2-3": 0.05}, {"2-3": [30, 40]}))               # オッズが範囲の外
+        self.assertAlmostEqual(g["ev"], 0.75 * 0.22 * (6.0 + 0.35 * 2.0), places=3)      # 1.106
+        self.assertFalse(L.wide_gap({"1-2": 0.30}, {"1-2": [2.0, 2.4]})["buy"])          # 0.48
+        self.assertFalse(L.wide_gap({"1-3": 0.19}, {"1-3": [6.0, 8.0]})["buy"])          # 0.955(真ん中で数えると 1.0 を超えるが、買わない)
+        self.assertIsNone(L.wide_gap({"2-3": 0.05}, {"2-3": [30, 40]}))                  # オッズが範囲の外
         self.assertIsNone(L.wide_gap(None, wide))
         self.assertIsNone(L.wide_gap(tp, None))
         # アプリの計算(index.html の GAP)と同じ数字
         html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "index.html"), encoding="utf-8").read()
-        m = re.search(r"const GAP = \{lo: ([\d.]+), hi: ([\d.]+), th: ([\d.]+), pt: ([\d.]+), pw: ([\d.]+)\};", html)
-        self.assertEqual([float(x) for x in m.groups()], [L.GAP[k] for k in ("lo", "hi", "th", "pt", "pw")])
+        m = re.search(r"const GAP = \{lo: ([\d.]+), hi: ([\d.]+), ev: ([\d.]+), pt: ([\d.]+), alpha: ([\d.]+), fresh: ([\d.]+)\};", html)
+        self.assertEqual([float(x) for x in m.groups()], [L.GAP[k] for k in ("lo", "hi", "ev", "pt", "alpha", "fresh")])
+
+    def test_gap_pre_ok(self):
+        # 発走前のオッズは、発走の30分前より後に取ったものだけ使う(朝のオッズは売れ始めで当てにならない)
+        rc = {"start": "10:05", "trio_pair_at": "2026-11-14T09:50:00+09:00"}
+        self.assertTrue(K.gap_pre_ok("20261114", rc))
+        self.assertFalse(K.gap_pre_ok("20261114", dict(rc, trio_pair_at="2026-11-14T03:29:00+09:00")))     # 朝
+        self.assertFalse(K.gap_pre_ok("20261114", dict(rc, trio_pair_at="2026-11-14T10:06:00+09:00")))     # 発走のあと
+        self.assertFalse(K.gap_pre_ok("20261114", {"start": "10:05"}))
 
     def test_gap_pay(self):
         rc = {"horses": [{"umaban": 1}, {"umaban": 3}, {"umaban": 5, "scratched": True}],

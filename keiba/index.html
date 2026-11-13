@@ -626,7 +626,9 @@ function daySumInner() {
   return `<div class="hd">この日の買い目(1点100円)</div>
     ${line("割安ワイド", "新しい買い方(確かめ中)", gp)}
     ${line("モデルの買い目", "3連複 ◎-○-▲", mp)}
-    ${fin ? `<div class="ft">この日の割安ワイドは<b>確定オッズ</b>で選んだものです(買う時点のオッズでは変わることがあります)。</div>` : ""}`;
+    ${fin ? `<div class="ft">この日の割安ワイドは<b>確定オッズ</b>で選んだものです(買う時点のオッズでは変わることがあります)。</div>` : ""}
+    ${rs.some(r => r.center === "jra" && !r.result) ? `<div class="ft">割安ワイドは、<b>発走の${GAP.fresh}分前から</b>のオッズで選びます(朝のオッズは売れ始めで当てになりません)。
+      ${canLive() ? "アプリを開くか「オッズ更新」で取り直します。" : "自動の更新(10分ごと)で出ます。"}</div>` : ""}`;
 }
 function drawDaySum() {
   const el = $("#daysum");
@@ -775,7 +777,15 @@ function betOdds(r, b) {
 // 3連複の市場の見込み(0.75 × 組の強さ。組の強さ = その2頭を含む3連複の組の 1/オッズ の合計)が、
 // ワイドの市場の見込み(0.775 ÷ ワイドのオッズ)よりはっきり高い組。3着内の当たり方は3連複の市場の方が正確で、
 // 比が大きい組ほどワイドの回収率が上がる(keiba_logic.GAP・wide_gap と同じ計算。tools/experiments/trio_pair_wide.py)
-const GAP = {lo: 1.5, hi: 15, th: 1.30, pt: 0.75, pw: 0.775};
+const GAP = {lo: 1.5, hi: 15, ev: 1.0, pt: 0.75, alpha: 0.35, fresh: 30};
+// 発走前のオッズで選ぶのは、発走の GAP.fresh 分前より後に取ったオッズだけ(keiba.py の gap_pre_ok と同じ)。
+// 前日発売や朝のオッズはほとんど売れていなくて、ほぼ全部の組が「割安」に見えてしまう
+function gapFresh(r) {
+  const d = state.day && state.day.date, at = Date.parse(r.trio_pair_at || "");
+  if (!d || !r.start || isNaN(at)) return false;
+  const st = Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8), +r.start.slice(0, 2) - 9, +r.start.slice(3, 5));
+  return st - at >= 0 && st - at <= GAP.fresh * 60000;
+}
 function wideGap(tp, wide) {
   if (!tp || !wide) return null;
   let best = null;
@@ -786,10 +796,11 @@ function wideGap(tp, wide) {
     if (!lo || !hi) continue;
     const w = (lo + hi) / 2;
     if (!(w >= GAP.lo && w < GAP.hi)) continue;
-    const ratio = GAP.pt * s * w / GAP.pw;
-    if (!best || ratio > best.ratio || (ratio === best.ratio && k > best.key)) best = {key: k, pair: k.split("-").map(Number), ratio, odds: [lo, hi]};
+    // 期待値 = 3連複の見込み × ワイドの払戻の見込み。払戻は「下限〜上限」の真ん中でなく下限寄り(下限 + 0.35×幅)になる
+    const ev = GAP.pt * s * (lo + GAP.alpha * (hi - lo));
+    if (!best || ev > best.ev || (ev === best.ev && k > best.key)) best = {key: k, pair: k.split("-").map(Number), ev, odds: [lo, hi]};
   }
-  if (best) best.buy = best.ratio >= GAP.th;
+  if (best) best.buy = best.ev >= GAP.ev;
   return best;
 }
 // 3連複の全部の組のオッズ -> 組ごとの強さ(keiba.py の trio_pair_sums と同じ)
@@ -810,7 +821,7 @@ function gapOf(r) {
   if (KOCHI || r.center !== "jra" || !r.horses) return null;
   const done = !!(r.result && (r.result.order || []).length >= 3);
   // gw = 3連複の組の強さ(trio_pair)と同じ時刻のワイドのオッズ(アプリが片方だけ取り直したときに、時刻のちがう2つを比べない)
-  let g = wideGap(r.trio_pair, r.gw || r.wide_odds), src = "pre";
+  let g = gapFresh(r) ? wideGap(r.trio_pair, r.gw || r.wide_odds) : null, src = "pre";
   if (!g && done) { g = wideGap(r.trio_pair_final, r.wide_final); src = "fin"; }
   if (!g) return null;
   g.src = src; g.done = done;
@@ -829,7 +840,7 @@ function gapInner(r) {
   return `<div class="pk gap ${g.done && !g.void ? (g.ret ? "hit" : "lose") : ""}">
     <div class="pk-h"><span>割安ワイド<em>確かめ中</em></span><span>${g.src === "pre" ? (g.done ? "発走前のオッズで選んだ" : "いまのオッズで") : "確定オッズで選んだ(参考)"}</span></div>
     <div class="pk-b"><span class="ty">ワイド</span><span class="cb num">${g.pair.join("-")}</span>
-      <span class="od num">${g.odds[0]}〜${g.odds[1]}倍 · 割安度 ${g.ratio.toFixed(2)}</span>${st}</div>
+      <span class="od num">${g.odds[0]}〜${g.odds[1]}倍 · 期待値 ${g.ev.toFixed(2)}</span>${st}</div>
     <div class="pk-n">${g.pair.map(u => `${u} ${esc(hname(r, u))}`).join(" ・ ")}</div>
     ${!g.done && buyBtn(r, "ワイド", g.pair) ? `<div class="pk-a">${buyBtn(r, "ワイド", g.pair)}</div>` : ""}</div>`;
 }
@@ -888,7 +899,8 @@ function detailInner(r) {
   const p = r.pred, res = r.result, g = gapOf(r);
   return `${p.reason ? `<div class="note"><div>${p.verdict === "見送り" ? "モデルは見送り: " : "モデル: "}${esc(p.reason)}${p.pace ? "(展開: " + esc(p.pace.note) + ")" : ""}</div></div>` : ""}
     ${p.notes && p.notes.length ? `<div class="note">${p.notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
-    ${g && !g.buy ? `<div class="note"><div>割安ワイド: なし(割安度がいちばん高い組は ${g.pair.join("-")} の ${g.ratio.toFixed(2)}。${GAP.th.toFixed(1)} 以上で買い目にする)</div></div>` : ""}
+    ${!g && !KOCHI && r.center === "jra" && !(res && res.order && res.order.length >= 3) ? `<div class="note"><div>割安ワイド: 発走の${GAP.fresh}分前からのオッズで選びます(それより前のオッズは売れ始めで当てになりません)</div></div>` : ""}
+    ${g && !g.buy ? `<div class="note"><div>割安ワイド: なし(期待値がいちばん高い組は ${g.pair.join("-")} の ${g.ev.toFixed(2)}。${GAP.ev.toFixed(2)} 以上で買い目にする)</div></div>` : ""}
     ${chaosOf(r) ? `<div class="note czl">${chaosLine(r)}</div>` : ""}
     ${res && res.order && res.order.length >= 3 ? resLine(r) : ""}
     ${courseBox(p.course)}${naviLine(r)}${evBox(r)}
@@ -1315,7 +1327,7 @@ function renderMoney() {
       ${sumRow("割安ワイド", "確かめ中の買い方", gs[0], gs[1], gs[0] * 100, gs[2])}
       ${sumRow("モデルの買い目", "3連複 ◎-○-▲", rs.length, hit, S, R)}
       <div class="ft">割安ワイドは、過去の日は<b>確定オッズ</b>で選んだ場合の成績です(買う時点のオッズでは変わることがあります)。
-        買い目にする基準は結果を見て決めたので、<b>全期間の数字は高めに出ています</b>(選び方を分けて確かめると 94〜106%。「考え方」に説明)。
+        買い目にする基準は結果を見ながら決めたので、<b>全期間の数字は高めに出ています</b>(確定オッズで選べても 100〜110% くらい。「考え方」に説明)。
         発走前のオッズで選んだ分(実際に買える形): ${gPre[0] ? `<b>${gPre[0]}R · 的中 ${gPre[1]} · 回収率 ${pct(gPre[2], gPre[0] * 100)}</b>` : "まだありません(2026-11-14 の開催からたまります)"}。
         モデルの買い目は2024年から(その日より前のレースだけで学んだモデルで再現)。</div>
     </div>
@@ -1889,13 +1901,13 @@ async function refreshOdds(manual) {
         if (r.trio_pair && !r.gw) r.gw = r.wide_odds;      // サーバーが同じ時刻に取った組を、割安ワイド用に残しておく
         r.wide_odds = w;
       }
-      // 3連複の全部の組(割安ワイド用の組ごとの強さ)。締切まで90分以内のレースと、モデルが買うレース(買い目のオッズ)だけ
+      // 3連複の全部の組(割安ワイド用の組ごとの強さ)。発走が近いレースと、モデルが買うレース(買い目のオッズ)だけ
       const p = r.pred || {}, ab = ["A", "B"].includes(p.verdict) && p.honmei && p.taikou;
-      if (ab || (untilClose(d.date, r) ?? 999) <= 90) {
+      if (ab || (untilClose(d.date, r) ?? 999) <= GAP.fresh + 5) {
         const ta = await liveTrio(r.id).catch(() => ({}));
         if (Object.keys(ta).length) {
           const tp = trioPairSums(ta);
-          if (Object.keys(tp).length && Object.keys(w).length) { r.trio_pair = tp; r.gw = w; }
+          if (Object.keys(tp).length && Object.keys(w).length) { r.trio_pair = tp; r.gw = w; r.trio_pair_at = new Date().toISOString(); }
           if (ab) {
             const t3 = Object.fromEntries(Object.entries(ta).filter(([k]) => { const us = k.split("-").map(Number); return us.includes(p.honmei) && us.includes(p.taikou); }));
             if (Object.keys(t3).length) r.trio_odds = t3;
@@ -2298,18 +2310,20 @@ function gapRule() {
         <b>3連複の市場は来ると見ているのに、ワイドではまだ売れていない組</b>のワイドを買う</li>
       <li><b>なぜ</b>3着内に来る馬は、単勝オッズよりワイドのオッズ、ワイドより3連複のオッズの方が正確に当てている
         (売上がいちばん大きく、よく調べて買う人が多い)。ワイドの値段は3連複に追いついていないことがある</li>
-      <li><b>割安度</b>= 3連複の見込み(0.75 × その2頭を含む3連複の組の 1/オッズ の合計)÷ ワイドの見込み(0.775 ÷ ワイドのオッズ)。
-        1レースで割安度がいちばん高い組(ワイド ${GAP.lo}〜${GAP.hi}倍の中で)が <b>${GAP.th.toFixed(1)} 以上</b>なら、その1点を買い目にする。5レースに1つくらい出る</li>
-      <li><b>確かめたこと</b>2022〜2026年の中央の全レース(確定オッズ)で、どのオッズの帯・どの年でも、割安度が高い組ほどワイドの的中も回収率も上がる。
-        買い目にする組は${t[0] ? ` ${t[0].toLocaleString()}R・的中 ${pct(t[1], t[0])}・回収率 <b>${pct(t[2], t[0] * 100)}</b>` : " 約109%"}(年ごとは「収支・分析」)</li>
-      <li><b>この成績は高めに出ている</b>買い目にする基準(ワイド ${GAP.lo}〜${GAP.hi}倍・割安度 ${GAP.th.toFixed(1)} 以上)は、5年分の結果を見ながら決めた。
-        基準を少しずつ変えた90通りの回収率は 92〜127%(中央 101%)で、今の基準はその中の良い方。
-        その年より前の年だけで基準を選んで当てはめると <b>94%</b>、ほかの4年で選ぶと 106%、選ばずに理屈どおり(割安度 1.29 以上の組を全部)買うと <b>97%</b>。
-        2024〜2026年は今の基準でもほぼ 100%。<b>確定オッズで選べたとしても、100%前後(95〜105%)と見ておく</b>。
-        割安度が高い組ほど回収率が上がること自体は、どの年でも出ている(割安度 1.0〜1.1 の組は 82%、1.4 以上は 107%)</li>
+      <li><b>期待値</b>= 3連複の見込み(${GAP.pt} × その2頭を含む3連複の組の 1/オッズ の合計)× ワイドの払戻の見込み。
+        ワイドのオッズは「下限〜上限」で出て、当たったときの払戻は真ん中でなく下限寄りになる(3頭目が人気馬のことが多いため。5年とも 下限 + 0.35×幅)。
+        1レースで期待値がいちばん高い組(ワイド ${GAP.lo}〜${GAP.hi}倍の中で)が <b>${GAP.ev.toFixed(2)} 以上</b>なら、その1点を買い目にする。8レースに1つくらい出る</li>
+      <li><b>確かめたこと</b>2022〜2026年の中央の全レース(確定オッズ)で、どのオッズの帯・どの年でも、3連複の見込みがワイドの見込みより高い組ほど
+        ワイドの的中も回収率も上がる。買い目にする組は${t[0] ? ` ${t[0].toLocaleString()}R・的中 ${pct(t[1], t[0])}・回収率 <b>${pct(t[2], t[0] * 100)}</b>` : " 約115%"}(年ごとは「収支・分析」)</li>
+      <li><b>2026-11-13 に選び方を直した</b>前はワイドのオッズの真ん中で数えていて、払戻を高く見すぎていた(「割安度 1.3 以上」)。
+        下限寄りに直すと、前の買い目のうち見込みの低い 1/3 が外れる(外れる分は 98%、残る分は 114%)。5年で 109% → 115%。
+        単勝オッズや馬ごとの売れ方なども足して機械学習で選び直すことも試したが、確かめる年では良くならなかったので入れていない</li>
+      <li><b>この成績は高めに出ている</b>ワイドの範囲(${GAP.lo}〜${GAP.hi}倍)や「1レースで1組だけ」は、5年分の結果を見ながら決めた。
+        前の選び方では、基準を少しずつ変えた90通りが 92〜127%(中央 101%)、その年より前の年だけで基準を選ぶと 94%、ほかの4年で選ぶと 106% だった。
+        今の選び方も 2026年は 85% で、選ばずに期待値 1.0 以上の組を全部買うと 102%。<b>確定オッズで選べたとしても、100〜110% くらいと見ておく</b></li>
       <li><b>まだ分からないこと</b>上の成績は<b>確定オッズ</b>で選んだ場合。買うときに見えるのは発走の数分前のオッズで、締切の直前に大きく動く。
         発走前のオッズで選んでも同じように当たるかは、2026-11-14 の開催から記録して確かめている。それまでは参考</li>
-      <li><b>見方</b>レースの欄の「割安ワイド」に、買い目・ワイドのオッズ・割安度・結果を出す。過去の日は確定オッズで選んだもの、
+      <li><b>見方</b>レースの欄の「割安ワイド」に、買い目・ワイドのオッズ・期待値・結果を出す。過去の日は確定オッズで選んだもの、
         当日は発走前に取ったオッズ(アプリは開いたときに取り直す)で選んだもの</li>
     </ul>`;
 }

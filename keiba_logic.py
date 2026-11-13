@@ -259,13 +259,23 @@ UNIT = 100                   # 1点あたりの金額(円)
 # その年より前の年だけで選ぶと 94%、ほかの4年で選ぶと 106%、選ばずに割安度 1.29 以上を全部買うと 97%
 # (tools/experiments/gap_select_check.py)。確定オッズで選べても 100%前後と見ておく。
 # 発走前のオッズで同じことが起きるかは確かめている途中なので、アプリでは参考として出す
-GAP = {"lo": 1.5, "hi": 15.0, "th": 1.30, "pt": 0.75, "pw": 0.775}
+GAP = {"lo": 1.5, "hi": 15.0, "ev": 1.0, "pt": 0.75, "alpha": 0.35, "fresh": 30}
+# fresh: 発走前のオッズで選ぶのは、発走の fresh 分前より後に取ったオッズだけ。前日発売や朝のオッズはほとんど売れていなくて、
+#  2026-11-14 の朝 3時半のオッズでは 36レース中 29レースが「割安」に見えた(確定オッズなら 8レースに1つ)
+# 2026-11-13 に選び方を直した(tools/experiments/gap_payout.py・gap_model.py):
+#  前は 割安度 = 0.75×組の強さ ÷ (0.775÷ワイドの真ん中のオッズ) が 1.30 以上。ワイドは「下限〜上限」で出て、当たったときの払戻は
+#  真ん中でなく下限寄り(下限 + 0.35×幅。5年とも 0.34〜0.36、どのオッズの帯でも 0.32〜0.36)なので、真ん中で数えると高く見すぎる。
+#  今は 期待値 = 0.75×組の強さ ×(下限 + alpha×幅)。1レースで期待値がいちばん高い組(ワイドの真ん中が lo〜hi 倍)が ev 以上なら買う。
+#  前の買い目のうち割安度の低い 1/3 が外れる(外れる 1,097R は 98%、残る 2,171R は 114%)。確定オッズで 2022〜2026年 2,184R・115%
+#  (133・115・115・121・85%)。前の選び方との差は −1〜+13 ポイント(新しい方が上の見込み 96%)。
+#  単勝オッズ・馬ごとのずれ・頭数などを足して回帰や LightGBM で当たる確率を作り直しても、確かめる年では良くならなかった
 
 
 def wide_gap(tp, wide):
     """割安なワイドの組。tp = 組ごとの強さ("小さい馬番-大きい馬番" -> 合計)、wide = ワイドのオッズ(同じキー -> [下限, 上限])。
-    ワイドのオッズ(下限と上限の中央)が lo〜hi 倍の組の中で、比(3連複の見込み ÷ ワイドの見込み)がいちばん大きい組を返す。
-    -> {"key": "a-b", "pair": [a, b], "ratio": 比, "odds": [下限, 上限], "buy": 比が th 以上か}。組が無ければ None"""
+    期待値 = 3連複の見込み(pt×組の強さ)× ワイドの払戻の見込み(下限 + alpha×(上限 − 下限))。
+    ワイドのオッズ(下限と上限の真ん中)が lo〜hi 倍の組の中で、期待値がいちばん大きい組を返す。
+    -> {"key": "a-b", "pair": [a, b], "ev": 期待値, "odds": [下限, 上限], "buy": 期待値が ev 以上か}。組が無ければ None"""
     best = None
     for k, v in (wide or {}).items():
         s = (tp or {}).get(k)
@@ -274,15 +284,14 @@ def wide_gap(tp, wide):
         lo, hi = (v[0], v[1]) if isinstance(v, (list, tuple)) else (v, v)
         if not lo or not hi:
             continue
-        w = (lo + hi) / 2
-        if not GAP["lo"] <= w < GAP["hi"]:
+        if not GAP["lo"] <= (lo + hi) / 2 < GAP["hi"]:
             continue
-        ratio = GAP["pt"] * s * w / GAP["pw"]
-        if best is None or (ratio, k) > (best["ratio"], best["key"]):
-            best = {"key": k, "pair": [int(x) for x in k.split("-")], "ratio": ratio, "odds": [lo, hi]}
+        ev = GAP["pt"] * s * (lo + GAP["alpha"] * (hi - lo))
+        if best is None or (ev, k) > (best["ev"], best["key"]):
+            best = {"key": k, "pair": [int(x) for x in k.split("-")], "ev": ev, "odds": [lo, hi]}
     if best:
-        best["buy"] = best["ratio"] >= GAP["th"]
-        best["ratio"] = round(best["ratio"], 3)
+        best["buy"] = best["ev"] >= GAP["ev"]
+        best["ev"] = round(best["ev"], 3)
     return best
 
 
