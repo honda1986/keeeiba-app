@@ -1459,7 +1459,7 @@ async function modelBox() {
 // ---------------------------------------------------------------- 投票
 // 自分で買うときの買い目の一覧と、買った記録(自動では買わない)。記録はこの端末のブラウザにだけ残る
 const VOTE_KEY = "keiba-votes";
-const IPAT_URL = "https://www.ipat.jra.go.jp/";
+const IPAT_URL = "https://www.ipat.jra.go.jp/sp/";       // 投票ページ(スマホ版)。Androidアプリの IPAT の画面も同じアドレス(MainActivity.IPAT_SP)
 // IPAT の画面つきのアプリ(2026-11-11 からの版)か。古い版(オッズを取るだけ)やブラウザでは「IPATで入力」を出さない
 const canBuy = () => !!(window.KeibaApp && typeof window.KeibaApp.buy === "function");
 // 「IPATで入力」のボタン(発走前だけ)。押すと、アプリが IPAT の画面を金額入力まで進める(金額・投票は自分で)

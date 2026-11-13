@@ -62,6 +62,7 @@ public class MainActivity extends Activity {
     Button tabWeb, tabIpat;
     SharedPreferences prefs;
     boolean ipatLoaded = false;
+    boolean ipatPc = false;                   // PC版で見ているか(長押しで切り替え。覚えておかない: 起動のたびにスマホ版 IPAT_SP から)
     long pausedAt = 0;
 
     // 自動入力: task = 1点分の買い目, steps = 押した数, phase = run / final / off
@@ -137,8 +138,8 @@ public class MainActivity extends Activity {
         });
         tabIpat.setOnClickListener(v -> show(true));
         tabIpat.setOnLongClickListener(v -> {                        // 長押しでスマホ版 / PC版を切り替える
-            boolean pc = !prefs.getBoolean("ipat_pc", false);
-            prefs.edit().putBoolean("ipat_pc", pc).apply();
+            boolean pc = !ipatPc;
+            ipatPc = pc;
             ipat.loadUrl(pc ? IPAT_PC : IPAT_SP);
             ipatLoaded = true;
             show(true);
@@ -203,7 +204,7 @@ public class MainActivity extends Activity {
 
     void show(boolean showIpat) {
         if (showIpat && !ipatLoaded) {
-            ipat.loadUrl(prefs.getBoolean("ipat_pc", false) ? IPAT_PC : IPAT_SP);
+            ipat.loadUrl(ipatPc ? IPAT_PC : IPAT_SP);
             ipatLoaded = true;
         }
         web.setVisibility(showIpat ? View.GONE : View.VISIBLE);
