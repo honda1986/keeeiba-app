@@ -382,23 +382,6 @@ class Parse(unittest.TestCase):
         self.assertEqual(K.parse_trio_odds(j, (9, 2)), {"2-3-9": 12.3})       # ◎○を含む組だけ
         self.assertEqual(K.parse_trio_odds({"data": {"odds": {}}}), {})
 
-    def test_wide_gap(self):
-        # 割安ワイド: ワイドの真ん中が1.5〜15倍の中で、期待値 = 0.75×組の強さ×(下限 + 0.35×幅) がいちばん大きい組。1.0以上で買い目
-        tp = {"1-2": 0.30, "1-3": 0.22, "2-3": 0.05, "1-4": 0.9}
-        wide = {"1-2": [2.0, 2.4], "1-3": [6.0, 8.0], "2-3": [30, 40], "1-4": [1.1, 1.3], "3-4": [5.0, 6.0]}
-        g = L.wide_gap(tp, wide)
-        self.assertEqual((g["key"], g["pair"], g["odds"], g["buy"]), ("1-3", [1, 3], [6.0, 8.0], True))
-        self.assertAlmostEqual(g["ev"], 0.75 * 0.22 * (6.0 + 0.35 * 2.0), places=3)      # 1.106
-        self.assertFalse(L.wide_gap({"1-2": 0.30}, {"1-2": [2.0, 2.4]})["buy"])          # 0.48
-        self.assertFalse(L.wide_gap({"1-3": 0.19}, {"1-3": [6.0, 8.0]})["buy"])          # 0.955(真ん中で数えると 1.0 を超えるが、買わない)
-        self.assertIsNone(L.wide_gap({"2-3": 0.05}, {"2-3": [30, 40]}))                  # オッズが範囲の外
-        self.assertIsNone(L.wide_gap(None, wide))
-        self.assertIsNone(L.wide_gap(tp, None))
-        # アプリの計算(index.html の GAP)と同じ数字
-        html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "index.html"), encoding="utf-8").read()
-        m = re.search(r"const GAP = \{lo: ([\d.]+), hi: ([\d.]+), ev: ([\d.]+), pt: ([\d.]+), alpha: ([\d.]+), fresh: ([\d.]+)\};", html)
-        self.assertEqual([float(x) for x in m.groups()], [L.GAP[k] for k in ("lo", "hi", "ev", "pt", "alpha", "fresh")])
-
     def test_solid(self):
         # 堅い単勝: 1番人気(オッズがいちばん低い馬)。1.8倍以下で買い目。見込みの的中 = 0.80÷オッズ
         w = L.solid_win({1: 1.6, 2: 4.0, 3: 9.0, 4: 15.0, 5: 30.0})
@@ -460,26 +443,25 @@ class Parse(unittest.TestCase):
         self.assertEqual((r["trio_pair"], r["wide_odds"], r["trio_pair_at"], r["odds_src"], r["trio_odds"]),
                          ({"1-2": 0.3}, {"1-2": [2.0, 2.4]}, "2026-11-14T10:03:00+09:00", "PC", {"1-2-3": 5.0}))
         self.assertEqual([(h["odds"], h["ninki"]) for h in r["horses"]], [(2.5, 1), (4.1, 2)])
-        self.assertTrue(K.gap_pre_ok("20261114", r))
+        self.assertTrue(K.pre_odds_ok("20261114", r))
         self.assertEqual(day["races"]["202605010102"]["trio_pair"], {"1-2": 0.5})
         self.assertNotIn("trio_pair", day["races"]["202605010103"])
         self.assertEqual(K.apply_pc_odds("20261114", day, None), 0)
 
-    def test_gap_pre_ok(self):
+    def test_pre_odds_ok(self):
         # 発走前のオッズは、発走の30分前より後に取ったものだけ使う(朝のオッズは売れ始めで当てにならない)
         rc = {"start": "10:05", "trio_pair_at": "2026-11-14T09:50:00+09:00"}
-        self.assertTrue(K.gap_pre_ok("20261114", rc))
-        self.assertFalse(K.gap_pre_ok("20261114", dict(rc, trio_pair_at="2026-11-14T03:29:00+09:00")))     # 朝
-        self.assertFalse(K.gap_pre_ok("20261114", dict(rc, trio_pair_at="2026-11-14T10:06:00+09:00")))     # 発走のあと
-        self.assertFalse(K.gap_pre_ok("20261114", {"start": "10:05"}))
-
-    def test_gap_pay(self):
-        rc = {"horses": [{"umaban": 1}, {"umaban": 3}, {"umaban": 5, "scratched": True}],
-              "result": {"order": [1, 3, 2], "payout": {"ワイド": {"1-3": 520, "1-2": 300, "2-3": 900}}}}
-        self.assertEqual(K.gap_pay(rc, {"key": "1-3", "pair": [1, 3]}), 520)
-        self.assertEqual(K.gap_pay(rc, {"key": "1-4", "pair": [1, 4]}), 0)
-        self.assertIsNone(K.gap_pay(rc, {"key": "1-5", "pair": [1, 5]}))                # 取消は数えない
-        self.assertIsNone(K.gap_pay({"horses": []}, {"key": "1-3", "pair": [1, 3]}))    # 結果がまだ
+        self.assertTrue(K.pre_odds_ok("20261114", rc))
+        self.assertTrue(K.pre_odds_ok("20261114", dict(rc, trio_pair_at="2026-11-14T09:35:00+09:00")))      # ちょうど30分前
+        self.assertFalse(K.pre_odds_ok("20261114", dict(rc, trio_pair_at="2026-11-14T03:29:00+09:00")))     # 朝
+        self.assertFalse(K.pre_odds_ok("20261114", dict(rc, trio_pair_at="2026-11-14T10:06:00+09:00")))     # 発走のあと
+        self.assertFalse(K.pre_odds_ok("20261114", {"start": "10:05"}))
+        # アプリの数字(index.html の PRE)と同じ
+        html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "index.html"), encoding="utf-8").read()
+        m = re.search(r"const PRE = \{pt: ([\d.]+), alpha: ([\d.]+), fresh: ([\d.]+)\};", html)
+        self.assertEqual([float(x) for x in m.groups()], [L.PRE[k] for k in ("pt", "alpha", "fresh")])
+        # 割安ワイドは消した(2026-11-14)。アプリにも記録にも残っていないこと
+        self.assertNotIn("割安", html)
 
     def test_trio_pair_sums(self):
         # 2頭を含む3連複の組の 1/オッズ の合計。小さい組は保存しない

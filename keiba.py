@@ -54,7 +54,7 @@ WAIT = 0.4                 # 1リクエストごとの間隔(秒。スレッド�
 WORKERS = 4                # 1日のレースを同時に取る数
 CARD_REFRESH = 50          # 出馬表(馬場・取消)を取り直す間隔(分)
 ODDS_REFRESH = 20          # オッズを取り直す間隔(分)
-ODDS_NEAR = (45, 5)        # 発走まで45分以内のレースは5分たっていれば取り直す(割安ワイドは発走が近いオッズで選ぶ。更新は10分ごと)
+ODDS_NEAR = (45, 5)        # 発走まで45分以内のレースは5分たっていれば取り直す(堅い買い目は発走が近いオッズで選ぶ。更新は10分ごと)
 RESULT_AFTER = 8           # 発走から何分後に結果を見に行くか
 # 予想する中央・地方(2026-10-21: 中央だけに絞る。地方は取らない・予想しない・収支に出さない)
 CENTERS = tuple(c for c in os.environ.get("KEIBA_CENTERS", "jra").split(",") if c)
@@ -955,17 +955,6 @@ def alt_bets(p, res):
 HISTORY_FROM = "20240101"
 
 
-def gap_pay(rc, g):
-    """割安なワイドの組 g(L.wide_gap の返り)の払戻(100円あたり)。結果が無い・その馬が取消なら None"""
-    res = rc.get("result") or {}
-    if not g or len(res.get("order") or []) < 3:
-        return None
-    out = {h["umaban"] for h in rc.get("horses") or [] if h.get("scratched")}
-    if out & set(g["pair"]):
-        return None
-    return ((res.get("payout") or {}).get("ワイド") or {}).get(g["key"], 0)
-
-
 PC_SNAP = "https://raw.githubusercontent.com/honda1986/keeeiba-app/odds-live/snap/{}.json"
 
 
@@ -1010,50 +999,15 @@ def merge_pc_odds(d, day):
     return n
 
 
-def gap_pre_ok(d, rc):
-    """発走前の組の強さ(trio_pair)が、発走の L.GAP["fresh"] 分前より後に取ったものか。
-    それより前のオッズは売れ始めで当てにならないので、割安ワイドの買い目には使わない(アプリの gapFresh と同じ)"""
+def pre_odds_ok(d, rc):
+    """発走前の組の強さ(trio_pair)が、発走の L.PRE["fresh"] 分前より後に取ったものか。
+    それより前のオッズは売れ始めで当てにならないので、買い目には使わない(アプリの preFresh と同じ)"""
     st = start_dt(d, rc.get("start"))
     try:
         at = datetime.fromisoformat(rc.get("trio_pair_at") or "")
     except ValueError:
         return False
-    return st is not None and 0 <= (st - at).total_seconds() / 60 <= L.GAP["fresh"]
-
-
-def gap_history():
-    """割安なワイド(L.wide_gap)の日ごとの成績。
-    [日付, 確定オッズで選んだ点数, 的中, 払戻, 発走前のオッズで選んだ点数, 的中, 払戻, アプリに出している買い目の点数, 的中, 払戻]
-    確定オッズ … 2022年〜の全部の日。発走前のオッズ … 当日に、発走の30分前より後に取れたレースだけ(実際に買える形)。
-    アプリに出している買い目 … レースごとに、発走前のオッズがあればそれで、無ければ確定オッズで選んだもの
-    (アプリの gapOf と同じ。レースの画面の「この日の買い目」と同じ数字になる)"""
-    out = []
-    if "jra" not in CENTERS:
-        return out
-    for f in sorted(glob.glob(OUT + "/days/*.json")):
-        day = load(f, None)
-        if not day:
-            continue
-        row = [day["date"], 0, 0, 0, 0, 0, 0, 0, 0, 0]
-
-        def add(i, rc, g):
-            pay = gap_pay(rc, g) if g and g["buy"] else None
-            if pay is not None:
-                row[i] += 1
-                row[i + 1] += pay > 0
-                row[i + 2] += pay
-
-        for rid, rc in day.get("races", {}).items():
-            if center_of(rid) != "jra" or not target(rid):
-                continue
-            fin = L.wide_gap(rc.get("trio_pair_final"), rc.get("wide_final"))
-            pre = L.wide_gap(rc.get("trio_pair"), rc.get("wide_odds")) if gap_pre_ok(day["date"], rc) else None
-            add(1, rc, fin)
-            add(4, rc, pre)
-            add(7, rc, pre or fin)
-        if row[1] or row[4]:
-            out.append(row)
-    return out
+    return st is not None and 0 <= (st - at).total_seconds() / 60 <= L.PRE["fresh"]
 
 
 def solid_picks(d, rc):
@@ -1062,7 +1016,7 @@ def solid_picks(d, rc):
     -> {"win": {...} か None, "wide": {...} か None, "src": "pre" / "fin"}。結果が無いレースで発走前のオッズも無ければ None"""
     res = rc.get("result") or {}
     done = len(res.get("order") or []) >= 3
-    if gap_pre_ok(d, rc):
+    if pre_odds_ok(d, rc):
         odds = {h["umaban"]: h.get("odds") for h in rc.get("horses") or [] if not h.get("scratched")}
         return {"win": L.solid_win(odds), "wide": L.solid_wide(rc.get("trio_pair"), rc.get("wide_odds")), "src": "pre"}
     if not done:
@@ -1179,7 +1133,7 @@ def build_history():
                 "alt": alt_bets(p, rc.get("result") or {})})
         days.append(row)
     hist = {"updated": datetime.now(JST).isoformat(timespec="seconds"), "unit": L.UNIT,
-            "days": days, "races": races, "gap": gap_history(), "solid": solid_history()}
+            "days": days, "races": races, "solid": solid_history()}
     save(OUT + "/history.json", hist)
     return hist
 
