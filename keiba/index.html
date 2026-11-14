@@ -1799,6 +1799,26 @@ function widePairs(win) {
   }
   return P;
 }
+// ワイドの組ごとの確率と期待値。3連複のオッズ(組ごとの強さ)が使えるときは、割安ワイドと同じ計算:
+//   確率 = 0.75 × 組の強さ(3着内の当たり方は3連複の市場がいちばん正確)、期待値 = 確率 ×(下限 + 0.35×幅)。
+// 使えるのは、発走の30分前より後に取ったオッズ(gapFresh)か、終わったレースの確定オッズ(gapOf と同じ順)。
+// まだ早いときは、前からの目安(単勝から出した確率とワイドのオッズを混ぜたもの。期待値は下限〜上限の幅)
+function wideEv(r, win) {
+  const done = !!(r.result && (r.result.order || []).length >= 3);
+  let tp = null, wo = null;
+  if (gapFresh(r) && r.trio_pair) { tp = r.trio_pair; wo = r.gw || r.wide_odds; }
+  else if (done && r.trio_pair_final && r.wide_final) { tp = r.trio_pair_final; wo = r.wide_final; }
+  if (tp && wo) {
+    const rows = Object.keys(wo).filter(k => tp[k] && wo[k][0] > 1).map(k => {
+      const o = wo[k], p = Math.min(GAP.pt * tp[k], 0.98);
+      return {k, p, o, ev: p * (o[0] + GAP.alpha * (o[1] - o[0]))};
+    });
+    if (rows.length) return {rows, trio: true};
+  }
+  const wo2 = r.wide_odds || r.wide_final, P = wideProbs(r, win);
+  if (!P) return null;
+  return {rows: Object.keys(P).map(k => ({k, p: P[k], o: wo2[k], ev: P[k] * wo2[k][0]})), trio: false};
+}
 const pctS = v => (v * 100).toFixed(v < 0.1 ? 1 : 0) + "%";
 const evRange = (p, o) => o[0] === o[1] ? (p * o[0]).toFixed(2) : `${(p * o[0]).toFixed(2)}〜${(p * o[1]).toFixed(2)}`;
 function evInner(r) {
@@ -1810,24 +1830,25 @@ function evInner(r) {
   const tRows = tans.slice(0, 4).map(x => `<tr class="${x.u === pr.honmei ? "mk" : ""}"><td>${x.u} ${nm(x.u)}${x.u === pr.honmei ? " ◎" : ""}</td>
     <td>${pctS(x.p)}</td><td>${x.o}</td><td class="${evCls(x.ev)}">${x.ev.toFixed(2)}</td></tr>`).join("");
   let wHtml = `<div class="muted" style="margin-top:6px">ワイドのオッズはまだ取っていません(次のオッズの更新で取ります)。</div>`;
-  const wo = r.wide_odds || r.wide_final;          // 発走前の最後のオッズ / 無ければ確定オッズ
-  const P = wideProbs(r, win);
-  if (P) {
+  const W = wideEv(r, win);
+  if (W) {
     const hk = pr.honmei && pr.taikou ? [pr.honmei, pr.taikou].sort((a, b) => a - b).join("-") : "";
-    const ws = Object.keys(P).map(k => ({k, p: P[k], o: wo[k], ev: P[k] * wo[k][0]}))
-      .sort((a, b) => b.p - a.p);
+    const g = gapOf(r), gk = g && g.buy ? g.key : "";
+    const ws = W.rows.sort((a, b) => b.p - a.p);
     const show = ws.slice(0, 6);
-    if (hk && !show.some(x => x.k === hk)) { const x = ws.find(x => x.k === hk); if (x) show.push(x); }
+    for (const key of [hk, gk]) if (key && !show.some(x => x.k === key)) { const x = ws.find(x => x.k === key); if (x) show.push(x); }
     wHtml = `<table class="evtbl"><thead><tr><th>ワイド(当たりやすい順)</th><th>確率</th><th>オッズ</th><th>期待値</th></tr></thead><tbody>
-      ${show.map(x => `<tr class="${x.k === hk ? "mk" : ""}"><td>${esc(x.k)}${x.k === hk ? " ◎-○" : ""}</td><td>${pctS(x.p)}</td>
-        <td>${x.o[0] === x.o[1] ? x.o[0] : x.o[0] + "〜" + x.o[1]}</td><td class="${evCls(x.ev)}">${evRange(x.p, x.o)}</td></tr>`).join("")}</tbody></table>`;
+      ${show.map(x => `<tr class="${x.k === hk || x.k === gk ? "mk" : ""}"><td>${esc(x.k)}${x.k === hk ? " ◎-○" : ""}${x.k === gk ? " 割安" : ""}</td><td>${pctS(x.p)}</td>
+        <td>${x.o[0] === x.o[1] ? x.o[0] : x.o[0] + "〜" + x.o[1]}</td><td class="${evCls(x.ev)}">${W.trio ? x.ev.toFixed(2) : evRange(x.p, x.o)}</td></tr>`).join("")}</tbody></table>`;
   }
   return `<table class="evtbl"><thead><tr><th>単勝(当たりやすい順)</th><th>確率</th><th>オッズ</th><th>期待値</th></tr></thead>
     <tbody>${tRows}</tbody></table>${wHtml}
-    <div class="muted" style="margin-top:6px">期待値 = 当たる確率 × オッズ。1を超えれば続けて買うと得になる見込み(緑)。
-      単勝の確率はほぼ単勝オッズから(モデルは少しだけ)、ワイドの確率は単勝から出した確率とワイドのオッズを混ぜたもの。
-      2022〜2026年の確定オッズで確かめると、期待値1を超えた単勝の馬・ワイドの組はほとんど無く、超えた組も得になっていない。
-      ワイドの期待値はオッズの幅(下限〜上限)で出す。</div>`;
+    <div class="muted" style="margin-top:6px">期待値 = 当たる確率 × 払戻の見込み。1を超えれば続けて買うと得になる見込み(緑)。
+      単勝の確率はほぼ単勝オッズから(モデルは少しだけ)で、1を超える馬はほとんど無い。
+      ${W && W.trio ? `ワイドは<b>割安ワイドと同じ計算</b>: 確率は3連複のオッズから(3着内の当たり方は3連複の市場がいちばん正確)、
+        払戻の見込みは オッズの下限 + ${GAP.alpha}×幅(当たったときの払戻は下限寄りになる)。${r.result ? (gapFresh(r) ? "発走前のオッズ" : "確定オッズ") : "いまのオッズ"}で計算。`
+        : W ? `ワイドは、<b>発走の${GAP.fresh}分前までは目安</b>(単勝から出した確率とワイドのオッズを混ぜたもの。期待値はオッズの下限〜上限の幅)。
+        発走が近づくと、割安ワイドと同じ計算(3連複のオッズから)に切り替わる。` : ""}</div>`;
 }
 function evBox(r) {
   if (!r.horses || !r.horses.some(h => h.odds)) return "";
