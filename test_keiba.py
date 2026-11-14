@@ -426,6 +426,62 @@ class Parse(unittest.TestCase):
         self.assertIsNone(K.solid_picks("20261114", {"start": "10:05", "horses": hs}))
         self.assertIsNone(K.solid_picks("20261114", dict(pre, trio_pair_at="2026-11-14T03:00:00+09:00")))  # 朝のオッズは使わない
 
+    def test_push(self):
+        # 後押し: 評価値をレースの中で平均0・ばらつき1にそろえて、重みを掛けて足す(keiba_push.py)
+        import keiba_push as PU
+        z = PU.zs([1.0, 2.0, 3.0, None])
+        self.assertEqual(z[3], 0.0)                                          # 無い値は 0(平均)
+        self.assertAlmostEqual(z[0], -1.2247, places=3); self.assertAlmostEqual(z[1], 0.0); self.assertAlmostEqual(z[2], 1.2247, places=3)
+        self.assertEqual(PU.zs([5, 5, 5]), [0.0, 0.0, 0.0])                  # 差が無ければ全部 0
+        self.assertEqual(PU.zs([None, None]), [0.0, 0.0])
+        self.assertEqual(max(PU.zs([0] * 30 + [100])), 3.0)                  # ±3 で切る
+        fs = [{"a": 1, "style": 0}, {"a": 3, "style": 2}, {"a": None, "style": 2}, {"a": 2, "style": None}]
+        self.assertEqual([round(v, 3) for v in PU.column(fs, "a")], [-1.225, 1.225, 0.0, 0.0])
+        self.assertEqual([round(v, 3) for v in PU.column(fs, "style=2")], [-1.0, 1.0, 1.0, -1.0])   # 種類は 0/1 にしてからそろえる
+        m = {"features": ["a", "style=2"], "win": [0.1, 0.0], "pair": [-0.2, 0.05]}
+        sc = PU.score([(3, fs[0]), (5, fs[1]), (7, fs[2]), (9, fs[3])], m)
+        self.assertEqual(sc[3], (round(0.1 * -1.2247, 4), round(-0.2 * -1.2247 + 0.05 * -1.0, 4)))
+        self.assertEqual(sc[7], (0.0, 0.05))
+        self.assertEqual(PU.score([], m), {})
+        self.assertEqual([PU.level(v, [-0.1, 0.2]) for v in (-0.3, -0.1, 0.0, 0.2, 0.5, None)], [0, 0, 1, 2, 2, None])
+        out = {"horses": [{"umaban": 3}, {"umaban": 5}, {"umaban": 8}]}
+        PU._M["m"] = m
+        PU.add(out, [(3, fs[0]), (5, fs[1])])
+        PU._M.clear()
+        self.assertEqual((out["horses"][0]["push"], out["horses"][0]["push2"]), PU.score([(3, fs[0]), (5, fs[1])], m)[3])
+        self.assertNotIn("push", out["horses"][2])                            # 材料の無い馬には付けない
+        names = PU.candidates([{"a": 1, "a_rank": 1, "venue": 3, "course_waku_idx": 1, "style": 1, "sex": 0}] * 60 + [{"a": 2, "style": 2, "sex": 0}])
+        self.assertEqual(names, ["a", "style=1", "sex=0"])                    # そろえ直した値・場・コース傾向は入れない。少ない種類(2%以下)も入れない
+
+    def test_push_history(self):
+        # 後押しの強さごとの成績: 予想に push が入っているレースだけ数える(堅い単勝 = その馬の push、堅いワイド = 2頭の push2 の合計、
+        # モデルの買い目 = 買い目の馬の push2 の平均)
+        import tempfile, keiba_push as PU
+        hs = [{"umaban": u, "odds": o} for u, o in ((1, 1.5), (2, 4.0), (3, 9.0), (4, 15.0), (5, 30.0))]
+        ph = [{"umaban": 1, "push": 0.3, "push2": 0.2}, {"umaban": 2, "push": -0.5, "push2": -0.1}, {"umaban": 3, "push": 0.0, "push2": -0.4},
+              {"umaban": 4, "push": 0.0, "push2": 0.0}, {"umaban": 5, "push": 0.0, "push2": 0.0}]
+        res = {"order": [1, 3, 2], "odds": {"1": 1.5, "2": 4.0, "3": 9.0, "4": 15.0, "5": 30.0},
+               "payout": {"単勝": {"1": 150}, "ワイド": {"1-2": 130, "1-3": 300, "2-3": 800}, "3連複": {"1-2-3": 900}}}
+        race = {"start": "10:05", "horses": hs, "result": res, "trio_pair_final": {"1-2": 0.7}, "wide_final": {"1-2": [1.2, 1.4]},
+                "pred": {"verdict": "B", "horses": ph, "bets": [{"type": "3連複", "combos": [[1, 2, 3]], "unit": 100}]}, "settle": {"stake": 100, "ret": 900, "hit": True}}
+        old = dict(race, pred=dict(race["pred"], horses=[{"umaban": h["umaban"]} for h in ph]))       # push の無い予想は数えない
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "days"))
+            json.dump({"date": "20261115", "races": {"202605050811": race, "202605050812": old}}, open(os.path.join(tmp, "days", "20261115.json"), "w"))
+            json.dump({"date": "20261108", "races": {"202605050811": race}}, open(os.path.join(tmp, "days", "20261108.json"), "w"))     # PUSH_FROM より前
+            keep = K.OUT
+            K.OUT = tmp
+            PU._M["m"] = {"cuts": {"solid_win": [-0.1, 0.2], "solid_wide": [-0.1, 0.2], "model": [-0.15, 0.0]}}
+            try:
+                out = K.push_history()
+            finally:
+                K.OUT = keep
+                PU._M.clear()
+        self.assertEqual(out["from"], "20261115")
+        self.assertEqual(out["solid_win"], [[0, 0, 0], [0, 0, 0], [1, 1, 150]])       # 1番の push 0.3 → 強い。単勝 150円
+        self.assertEqual(out["solid_wide"], [[0, 0, 0], [1, 1, 130], [0, 0, 0]])      # 1-2 の push2 の合計 0.1 → ふつう
+        self.assertEqual(out["model"], [[0, 0, 0], [1, 1, 900], [0, 0, 0]])           # 1-2-3 の push2 の平均 -0.1 → ふつう
+
     def test_apply_pc_odds(self):
         # PC が取った発走前のオッズは、手元の分より新しく、発走より前に取ったものだけ入れる
         day = {"races": {

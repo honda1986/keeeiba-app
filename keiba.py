@@ -1060,6 +1060,53 @@ def solid_history():
     return out
 
 
+PUSH_FROM = "20261115"        # 予想に後押し(push・push2)が入り始めた日
+
+
+def push_history():
+    """後押しの強さ(弱い・ふつう・強い)ごとの成績。予想に push が入った日からの記録(それより前の成績は push_model.json の stats)。
+    -> {"from": 最初の日, "solid_win": [[点数, 的中, 払戻] × 3], "solid_wide": …, "model": …}(払戻は100円あたり)。
+    強さの境目は keiba/push_model.json の cuts(アプリの pushOf と同じ数え方)"""
+    import keiba_push as PU
+    out = {"from": None, "solid_win": [[0, 0, 0] for _ in range(3)], "solid_wide": [[0, 0, 0] for _ in range(3)], "model": [[0, 0, 0] for _ in range(3)]}
+    m = PU.load()
+    if not m or "jra" not in CENTERS:
+        return out
+    cuts = m.get("cuts") or {}
+
+    def add(kind, v, pay):
+        lv = PU.level(v, cuts.get(kind))
+        if lv is not None:
+            t = out[kind][lv]
+            t[0] += 1; t[1] += pay > 0; t[2] += pay
+
+    for f in sorted(glob.glob(OUT + "/days/*.json")):
+        if os.path.basename(f)[:8] < PUSH_FROM:
+            continue
+        day = load(f, None)
+        for rid, rc in ((day or {}).get("races") or {}).items():
+            res = rc.get("result") or {}
+            pr = rc.get("pred") or {}
+            ph = {h["umaban"]: h for h in pr.get("horses") or [] if h.get("push") is not None and h.get("push2") is not None}
+            if center_of(rid) != "jra" or not target(rid) or len(res.get("order") or []) < 3 or not ph:
+                continue
+            out["from"] = out["from"] or day["date"]
+            gone = {h["umaban"] for h in rc.get("horses") or [] if h.get("scratched")}
+            pay = res.get("payout") or {}
+            sp = solid_picks(day["date"], rc) or {}
+            w = sp.get("win")
+            if w and w["buy"] and w["u"] not in gone and w["u"] in ph:
+                add("solid_win", ph[w["u"]]["push"], (pay.get("単勝") or {}).get(str(w["u"]), 0))
+            x = sp.get("wide")
+            if x and x["buy"] and not gone & set(x["pair"]) and all(u in ph for u in x["pair"]):
+                add("solid_wide", sum(ph[u]["push2"] for u in x["pair"]), (pay.get("ワイド") or {}).get(x["key"], 0))
+            stl = rc.get("settle") or {}
+            us = sorted({u for b in pr.get("bets") or [] for c in b.get("combos") or [] for u in c})
+            if pr.get("verdict") in ("A", "B") and stl.get("stake") and us and all(u in ph for u in us):
+                add("model", sum(ph[u]["push2"] for u in us) / len(us), stl.get("ret", 0) * 100 / stl["stake"])
+    return out
+
+
 def build_history():
     """日別ファイルから、期間で絞れる形の成績を作る。
     days  … 日ごとの合計と、印・負けパターンの集計(アプリが期間で足し合わせる)
@@ -1133,7 +1180,7 @@ def build_history():
                 "alt": alt_bets(p, rc.get("result") or {})})
         days.append(row)
     hist = {"updated": datetime.now(JST).isoformat(timespec="seconds"), "unit": L.UNIT,
-            "days": days, "races": races, "solid": solid_history()}
+            "days": days, "races": races, "solid": solid_history(), "push": push_history()}
     save(OUT + "/history.json", hist)
     return hist
 

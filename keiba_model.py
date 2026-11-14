@@ -292,6 +292,14 @@ _MODEL = {"booster": None, "meta": None, "tried": False}
 _LOCK = threading.Lock()
 
 
+def add_push(race, out, rows):
+    """予想の馬に後押し(push・push2)を足す(中央だけ。式は keiba/push_model.json。keiba_push.py)"""
+    import keiba_push as PU
+    if TAG or race.get("center", "jra") != "jra":      # 高知のモデル(TAG)では出さない
+        return
+    PU.add(out, rows)
+
+
 def model_files(meta):
     """保存したモデルのファイル。乱数の種を変えた何本か(meta["models"]。予想はその平均)。古い形は MODEL_FILE の1本"""
     names = (meta or {}).get("models")
@@ -315,13 +323,15 @@ def load():
     return _MODEL["booster"], _MODEL["meta"]
 
 
-def probs(race, today, pred):
-    """馬番 -> 3着以内の確率(モデルが無ければ None)"""
+def probs(race, today, pred, keep=None):
+    """馬番 -> 3着以内の確率(モデルが無ければ None)。keep(dict)を渡すと、材料(rows)を keep["rows"] に残す(後押しの計算に使う)"""
     bst, meta = load()
     if not bst:
         return None
     sp = SP.load() if any(k.startswith(("spd_", "l3fig_")) for k in meta["features"]) else None
     rows = race_rows(race, today, pred, meta["l3f_norm"], meta.get("jt"), sp)
+    if keep is not None:
+        keep["rows"] = rows
     if not rows:
         return {}
     X = [[_num(f.get(k)) for k in meta["features"]] for _, f in rows]

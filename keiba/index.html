@@ -438,6 +438,7 @@ async function loadDay(d) {
 async function boot() {
   drawBrand();
   const chaosP = KOCHI ? null : getJSON("chaos_model.json").catch(() => null);      // 荒れ度の式(中央)
+  const pushP = KOCHI ? null : getJSON("push_model.json").catch(() => null);        // 後押しの境目と成績(中央)
   try { state.hist = await getJSON(DATA + "history.json"); } catch (e) { state.hist = null; }
   state.days = (state.hist?.days || []).filter(d => d.races).map(d => d.date);
   try { state.day = await getJSON(DATA + "data.json"); } catch (e) { state.day = null; }
@@ -458,6 +459,7 @@ async function boot() {
   // まだ当日の更新(data.json)が無いときは、いちばん新しい日を開く(高知のアプリを始めたときなど)
   if (!state.day && state.days.length) { try { state.day = await loadDay(state.days[state.days.length - 1]); } catch (e) { /* 無いまま */ } }
   chaosState.model = ((chaosP && await chaosP) || {}).chaos || null;
+  state.push = (pushP && await pushP) || null;
   renderRace(); renderMoney(); renderRule(); renderVote();
   autoOdds(); autoNavi(); loadPcOdds(true);
   const h = new URLSearchParams(location.hash.slice(1));
@@ -846,7 +848,7 @@ function solidInner(r) {
       ? ` · <span class="neg">モデルは${p3top.umaban}番が上(このときは当たりにくい: 的中 45%)</span>` : "";
     return `<div class="pk-b"><span class="ty">${x.type}</span><span class="cb num">${x.c.join("-")}</span>
       <span class="od num">${esc(x.odds)} · 見込み ${Math.round(x.p * 100)}%</span>${st}</div>
-      <div class="pk-n">${x.c.map(u => `${u} ${esc(hname(r, u))}`).join(" ・ ")}${warn}</div>${naviPick(r, x.c)}
+      <div class="pk-n">${x.c.map(u => `${u} ${esc(hname(r, u))}`).join(" ・ ")}${warn}</div>${pushLine(r, x.type === "単勝" ? "solid_win" : "solid_wide", x.c)}${naviPick(r, x.c)}
       ${!so.done && buyBtn(r, x.type, x.c) ? `<div class="pk-a">${buyBtn(r, x.type, x.c)}</div>` : ""}`;
   }).join("");
   const hitAll = so.done && so.picks.some(x => x.ret), loseAll = so.done && !so.picks.some(x => x.ret);
@@ -854,6 +856,37 @@ function solidInner(r) {
     <div class="pk-h"><span>堅い買い目<em class="vS">的中重視</em></span><span>${so.src === "pre" ? (so.done ? "発走前のオッズで選んだ" : "いまのオッズで") : "確定オッズで選んだ場合"}</span></div>${rows}</div>`;
 }
 
+// ---------------------------------------------------------------- 後押し(オッズに足す評価値の式。2026-11-15)
+// 予想の馬ごとに push(1着の式)・push2(2頭とも3着内の式)が入っている(keiba_push.py。オッズは使わず、評価値だけで決まる数字)。
+// 過去の成績が良く見える馬は買われすぎ、見劣りする馬は売れなさすぎ、という向きをまとめたもの。強いほど回収率が高い。
+// 境目と過去の成績(その年を除いて作った式で確かめたもの)は push_model.json(tools/train_push.py が毎週作り直す)。
+//  kind: solid_win = 堅い単勝(その馬の push)/ solid_wide = 堅いワイド(2頭の push2 の合計)/ model = モデルの買い目(馬の push2 の平均)
+function pushOf(r, kind, us) {
+  const m = state.push;
+  if (!m || !m.cuts || !m.cuts[kind] || KOCHI) return null;
+  const hs = us.map(u => ((r.pred || {}).horses || []).find(h => h.umaban === u) || {});
+  if (!hs.length || hs.some(h => h.push == null || h.push2 == null)) return null;
+  const v = kind === "solid_win" ? hs[0].push : kind === "solid_wide" ? hs.reduce((a, h) => a + h.push2, 0) : hs.reduce((a, h) => a + h.push2, 0) / hs.length;
+  const cut = m.cuts[kind], lv = v <= cut[0] ? 0 : v >= cut[1] ? 2 : 1;
+  return {v, lv, st: ((m.stats || {})[kind] || [])[lv] || null};
+}
+const PUSH_NAME = ["弱い", "ふつう", "強い"];
+// 今の買い方(3連複◎-○-▲)を後押しで3つに分けた回収率(2022〜2026年の 961R。その年を除いて学んだモデルと式。tools/experiments/push_trio.py)
+const PUSH_TRIO = [{n: 321, hit: 0.224, roi: 77}, {n: 319, hit: 0.276, roi: 94}, {n: 321, hit: 0.234, roi: 116}];
+function pushLine(r, kind, us) {
+  const x = pushOf(r, kind, us);
+  if (!x) return "";
+  if (kind === "model") x.st = PUSH_TRIO[x.lv];
+  const st = x.st && x.st.n ? `(過去のこの強さ: ${x.st.n.toLocaleString()}点・的中 ${pct(x.st.hit, 1)}・回収率 ${x.st.roi.toFixed(0)}%)` : "";
+  return `<div class="pk-n">評価値の後押し: <b class="${x.lv === 2 ? "good" : x.lv === 0 ? "neg" : ""}">${PUSH_NAME[x.lv]}</b> <span class="muted">${st}</span></div>`;
+}
+
+// 馬の札: 1着の式の後押しが上1割なら「後押し強」、下2割なら「後押し弱」(単勝20倍以下の馬の5年: 上1割 91%・下2割 68%)
+function pushTag(h) {
+  const c = ((state.push || {}).cuts || {}).win_top;
+  if (!c || h.push == null || KOCHI) return "";
+  return h.push >= c["0.9"] ? `<span class="tag p">後押し強</span>` : h.push <= c["0.2"] ? `<span class="tag m">後押し弱</span>` : "";
+}
 // モデルの買い目(3連複◎-○-▲、▲が延長ならワイド◎-○)。always なら見送りのときも理由を出す
 function modelPick(r, always) {
   const p = r.pred, s = r.settle, done = !!(r.result && s);
@@ -870,8 +903,9 @@ function modelPick(r, always) {
       <div class="pk-n">${esc(b.kind)} … ${esc(b.role)}</div>
       ${!done && b.combos.length === 1 && buyBtn(r, b.type, b.combos[0], b.unit) ? `<div class="pk-a">${buyBtn(r, b.type, b.combos[0], b.unit)}</div>` : ""}`;
   }).join("");
+  const us = [...new Set(p.bets.flatMap(b => b.combos.flat()))];
   return `<div class="pk model ${done ? (s.hit ? "hit" : "lose") : ""}">
-    <div class="pk-h"><span>モデルの買い目<em class="v${esc(p.verdict)}">${esc(p.verdict)}</em></span><span>${p.src === "backfill" ? "再現した予想" : ""}</span></div>${rows}</div>`;
+    <div class="pk-h"><span>モデルの買い目<em class="v${esc(p.verdict)}">${esc(p.verdict)}</em></span><span>${p.src === "backfill" ? "再現した予想" : ""}</span></div>${rows}${pushLine(r, "model", us)}</div>`;
 }
 // ◎○▲(確率・オッズ・結果が出ていれば着順)
 function marks(r) {
@@ -1095,7 +1129,7 @@ function table(r) {
       + (h.axis_ng.length ? `<span class="tag o">軸不可: ${esc(h.axis_ng.join("・"))}</span>` : "")
       + (h.cut ? `<span class="tag m">${esc(h.cut_reason || "負け要因が多い")}</span>` : "")
       + (h.odds_note ? `<span class="tag o">${esc(h.odds_note)}</span>` : "")
-      + jockeyTag(r, h) + `<span class="nv" data-u="${h.umaban}">${naviTag(r, h.umaban)}</span>`;
+      + pushTag(h) + jockeyTag(r, h) + `<span class="nv" data-u="${h.umaban}">${naviTag(r, h.umaban)}</span>`;
     return `<tr data-u="${h.umaban}"><td class="mk">${h.mark && h.mark !== "×" ? h.mark : ""}</td>
       <td class="num">${h.umaban}</td>
       <td class="nm"><b>${esc(ho.name)}</b> <span class="muted">${esc(h.style || "")}</span><br>${tags}</td>
@@ -1363,6 +1397,7 @@ function renderMoney() {
     <p class="legendnote">日付を押すとその日のレースを開きます。数字はその日の収支(堅い買い目とモデルの買い目の合計)。</p>
     <div class="sec">くわしく</div>
     <div class="card">
+    ${pushRec(h.push, det)}
     ${det("model", "モデルの買い目の分析(券種・条件・印・負けパターン)", `
       ${srcs.length > 1 ? `<div class="chips" role="group" aria-label="予想の出どころ">
         ${[["all","すべて"],["live","当日の予想"],["backfill","再現"]].map(([k, t]) => `<button class="chip" data-s="${k}" aria-pressed="${state.src === k}">${t}</button>`).join("")}
@@ -2397,6 +2432,49 @@ function chaosRule() {
     <p class="muted" style="font-size:11px;margin:4px 0 0">中央 ${esc((c.years || []).join("〜"))}年の ${(c.races || 0).toLocaleString()}R(年ごとに、ほかの年で学んだ式で読んだ分)。
       毎週の学び直しで作り直す(${esc(c.fitted || "")})</p>`;
 }
+// 後押しの強さごとの記録(history.json の push。予想に後押しが入った 2026-11-15 からの実際の成績)
+function pushRec(ph, det) {
+  if (!ph || !state.push) return "";
+  const kinds = [["solid_win", "堅い単勝"], ["solid_wide", "堅いワイド"], ["model", "モデルの買い目"]];
+  if (!kinds.some(([k]) => (ph[k] || []).some(t => t[0]))) return "";
+  const cell = t => t && t[0] ? `<td>${t[0]}点 · 的中 ${t[1]} · <b class="${t[2] >= t[0] * 100 ? "good" : "neg"}">${pct(t[2], t[0] * 100)}</b></td>` : `<td class="muted">-</td>`;
+  return det("push", "後押しの強さごとの成績(" + fmtD(ph.from || "").slice(5) + "〜の記録)", `
+    <table class="tbl"><thead><tr><th></th><th>弱い</th><th>ふつう</th><th>強い</th></tr></thead><tbody>
+    ${kinds.map(([k, nm]) => `<tr><td>${nm}</td>${[0, 1, 2].map(i => cell((ph[k] || [])[i])).join("")}</tr>`).join("")}</tbody></table>
+    <p class="legendnote">評価値の後押し(「考え方」に説明)を付け始めてからの、実際の結果。過去5年の確かめでは、強いほど回収率が高い。</p>`);
+}
+// 後押し(オッズに足す評価値の式)の説明
+function pushRule() {
+  const m = state.push;
+  if (!m || !m.stats) return "";
+  const s = m.stats, ys = s.years || [];
+  const row3 = (nm, a) => a ? `<tr><td>${nm}</td>${a.map(x => `<td>${x.n.toLocaleString()}点<br>的中 ${pct(x.hit, 1)}<br><b class="${x.roi >= 100 ? "good" : ""}">回収率 ${x.roi.toFixed(0)}%</b></td>`).join("")}</tr>` : "";
+  const wt = s.win_top || {};
+  const wrow = (nm, x) => x ? `<tr><td>${nm}</td><td>${x.n.toLocaleString()}</td><td>${pct(x.hit, 1)}</td><td><b class="${x.roi >= 100 ? "good" : x.roi < 75 ? "neg" : ""}">${x.roi.toFixed(0)}%</b></td>
+    <td class="muted">${(x.yr || []).map(v => v == null ? "-" : Math.round(v)).join("・")}</td></tr>` : "";
+  return `<div class="sec">評価値の後押し(回収率を上げるための印)</div>
+    <ul class="rules">
+      <li><b>何か</b>オッズだけの式に、モデルの材料(評価値 ${m.features.length}個)を足したときの「足した分」。馬ごとに数字で出る(オッズは使わないので朝の予想で決まる)。
+        <b>的中率は上がらないが、回収率は上がる</b>: 強い馬・組は「オッズのわりに来る」、弱い馬・組は「オッズのわりに来ない」</li>
+      <li><b>向き</b>過去の成績(着順・着差・3着内率・能力)が<b>良く見える馬は買われすぎ</b>で、見劣りするのに売れている馬の方が、同じオッズなら来る。
+        モデルの◎は過去の成績で選ぶので、買われすぎの側に寄りやすい。後押しは、その寄りを直す向きに働く</li>
+      <li><b>出る場所</b>堅い買い目・モデルの買い目の箱に「評価値の後押し: 強い / ふつう / 弱い」(その買い目の中で3等分)。
+        全馬の評価の札に「後押し強」(上1割)・「後押し弱」(下2割)。<b>弱いときは見送る、強いときだけ買う</b>、という使い方</li>
+      <li><b>ワイドの的中率を上げても、3連複の回収率は上がらない</b>今の買うレースで◎○を「オッズでいちばん来そうな組」に替えると、
+        2頭とも3着内は 44.5% → 50.7% に上がるが、ワイドの回収率は 90% → 85%、3連複は 85% → 84% と変わらない(当たりやすい組は配当が安い)。
+        回収率を動かすのは的中率ではなく、<b>買われすぎていない馬を買うこと</b></li>
+      <li><b>まだ確かでないこと</b>下の表は過去5年(その年を除いて作った式)。単勝とワイドは数が多く年ごとにもそろうが、
+        モデルの買い目(3連複)は1つの段が 300レースほどで、5年のうち2年(2022・2025年)は強い方が低い。これからの記録は「収支・分析」に出す</li>
+    </ul>
+    <table class="tbl"><thead><tr><th>過去5年</th><th>弱い</th><th>ふつう</th><th>強い</th></tr></thead><tbody>
+      ${row3("堅い単勝", s.solid_win)}${row3("堅いワイド", s.solid_wide)}
+      ${row3("モデルの買い目<br><span class='muted'>3連複◎-○-▲</span>", PUSH_TRIO)}</tbody></table>
+    <div style="overflow-x:auto"><table class="tbl nw" style="font-size:12.5px;margin-top:8px"><thead><tr><th>単勝(20倍以下)</th><th>頭数</th><th>的中</th><th>回収率</th><th>${ys.length ? ys[0] + "〜" + ys[ys.length - 1] + "年" : "年ごと"}</th></tr></thead><tbody>
+      ${wrow("後押し 上5%", wt.top5)}${wrow("上1割(後押し強)", wt.top10)}${wrow("上2割", wt.top20)}${wrow("全部", wt.all)}${wrow("下2割(後押し弱)", wt.bottom20)}</tbody></table></div>
+    <p class="muted" style="font-size:11px;margin:4px 0 0">中央 ${(m.races || 0).toLocaleString()}R。毎週の学び直しで作り直す(${esc((m.updated || "").slice(0, 10))})。
+      モデルの買い目の段は、その年を除いて学んだモデルで再現した 961R(記録に残っている 2024年〜の予想 ${(s.model || []).reduce((a, x) => a + x.n, 0)}R では
+      ${(s.model || []).map(x => x.roi.toFixed(0) + "%").join("・")})</p>`;
+}
 // 堅い買い目(的中重視)の説明
 function solidRule() {
   const t = ((state.hist || {}).solid || []).reduce((a, r) => a.map((v, i) => v + r[i + 1]), [0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -2433,6 +2511,7 @@ function solidRule() {
 function renderRule() {
   if (KOCHI) { renderRuleKochi(); return; }
   $("#v-rule").innerHTML = `
+    ${pushRule()}
     ${solidRule()}
     <div class="sec">モデルの買い目の流れ</div>
     <div class="flow"><div>全レースの各馬に、3着以内に来る確率を出す</div>

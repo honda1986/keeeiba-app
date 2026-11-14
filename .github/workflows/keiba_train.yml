@@ -69,12 +69,14 @@ jobs:
           [ "$KEIBA_OUT" = "keiba/kochi" ] && python tools/kochi_final_fit.py
           # 中央は荒れ度(1番人気が3着に来ない確率)の式も(アプリが出す。参考)
           if [ "$KEIBA_OUT" = "keiba" ]; then python tools/chaos_fit.py || echo "荒れ度の式を作れなかった(前のまま)"; fi
+          # 中央は後押しの式(オッズに足す評価値。keiba_push.py)も。上で作った材料(KEIBA_CACHE)を使う
+          if [ "$KEIBA_OUT" = "keiba" ]; then python tools/train_push.py || echo "後押しの式を作れなかった(前のまま)"; fi
           T=${KEIBA_MODEL_TAG:+_$KEIBA_MODEL_TAG}      # 高知は _kochi
           for k in 1 2 3; do
             # あるものだけ足す(無いファイルを1つでも渡すと git add が全部やめてしまう)
             # 種を変えた2本目からのモデル(keiba_model_s2.txt など)。使わなくなって消したものも
             git ls-files -d -- "keiba_model${T}_s*.txt" | xargs -r git rm -q --cached
-            for f in keiba_model$T.txt keiba_model${T}_s*.txt keiba_model${T}_meta.json keiba_speed$T.json $KEIBA_OUT/model_wf.json.gz $KEIBA_OUT/final_model.json $KEIBA_OUT/chaos_model.json $KEIBA_OUT/days $KEIBA_OUT/history.json; do
+            for f in keiba_model$T.txt keiba_model${T}_s*.txt keiba_model${T}_meta.json keiba_speed$T.json $KEIBA_OUT/model_wf.json.gz $KEIBA_OUT/final_model.json $KEIBA_OUT/chaos_model.json $KEIBA_OUT/push_model.json $KEIBA_OUT/days $KEIBA_OUT/history.json; do
               [ -e "$f" ] && git add "$f"
             done
             if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
