@@ -27,6 +27,7 @@ OUT = os.environ.get("OUTDIR", "/tmp/odds_plus"); os.makedirs(OUT, exist_ok=True
 YS = ("2022", "2023", "2024", "2025", "2026")
 WIN_ODDS, WIDE_P, PT = 1.8, 0.45, 0.75            # 堅い買い目の基準(keiba_logic.SOLID)
 BASE = os.environ.get("BASE", "simple")
+ONLY_ALL = os.environ.get("ONLY_ALL") == "1"      # 1つずつ足す所を飛ばして、まとめて足す所だけ回す
 LEAK = ("course_waku_idx", "course_style_idx")    # コース傾向の表は 2021〜2025年の集計で、2025年までは先の結果が混ざる。まとめて足すときは外す
 t0 = time.time()
 races = T.load_races()
@@ -187,7 +188,7 @@ def win_eval(cols, l2=0.0, keep=False):
             o["up_a"] += y[hi].sum(); o["up_e"] += pb[hi].sum(); o["up_pay"] += (y[hi] * od[hi]).sum(); o["up_n"] += hi.sum()
             o["dn_a"] += y[lo].sum(); o["dn_e"] += pb[lo].sum()
             if keep:
-                o["keep"].append(dict(yy=yy, p=p, pb=pb, y=y, od=od, adj=adj, top=top, sel=sel))
+                o["keep"].append(dict(yy=yy, p=p, pb=pb, y=y, od=od, adj=adj, top=top, sel=sel, fav=fav))
     return o
 
 
@@ -199,7 +200,7 @@ W0 = win_eval([])
 print("\n■ 1着(単勝)。土台 = {}: 対数尤度 {:.5f}/R。全レースで土台の1位 的中 {:.1%}・回収率 {:.1f}% / 堅い単勝と同じ数({}R) 的中 {:.1%}・回収率 {:.1f}%".format(
     "単勝オッズだけ" if BASE == "simple" else "オッズ全部", sum(W0["ll"]) / NR, W0["hit"] / W0["n"], 100 * W0["pay"] / W0["n"], W0["sn"], W0["shit"] / W0["sn"], 100 * W0["spay"] / W0["sn"]), flush=True)
 WR = {}
-for c in range(NF):
+for c in ([] if ONLY_ALL else range(NF)):
     WR[names[c]] = win_eval([c])
 print("  1つずつ足した ({:.0f}分)".format((time.time() - t0) / 60), flush=True)
 
@@ -214,19 +215,20 @@ def wsum(o):
 
 
 WS = {k: wsum(v) for k, v in WR.items()}
-rnd = [WS[k] for k in WS if k.startswith("rand")]
-real = sorted((k for k in WS if not k.startswith("rand")), key=lambda k: -WS[k]["dll"])
-print("  乱数 {}個: 当たり方の伸び {:+.2f}〜{:+.2f} / 全レースの的中 {:.1%}〜{:.1%} / 同じ数の的中 {:.1%}〜{:.1%}・回収率 {:.1f}〜{:.1f}% / 押し上げる1割の回収率 {:.0f}〜{:.0f}%".format(
-    NRAND, min(x["dll"] for x in rnd), max(x["dll"] for x in rnd), min(x["hit"] for x in rnd), max(x["hit"] for x in rnd),
-    min(x["shit"] for x in rnd), max(x["shit"] for x in rnd), min(x["sroi"] for x in rnd), max(x["sroi"] for x in rnd),
-    min(x["up_roi"] for x in rnd), max(x["up_roi"] for x in rnd)))
-hd = "  {:28s} {:>7s} {:>4s} {:>7s} {:>6s} | {:>7s} {:>6s} | {:>8s} {:>6s} {:>8s} | {:>6s} {:>7s} {:>7s}".format(
-    "評価値", "伸び", "年", "的中", "回収", "同数的中", "回収", "上1割A/E", "回収", "下1割A/E", "替わるR", "新しい馬", "1番人気")
-print(hd)
-for k in real:
-    x = WS[k]
-    print("  {:28s} {:+7.2f} {:>3d}/5 {:6.1%} {:6.1f} | {:7.1%} {:6.1f} | {:8.2f} {:6.0f} {:8.2f} | {:6d} {:7.1%} {:7.1%}".format(
-        (jp(k) + ("※" if k in LEAK else ""))[:28], x["dll"], x["yrs"], x["hit"], x["roi"], x["shit"], x["sroi"], x["up_ae"], x["up_roi"], x["dn_ae"], x["swn"], x["sw_new"], x["sw_fav"]))
+if not ONLY_ALL:
+    rnd = [WS[k] for k in WS if k.startswith("rand")]
+    real = sorted((k for k in WS if not k.startswith("rand")), key=lambda k: -WS[k]["dll"])
+    print("  乱数 {}個: 当たり方の伸び {:+.2f}〜{:+.2f} / 全レースの的中 {:.1%}〜{:.1%} / 同じ数の的中 {:.1%}〜{:.1%}・回収率 {:.1f}〜{:.1f}% / 押し上げる1割の回収率 {:.0f}〜{:.0f}%".format(
+        NRAND, min(x["dll"] for x in rnd), max(x["dll"] for x in rnd), min(x["hit"] for x in rnd), max(x["hit"] for x in rnd),
+        min(x["shit"] for x in rnd), max(x["shit"] for x in rnd), min(x["sroi"] for x in rnd), max(x["sroi"] for x in rnd),
+        min(x["up_roi"] for x in rnd), max(x["up_roi"] for x in rnd)))
+    hd = "  {:28s} {:>7s} {:>4s} {:>7s} {:>6s} | {:>7s} {:>6s} | {:>8s} {:>6s} {:>8s} | {:>6s} {:>7s} {:>7s}".format(
+        "評価値", "伸び", "年", "的中", "回収", "同数的中", "回収", "上1割A/E", "回収", "下1割A/E", "替わるR", "新しい馬", "1番人気")
+    print(hd)
+    for k in real:
+        x = WS[k]
+        print("  {:28s} {:+7.2f} {:>3d}/5 {:6.1%} {:6.1f} | {:7.1%} {:6.1f} | {:8.2f} {:6.0f} {:8.2f} | {:6d} {:7.1%} {:7.1%}".format(
+            (jp(k) + ("※" if k in LEAK else ""))[:28], x["dll"], x["yrs"], x["hit"], x["roi"], x["shit"], x["sroi"], x["up_ae"], x["up_roi"], x["dn_ae"], x["swn"], x["sw_new"], x["sw_fav"]))
 
 # ---------------------------------------------------------------- ワイド: 組ごとのロジスティック回帰
 pos = {}
@@ -272,12 +274,12 @@ def lr_fit(F, y, l2=0.0):
 
 
 def pair_eval(cols, l2=0.0, keep=False):
-    o = dict(ll=[], yll=[], n=0, hit=0, pay=0.0, sn=0, shit=0, spay=0.0, up_a=0.0, up_e=0.0, up_pay=0.0, up_n=0, dn_a=0.0, dn_e=0.0, keep=[])
+    o = dict(ll=[], yll=[], n=0, hit=0, pay=0.0, sn=0, shit=0, spay=0.0, up_a=0.0, up_e=0.0, up_pay=0.0, up_n=0, dn_a=0.0, dn_e=0.0, keep=[], b=[])
     zs = [Z[P["ia"], c] + Z[P["ib"], c] for c in cols]
     for yy in YS:
         te = pyear == yy; tr = ~te
         Ftr = np.column_stack([BP[tr]] + [z[tr] for z in zs]); Fte = np.column_stack([BP[te]] + [z[te] for z in zs])
-        b = lr_fit(Ftr, P["y"][tr], l2)
+        b = lr_fit(Ftr, P["y"][tr], l2); o["b"].append(b)
         p = 1 / (1 + np.exp(-(Fte @ b))); y = P["y"][te]; pay = P["pay"][te]
         sz = psz[(ryear == yy) & has]
         ll = y * np.log(p) + (1 - y) * np.log(1 - p)
@@ -296,7 +298,7 @@ def pair_eval(cols, l2=0.0, keep=False):
             o["up_a"] += y[hi].sum(); o["up_e"] += pb[hi].sum(); o["up_pay"] += pay[hi].sum(); o["up_n"] += hi.sum()
             o["dn_a"] += y[lo].sum(); o["dn_e"] += pb[lo].sum()
             if keep:
-                o["keep"].append(dict(yy=yy, p=p, pb=pb, y=y, pay=pay, adj=adj, top=top, sel=sel, mid=P["mid"][te], exp=P["lo"][te] + 0.35 * (P["hi"][te] - P["lo"][te])))
+                o["keep"].append(dict(yy=yy, p=p, pb=pb, y=y, pay=pay, adj=adj, top=top, sel=sel, mid=P["mid"][te], exp=P["lo"][te] + 0.35 * (P["hi"][te] - P["lo"][te]), btop=btop, pt=P["pt"][te]))
     return o
 
 
@@ -309,7 +311,7 @@ NRW = int(has.sum())
 print("  土台 = {}: 対数尤度 {:.5f}/R。全レースでいちばん来そうな組 的中 {:.1%}・回収率 {:.1f}% / 堅いワイドと同じ数({}R) 的中 {:.1%}・回収率 {:.1f}%".format(
     "3連複から見た組の確率だけ" if BASE == "simple" else "オッズ全部", sum(P0["ll"]) / NRW, P0["hit"] / P0["n"], 100 * P0["pay"] / P0["n"], P0["sn"], P0["shit"] / P0["sn"], 100 * P0["spay"] / P0["sn"]), flush=True)
 PR = {}
-for c in range(NF):
+for c in ([] if ONLY_ALL else range(NF)):
     PR[names[c]] = pair_eval([c])
 print("  1つずつ足した ({:.0f}分)".format((time.time() - t0) / 60), flush=True)
 
@@ -322,17 +324,18 @@ def psum(o):
 
 
 PS = {k: psum(v) for k, v in PR.items()}
-rnd = [PS[k] for k in PS if k.startswith("rand")]
-realp = sorted((k for k in PS if not k.startswith("rand")), key=lambda k: -PS[k]["dll"])
-print("  乱数 {}個: 当たり方の伸び {:+.2f}〜{:+.2f} / 全レースの的中 {:.1%}〜{:.1%} / 同じ数の的中 {:.1%}〜{:.1%}・回収率 {:.1f}〜{:.1f}% / 押し上げる1割の回収率 {:.0f}〜{:.0f}%".format(
-    NRAND, min(x["dll"] for x in rnd), max(x["dll"] for x in rnd), min(x["hit"] for x in rnd), max(x["hit"] for x in rnd),
-    min(x["shit"] for x in rnd), max(x["shit"] for x in rnd), min(x["sroi"] for x in rnd), max(x["sroi"] for x in rnd),
-    min(x["up_roi"] for x in rnd), max(x["up_roi"] for x in rnd)))
-print("  {:28s} {:>7s} {:>4s} {:>7s} {:>6s} | {:>7s} {:>6s} | {:>8s} {:>6s} {:>8s}".format("評価値", "伸び", "年", "的中", "回収", "同数的中", "回収", "上1割A/E", "回収", "下1割A/E"))
-for k in realp:
-    x = PS[k]
-    print("  {:28s} {:+7.2f} {:>3d}/5 {:6.1%} {:6.1f} | {:7.1%} {:6.1f} | {:8.2f} {:6.0f} {:8.2f}".format(
-        (jp(k) + ("※" if k in LEAK else ""))[:28], x["dll"], x["yrs"], x["hit"], x["roi"], x["shit"], x["sroi"], x["up_ae"], x["up_roi"], x["dn_ae"]))
+if not ONLY_ALL:
+    rnd = [PS[k] for k in PS if k.startswith("rand")]
+    realp = sorted((k for k in PS if not k.startswith("rand")), key=lambda k: -PS[k]["dll"])
+    print("  乱数 {}個: 当たり方の伸び {:+.2f}〜{:+.2f} / 全レースの的中 {:.1%}〜{:.1%} / 同じ数の的中 {:.1%}〜{:.1%}・回収率 {:.1f}〜{:.1f}% / 押し上げる1割の回収率 {:.0f}〜{:.0f}%".format(
+        NRAND, min(x["dll"] for x in rnd), max(x["dll"] for x in rnd), min(x["hit"] for x in rnd), max(x["hit"] for x in rnd),
+        min(x["shit"] for x in rnd), max(x["shit"] for x in rnd), min(x["sroi"] for x in rnd), max(x["sroi"] for x in rnd),
+        min(x["up_roi"] for x in rnd), max(x["up_roi"] for x in rnd)))
+    print("  {:28s} {:>7s} {:>4s} {:>7s} {:>6s} | {:>7s} {:>6s} | {:>8s} {:>6s} {:>8s}".format("評価値", "伸び", "年", "的中", "回収", "同数的中", "回収", "上1割A/E", "回収", "下1割A/E"))
+    for k in realp:
+        x = PS[k]
+        print("  {:28s} {:+7.2f} {:>3d}/5 {:6.1%} {:6.1f} | {:7.1%} {:6.1f} | {:8.2f} {:6.0f} {:8.2f}".format(
+            (jp(k) + ("※" if k in LEAK else ""))[:28], x["dll"], x["yrs"], x["hit"], x["roi"], x["shit"], x["sroi"], x["up_ae"], x["up_roi"], x["dn_ae"]))
 
 # ---------------------------------------------------------------- 全部まとめて足す(効きすぎないよう縮める)
 allc = [c for c in range(NF) if not names[c].startswith("rand") and names[c] not in LEAK]
@@ -388,6 +391,24 @@ for th in (1.0, 1.1):
     for k in op["keep"]:
         m = (k["pb"] * k["exp"] >= th) & (k["mid"] <= 30); n2 += m.sum(); pay2 += k["pay"][m].sum()
     print("  (物差し)土台だけの式で期待値 {:.1f} 以上: 1着 {}頭 回収率 {:.1f}% / ワイド {}点 回収率 {:.1f}%".format(th, n, 100 * pay / max(n, 1), n2, 100 * pay2 / max(n2, 1)))
+# まとめた式で重みの大きい評価値(5回の平均。評価値はレースの中でそろえてあるので、重みの大きさ = 効きの大きさ)
+for nm, o, kb in (("1着", ow, KW), ("ワイド", op, KP)):
+    B = np.array([b[kb:] for b in o["b"]]); mb = B.mean(axis=0)
+    top = np.argsort(-np.abs(mb))[:12]
+    print("  {} の式で重みの大きい評価値: {}".format(nm, " / ".join("{} {:+.3f}({}回同じ向き)".format(jp(names[allc[i]]), mb[i], int((np.sign(B[:, i]) == np.sign(mb[i])).sum())) for i in top)))
+# 堅い買い目を、評価値の後押し(まとめた式の押し上げ)で3つに分ける
+print("\n■ 堅い買い目を評価値の後押しで3つに分ける(年ごとに3等分。見込み = オッズだけの式の確率)")
+T3 = defaultdict(lambda: [0, 0.0, 0.0, 0.0])
+for k in ow["keep"]:
+    f = k["fav"][k["od"][k["fav"]] <= WIN_ODDS]; a = k["adj"][f]; q1, q2 = np.quantile(a, [1 / 3, 2 / 3])
+    for nm, m in (("後押しが弱い", a <= q1), ("ふつう", (a > q1) & (a < q2)), ("後押しが強い", a >= q2)):
+        t = T3[("単勝", nm)]; t[0] += m.sum(); t[1] += k["y"][f][m].sum(); t[2] += k["pb"][f][m].sum(); t[3] += (k["y"][f][m] * k["od"][f][m]).sum()
+for k in op["keep"]:
+    f = k["btop"][k["pt"][k["btop"]] >= WIDE_P - 1e-9]; a = k["adj"][f]; q1, q2 = np.quantile(a, [1 / 3, 2 / 3])
+    for nm, m in (("後押しが弱い", a <= q1), ("ふつう", (a > q1) & (a < q2)), ("後押しが強い", a >= q2)):
+        t = T3[("ワイド", nm)]; t[0] += m.sum(); t[1] += k["y"][f][m].sum(); t[2] += k["pb"][f][m].sum(); t[3] += k["pay"][f][m].sum()
+for (ty, nm), t in T3.items():
+    print("  堅い{} {}: {:5d}点 的中 {:.1%}(オッズだけの見込み {:.1%}) 回収率 {:.1f}%".format(ty, nm, int(t[0]), t[1] / t[0], t[2] / t[0], 100 * t[3] / t[0]))
 json.dump({"win0": {"hit": W0["hit"] / W0["n"], "roi": 100 * W0["pay"] / W0["n"], "shit": W0["shit"] / W0["sn"], "sroi": 100 * W0["spay"] / W0["sn"], "sn": int(W0["sn"])},
            "pair0": {"hit": P0["hit"] / P0["n"], "roi": 100 * P0["pay"] / P0["n"], "shit": P0["shit"] / P0["sn"], "sroi": 100 * P0["spay"] / P0["sn"], "sn": int(P0["sn"])},
            "win": WS, "pair": PS, "all": ALL}, open(os.path.join(OUT, "odds_plus_{}.json".format(BASE)), "w"), ensure_ascii=False, indent=1, default=float)
