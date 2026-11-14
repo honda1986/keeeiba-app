@@ -28,6 +28,7 @@ YS = ("2022", "2023", "2024", "2025", "2026")
 WIN_ODDS, WIDE_P, PT = 1.8, 0.45, 0.75            # 堅い買い目の基準(keiba_logic.SOLID)
 BASE = os.environ.get("BASE", "simple")
 ONLY_ALL = os.environ.get("ONLY_ALL") == "1"      # 1つずつ足す所を飛ばして、まとめて足す所だけ回す
+ONLY_COLS = [k for k in os.environ.get("ONLY_COLS", "").split(",") if k]   # まとめて足す評価値をこれだけにする(アプリに入れる少ない式を確かめる)
 LEAK = ("course_waku_idx", "course_style_idx")    # コース傾向の表は 2021〜2025年の集計で、2025年までは先の結果が混ざる。まとめて足すときは外す
 t0 = time.time()
 races = T.load_races()
@@ -339,7 +340,10 @@ if not ONLY_ALL:
 
 # ---------------------------------------------------------------- 全部まとめて足す(効きすぎないよう縮める)
 allc = [c for c in range(NF) if not names[c].startswith("rand") and names[c] not in LEAK]
-print("\n■ 評価値を全部まとめて足す({}個。コース傾向の2つ(※ 先の結果が混ざる)は外す。縮める強さを変えて)".format(len(allc)))
+if ONLY_COLS:
+    allc = [names.index(k) for k in ONLY_COLS]
+print("\n■ 評価値を{}まとめて足す({}個{}。縮める強さを変えて)".format("選んで" if ONLY_COLS else "全部", len(allc),
+      ": " + "・".join(jp(names[c]) for c in allc) if ONLY_COLS else "。コース傾向の2つ(※ 先の結果が混ざる)は外す"))
 ALL = {}
 for l2 in (10.0, 100.0, 1000.0):
     w = wsum(win_eval(allc, l2)); p = psum(pair_eval(allc, l2)); ALL[str(l2)] = {"win": w, "pair": p}
@@ -409,6 +413,20 @@ for k in op["keep"]:
         t = T3[("ワイド", nm)]; t[0] += m.sum(); t[1] += k["y"][f][m].sum(); t[2] += k["pb"][f][m].sum(); t[3] += k["pay"][f][m].sum()
 for (ty, nm), t in T3.items():
     print("  堅い{} {}: {:5d}点 的中 {:.1%}(オッズだけの見込み {:.1%}) 回収率 {:.1f}%".format(ty, nm, int(t[0]), t[1] / t[0], t[2] / t[0], 100 * t[3] / t[0]))
+if ONLY_COLS:
+    # アプリ用: 5年全部で作った式(重み)と、堅い買い目の後押しを3つに分ける境目
+    bw = cl_fit(np.column_stack([BW] + [Z[:, c] for c in allc]), H["win"], sizes, 100.0)[KW:]
+    zs = [Z[P["ia"], c] + Z[P["ib"], c] for c in allc]
+    bp = lr_fit(np.column_stack([BP] + zs), P["y"], 100.0)[KP:]
+    fav = first_top(H["logq"], sizes); fsel = fav[H["odds"][fav] <= WIN_ODDS]
+    aw = (Z[:, allc] @ bw)[fsel]
+    btop = first_top(P["pt"], psz[has]); bsel = btop[P["pt"][btop] >= WIDE_P - 1e-9]
+    ap = (np.column_stack(zs) @ bp)[bsel]
+    print("\n■ アプリ用(5年全部で作った式)")
+    print("  1着の重み: " + ", ".join('"{}": {:.4f}'.format(names[c], v) for c, v in zip(allc, bw)))
+    print("  ワイドの重み(2頭の合計に掛ける): " + ", ".join('"{}": {:.4f}'.format(names[c], v) for c, v in zip(allc, bp)))
+    print("  堅い単勝の後押しの境目(下1/3・上1/3): {:.4f} / {:.4f}  ({}R)".format(*np.quantile(aw, [1 / 3, 2 / 3]), len(aw)))
+    print("  堅いワイドの後押しの境目(下1/3・上1/3): {:.4f} / {:.4f}  ({}R)".format(*np.quantile(ap, [1 / 3, 2 / 3]), len(ap)))
 json.dump({"win0": {"hit": W0["hit"] / W0["n"], "roi": 100 * W0["pay"] / W0["n"], "shit": W0["shit"] / W0["sn"], "sroi": 100 * W0["spay"] / W0["sn"], "sn": int(W0["sn"])},
            "pair0": {"hit": P0["hit"] / P0["n"], "roi": 100 * P0["pay"] / P0["n"], "shit": P0["shit"] / P0["sn"], "sroi": 100 * P0["spay"] / P0["sn"], "sn": int(P0["sn"])},
            "win": WS, "pair": PS, "all": ALL}, open(os.path.join(OUT, "odds_plus_{}.json".format(BASE)), "w"), ensure_ascii=False, indent=1, default=float)
