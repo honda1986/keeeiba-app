@@ -881,10 +881,11 @@ function pushLine(r, kind, us) {
   return `<div class="pk-n">評価値の後押し: <b class="${x.lv === 2 ? "good" : x.lv === 0 ? "neg" : ""}">${PUSH_NAME[x.lv]}</b> <span class="muted">${st}</span></div>`;
 }
 
-// 馬の札: 1着の式の後押しが上1割なら「後押し強」、下2割なら「後押し弱」(単勝20倍以下の馬の5年: 上1割 91%・下2割 68%)
-function pushTag(h) {
-  const c = ((state.push || {}).cuts || {}).win_top;
-  if (!c || h.push == null || KOCHI) return "";
+// 馬の札: 1着の式の後押しが上1割なら「後押し強」、下2割なら「後押し弱」(単勝20倍以下の馬の5年: 上1割 91%・下2割 68%)。
+// 確かめたのが単勝20倍以下の馬なので、札もその馬にだけ出す(人気薄は過去の成績が見劣りする馬が多く、後押しの数字が大きく出る)
+function pushTag(h, ho) {
+  const c = ((state.push || {}).cuts || {}).win_top, o = ho && ho.odds;
+  if (!c || h.push == null || KOCHI || !(o > 0 && o <= 20)) return "";
   return h.push >= c["0.9"] ? `<span class="tag p">後押し強</span>` : h.push <= c["0.2"] ? `<span class="tag m">後押し弱</span>` : "";
 }
 // モデルの買い目(3連複◎-○-▲、▲が延長ならワイド◎-○)。always なら見送りのときも理由を出す
@@ -1129,7 +1130,7 @@ function table(r) {
       + (h.axis_ng.length ? `<span class="tag o">軸不可: ${esc(h.axis_ng.join("・"))}</span>` : "")
       + (h.cut ? `<span class="tag m">${esc(h.cut_reason || "負け要因が多い")}</span>` : "")
       + (h.odds_note ? `<span class="tag o">${esc(h.odds_note)}</span>` : "")
-      + pushTag(h) + jockeyTag(r, h) + `<span class="nv" data-u="${h.umaban}">${naviTag(r, h.umaban)}</span>`;
+      + pushTag(h, ho) + jockeyTag(r, h) + `<span class="nv" data-u="${h.umaban}">${naviTag(r, h.umaban)}</span>`;
     return `<tr data-u="${h.umaban}"><td class="mk">${h.mark && h.mark !== "×" ? h.mark : ""}</td>
       <td class="num">${h.umaban}</td>
       <td class="nm"><b>${esc(ho.name)}</b> <span class="muted">${esc(h.style || "")}</span><br>${tags}</td>
@@ -2459,7 +2460,7 @@ function pushRule() {
       <li><b>向き</b>過去の成績(着順・着差・3着内率・能力)が<b>良く見える馬は買われすぎ</b>で、見劣りするのに売れている馬の方が、同じオッズなら来る。
         モデルの◎は過去の成績で選ぶので、買われすぎの側に寄りやすい。後押しは、その寄りを直す向きに働く</li>
       <li><b>出る場所</b>堅い買い目・モデルの買い目の箱に「評価値の後押し: 強い / ふつう / 弱い」(その買い目の中で3等分)。
-        全馬の評価の札に「後押し強」(上1割)・「後押し弱」(下2割)。<b>弱いときは見送る、強いときだけ買う</b>、という使い方</li>
+        全馬の評価の札に「後押し強」(上1割)・「後押し弱」(下2割。どちらも単勝20倍以下の馬だけ)。<b>弱いときは見送る、強いときだけ買う</b>、という使い方</li>
       <li><b>ワイドの的中率を上げても、3連複の回収率は上がらない</b>今の買うレースで◎○を「オッズでいちばん来そうな組」に替えると、
         2頭とも3着内は 44.5% → 50.7% に上がるが、ワイドの回収率は 90% → 85%、3連複は 85% → 84% と変わらない(当たりやすい組は配当が安い)。
         回収率を動かすのは的中率ではなく、<b>買われすぎていない馬を買うこと</b></li>
