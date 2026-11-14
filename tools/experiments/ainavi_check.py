@@ -8,6 +8,12 @@ import numpy as np
 import requests
 from bs4 import BeautifulSoup
 
+if len(sys.argv) > 1 and sys.argv[1].startswith("odds"):
+    # 「記事を読む」を mode=ainavi・url=odds(または odds:最初の日)でまわすと、オッズに追切評価を足す確かめ(ainavi_odds.py)を回す
+    import runpy
+    sys.argv = [sys.argv[0]] + [a for a in sys.argv[1][4:].lstrip(":").split() if a]
+    runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ainavi_odds.py"), run_name="__main__")
+    sys.exit(0)
 R = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 START = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].isdigit() else "20260401"
 wf = json.load(gzip.open(R + "/keiba/model_wf.json.gz"))["probs"]
