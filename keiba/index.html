@@ -529,10 +529,10 @@ function allRaces() {
     .sort((a, b) => (a.start || "99").localeCompare(b.start || "99") || a.id.localeCompare(b.id));
 }
 const KIND = {buy: "買い目あり", hit: "的中", lose: "外れ", skip: KOCHI ? "予想あり" : "買い目なし", wait: "予想前"};
-// そのレースの買い目(割安ワイド・モデル)。結果が出ていれば払戻も
+// そのレースの買い目(モデルの買い目)。結果が出ていれば払戻も。
+// 割安ワイドは 2026-11-14 から参考(買い目に数えない): 発走前のオッズで選ぶと、確定までにオッズが動いて割安でなくなる
 function picksOf(r) {
-  const out = [], g = gapOf(r), p = r.pred;
-  if (g && g.buy && !g.void) out.push({k: "gap", stake: 100, done: g.done, ret: g.ret || 0, hit: g.done && g.ret > 0});
+  const out = [], p = r.pred;
   if (p && r.horses && p.verdict !== "見送り") {
     const s = r.settle, done = !!(s && r.result);
     out.push({k: "model", stake: s ? s.stake : p.stake, done, ret: s ? s.ret : 0, hit: !!(s && s.hit)});
@@ -611,8 +611,9 @@ function daySumInner() {
   const gp = [], mp = [];
   let fin = 0;
   for (const r of rs) {
-    for (const x of picksOf(r)) (x.k === "gap" ? gp : mp).push(x);
+    mp.push(...picksOf(r));
     const g = gapOf(r);
+    if (g && g.buy && !g.void) gp.push({stake: 100, done: g.done, ret: g.ret || 0, hit: g.done && g.ret > 0});
     if (g && g.buy && g.src === "fin") fin++;
   }
   const line = (name, sub, ps) => {
@@ -624,11 +625,10 @@ function daySumInner() {
         : `<span class="pl muted">-</span><small>${ps.length ? "結果待ち" : "なし"}</small>`}</div></div>`;
   };
   return `<div class="hd">この日の買い目(1点100円)</div>
-    ${line("割安ワイド", "新しい買い方(確かめ中)", gp)}
     ${line("モデルの買い目", "3連複 ◎-○-▲", mp)}
-    ${fin ? `<div class="ft">この日の割安ワイドは<b>確定オッズ</b>で選んだものです(買う時点のオッズでは変わることがあります)。</div>` : ""}
-    ${rs.some(r => r.center === "jra" && !r.result) ? `<div class="ft">割安ワイドは、<b>発走の${GAP.fresh}分前から</b>のオッズで選びます(朝のオッズは売れ始めで当てになりません)。
-      ${canLive() ? "アプリを開くか「オッズ更新」で取り直します。" : "自動の更新(10分ごと)で出ます。"}</div>` : ""}`;
+    ${line("割安ワイド", "参考(買わない)", gp)}
+    <div class="ft"><b>割安ワイドは参考です(買い目にしません)</b>。${fin ? "この日の分は確定オッズで選べた場合の成績です。" : ""}
+      発走前のオッズで選ぶと、確定までにオッズが動いて割安でなくなります(2026-11-14 の実戦: 16レース買って的中0。「考え方」に説明)。</div>`;
 }
 function drawDaySum() {
   const el = $("#daysum");
@@ -724,8 +724,7 @@ function drawNextBuy() {
   if (!el || !d) return;
   const r = races().filter(x => centerOkR(x) && !x.result && picksOf(x).length && (untilClose(d.date, x) ?? -1) > 0)[0];
   if (!r) { el.innerHTML = ""; return; }
-  const m = untilClose(d.date, r), p = r.pred, g = gapOf(r), bets = [];
-  if (g && g.buy) bets.push(`ワイド ${g.pair.join("-")}(${g.odds[0]}〜${g.odds[1]}倍)`);
+  const m = untilClose(d.date, r), p = r.pred, bets = [];
   if (p.verdict !== "見送り") bets.push(...p.bets.map(b => `${b.type} ${b.combos.map(c => comboText(b.type, c)
     + (comboOdds(r, b.type, c) ? `(${comboOdds(r, b.type, c)})` : "")).join(",")}`));
   el.innerHTML = `<button class="nextb" data-rid="${esc(r.id)}">
@@ -838,11 +837,10 @@ function gapInner(r) {
   const st = g.void ? `<span class="pk-r muted">取消で返還</span>`
     : g.done ? (g.ret ? `<span class="pk-r good">的中 ${yen(g.ret)}</span>` : `<span class="pk-r neg">外れ</span>`) : `<span class="pk-r muted">発走前</span>`;
   return `<div class="pk gap ${g.done && !g.void ? (g.ret ? "hit" : "lose") : ""}">
-    <div class="pk-h"><span>割安ワイド<em>確かめ中</em></span><span>${g.src === "pre" ? (g.done ? "発走前のオッズで選んだ" : "いまのオッズで") : "確定オッズで選んだ(参考)"}</span></div>
+    <div class="pk-h"><span>割安ワイド<em>参考・買わない</em></span><span>${g.src === "pre" ? (g.done ? "発走前のオッズで選んだ" : "いまのオッズで(確定までに変わる)") : "確定オッズで選べた場合"}</span></div>
     <div class="pk-b"><span class="ty">ワイド</span><span class="cb num">${g.pair.join("-")}</span>
       <span class="od num">${g.odds[0]}〜${g.odds[1]}倍 · 期待値 ${g.ev.toFixed(2)}</span>${st}</div>
-    <div class="pk-n">${g.pair.map(u => `${u} ${esc(hname(r, u))}`).join(" ・ ")}</div>
-    ${!g.done && buyBtn(r, "ワイド", g.pair) ? `<div class="pk-a">${buyBtn(r, "ワイド", g.pair)}</div>` : ""}</div>`;
+    <div class="pk-n">${g.pair.map(u => `${u} ${esc(hname(r, u))}`).join(" ・ ")}</div></div>`;
 }
 // モデルの買い目(3連複◎-○-▲、▲が延長ならワイド◎-○)。always なら見送りのときも理由を出す
 function modelPick(r, always) {
@@ -899,7 +897,7 @@ function detailInner(r) {
   const p = r.pred, res = r.result, g = gapOf(r);
   return `${p.reason ? `<div class="note"><div>${p.verdict === "見送り" ? "モデルは見送り: " : "モデル: "}${esc(p.reason)}${p.pace ? "(展開: " + esc(p.pace.note) + ")" : ""}</div></div>` : ""}
     ${p.notes && p.notes.length ? `<div class="note">${p.notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
-    ${!g && !KOCHI && r.center === "jra" && !(res && res.order && res.order.length >= 3) ? `<div class="note"><div>割安ワイド: 発走の${GAP.fresh}分前からのオッズで選びます(それより前のオッズは売れ始めで当てになりません)</div></div>` : ""}
+    ${!g && !KOCHI && r.center === "jra" && !(res && res.order && res.order.length >= 3) ? `<div class="note"><div>割安ワイド(参考): 発走の${GAP.fresh}分前からのオッズで出します</div></div>` : ""}
     ${g && !g.buy ? `<div class="note"><div>割安ワイド: なし(期待値がいちばん高い組は ${g.pair.join("-")} の ${g.ev.toFixed(2)}。${GAP.ev.toFixed(2)} 以上で買い目にする)</div></div>` : ""}
     ${chaosOf(r) ? `<div class="note czl">${chaosLine(r)}</div>` : ""}
     ${res && res.order && res.order.length >= 3 ? resLine(r) : ""}
@@ -1026,7 +1024,7 @@ function skipRow(r) {
     <b>${esc(r.venue)} ${r.rno}R</b><span class="tm num">${esc(r.start || "")}</span>
     <span class="r">${esc(shortReason(r.pred.reason))}</span><span class="czs">${chaosTag(r, true)}</span>
     ${done ? `<span class="rs num">${res.order.slice(0, 3).join("-")}</span>` : ""}</summary>
-    <div class="rc-m" style="padding-top:2px">${meta(r)}</div>${marks(r)}<div class="gapw"></div>${detailInner(r)}</details>`;
+    <div class="rc-m" style="padding-top:2px">${meta(r)}</div>${marks(r)}<div class="gapw">${gapInner(r)}</div>${detailInner(r)}</details>`;
 }
 
 const evCls = v => v >= 1 ? "ev up" : "ev";
@@ -1324,10 +1322,10 @@ function renderMoney() {
     </div>
     <div class="daysum">
       <div class="hd">${fmtD(gFrom)} 〜 ${fmtD(to)} の成績(1点${h.unit}円)</div>
-      ${sumRow("割安ワイド", "確かめ中の買い方", gs[0], gs[1], gs[0] * 100, gs[2])}
       ${sumRow("モデルの買い目", "3連複 ◎-○-▲", rs.length, hit, S, R)}
-      <div class="ft">割安ワイドは、過去の日は<b>確定オッズ</b>で選んだ場合の成績です(買う時点のオッズでは変わることがあります)。
-        買い目にする基準は結果を見ながら決めたので、<b>全期間の数字は高めに出ています</b>(確定オッズで選べても 100〜110% くらい。「考え方」に説明)。
+      ${sumRow("割安ワイド", "参考(買わない)", gs[0], gs[1], gs[0] * 100, gs[2])}
+      <div class="ft"><b>割安ワイドは参考です(買い目にしません)</b>。上の数字は<b>確定オッズで選べた場合</b>で、実際には選べません:
+        発走前のオッズで選ぶと、確定までにオッズが動いて割安でなくなります(2026-11-14 の実戦で確かめた。「考え方」に説明)。
         発走前のオッズで選んだ分(実際に買える形): ${gPre[0] ? `<b>${gPre[0]}R · 的中 ${gPre[1]} · 回収率 ${pct(gPre[2], gPre[0] * 100)}</b>` : "まだありません(2026-11-14 の開催からたまります)"}。
         モデルの買い目は2024年から(その日より前のレースだけで学んだモデルで再現)。</div>
     </div>
@@ -1526,10 +1524,7 @@ function renderVote() {
     const p = r.pred;
     if (p.verdict !== "見送り") for (const b of p.bets) for (const c of b.combos)
       items.push({r, type: b.type, c, unit: b.unit, verdict: p.verdict, id: voteId(r.id, b.type, c)});
-    // 割安ワイド(確かめ中)。モデルの買い目と同じ組なら1つにまとめる
-    const g = gapOf(r);
-    if (g && g.buy && !g.void && !items.some(x => x.id === voteId(r.id, "ワイド", g.pair)))
-      items.push({r, type: "ワイド", c: g.pair, unit: 100, verdict: "割安", id: voteId(r.id, "ワイド", g.pair)});
+    // (割安ワイドは参考なので、投票の一覧には入れない。2026-11-14)
   }
   // 自分で作った買い目(予想に無いレース・券種も)
   for (const t of Object.values(tickets)) {
@@ -1891,7 +1886,7 @@ function updateOddsDom(r) {
     if (ho && ho.odds) el.textContent = ho.odds + "倍";
   });
   const gw = box.querySelector(".gapw");
-  if (gw && box.tagName !== "DETAILS") gw.innerHTML = gapInner(r);
+  if (gw) gw.innerHTML = gapInner(r);
   const bs = box.querySelectorAll(".bet .bo");
   (r.pred.bets || []).forEach((b, i) => { if (bs[i]) bs[i].innerHTML = betOdds(r, b); });
   drawNextBuy();
@@ -2325,8 +2320,12 @@ function chaosRule() {
 function gapRule() {
   const g = (state.hist || {}).gap || [];
   const t = g.reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);
-  return `<div class="sec">割安ワイド(新しい買い方・確かめ中。2026-11-10)</div>
+  return `<div class="sec">割安ワイド(参考。発走前のオッズでは使えないと分かった)</div>
     <ul class="rules">
+      <li><b>2026-11-14 の実戦の結果: 買い目にしない</b>発走の1〜10分前のオッズで選ぶと、午後の23レース中16レースが買い目になり、<b>16レースとも外れ</b>。
+        選んだ組の期待値は、発走前は平均 1.07 だったのに、確定オッズでは平均 0.87 で、<b>1つも 1.0 以上に残らなかった</b>(23レース全部で下がった)。
+        発走前はワイドがまだ売れきっていなくて、オッズがたまたま高い組が「割安」に見えるが、締切までに買われて普通のオッズに戻る。
+        払戻は確定オッズで決まるので、確定オッズが分かっていないと選べない。下の成績は「確定オッズで選べた場合」で、実際には買えない</li>
       <li><b>何か</b>同じ「2頭とも3着内」を、3連複を買う人たちとワイドを買う人たちがどう見ているかをくらべ、
         <b>3連複の市場は来ると見ているのに、ワイドではまだ売れていない組</b>のワイドを買う</li>
       <li><b>なぜ</b>3着内に来る馬は、単勝オッズよりワイドのオッズ、ワイドより3連複のオッズの方が正確に当てている
