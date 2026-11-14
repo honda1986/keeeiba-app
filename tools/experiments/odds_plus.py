@@ -10,7 +10,11 @@
    当たり方 … 対数尤度の伸び(1レースあたり×1000。+なら良くなった)と、良くなった年の数(5年のうち)
    的中率 … 全レースで1点ずつ買ったとき / 「堅い買い目」と同じ数だけ、自信のあるレースから買ったとき
    回収率 … 上と同じ買い方 / 評価値がいちばん押し上げる1割の馬(組)だけ買ったとき(= オッズより上と見た所が本当に得か)
-  くらべる物差しとして、でたらめな数字(乱数)を足した場合も出す。最後に、評価値を全部まとめて足した場合"""
+  くらべる物差しとして、でたらめな数字(乱数)を足した場合も出す。最後に、評価値を全部まとめて足した場合。
+  BASE=simple(既定)… 土台は上のとおり(単勝オッズだけ / 3連複から見た確率だけ)。
+  BASE=full … 土台を「オッズ全部」にする。1着 = 単勝オッズ(曲がりも入れる)+ 3連複・ワイドから見た馬ごとの強さ。
+              ワイド = 3連複から見た確率(曲がりも)+ ワイドのオッズ + 2頭の単勝オッズ。
+              simple で評価値が効いて見えても、オッズの読み方が粗いだけかもしれないので、こちらが本当の答え"""
 import gc, json, os, pickle, sys, time
 from collections import defaultdict
 import numpy as np
@@ -22,6 +26,8 @@ import keiba_model as M
 OUT = os.environ.get("OUTDIR", "/tmp/odds_plus"); os.makedirs(OUT, exist_ok=True)
 YS = ("2022", "2023", "2024", "2025", "2026")
 WIN_ODDS, WIDE_P, PT = 1.8, 0.45, 0.75            # 堅い買い目の基準(keiba_logic.SOLID)
+BASE = os.environ.get("BASE", "simple")
+LEAK = ("course_waku_idx", "course_style_idx")    # コース傾向の表は 2021〜2025年の集計で、2025年までは先の結果が混ざる。まとめて足すときは外す
 t0 = time.time()
 races = T.load_races()
 norm, rows, jt_all, sp = pickle.load(open(T.CACHE, "rb"))
@@ -50,8 +56,17 @@ for rid in sorted(by, key=lambda x: (rows[by[x][0]]["date"], x)):
         continue
     q = np.array([1 / od[rows[i]["u"]] for i in ix]); q = q / q.sum()
     ridx.append(rid); sizes.append(len(ix))
+    ts, ws = defaultdict(float), defaultdict(float)       # 馬ごと: その馬を含む組の 3連複の強さ・ワイドの 1/オッズ の合計
+    for key, v in info[rid]["tp"].items():
+        for t in key.split("-"):
+            ts[int(t)] += v
+    for key, v in info[rid]["wf"].items():
+        if v and v[0] > 1:
+            for t in key.split("-"):
+                ws[int(t)] += 2 / (v[0] + v[1])
     for j, i in enumerate(ix):
         u = rows[i]["u"]
+        H["ts"].append(np.log(ts[u]) if ts.get(u) else np.nan); H["ws"].append(np.log(ws[u]) if ws.get(u) else np.nan)
         hrow.append(i); H["u"].append(u); H["logq"].append(np.log(q[j])); H["odds"].append(od[u])
         H["win"].append(int(u == order[0])); H["top3"].append(int(u in order[:3]))
 sizes = np.array(sizes); NR = len(sizes); starts = np.concatenate([[0], np.cumsum(sizes)[:-1]])
@@ -93,7 +108,11 @@ for j in range(NRAND):                   # 物差し: でたらめな数字
     Z.append(zrace(rng.normal(size=NH))); names.append("rand{}".format(j + 1))
 Z = np.array(Z).T; NF = Z.shape[1]
 del raw; gc.collect()
-print("評価値 {}個(うち乱数 {}個)".format(NF, NRAND), flush=True)
+print("評価値 {}個(うち乱数 {}個)。土台 = {}".format(NF, NRAND, BASE), flush=True)
+# 1着の土台(列0 は log(単勝から出した確率)。full は曲がり・レースの中での位置・3連複とワイドから見た強さも)
+ZQ = zrace(H["logq"])
+BW = H["logq"][:, None] if BASE == "simple" else np.column_stack([H["logq"], H["logq"] ** 2, ZQ, zrace(H["ts"]), zrace(H["ws"])])
+KW = BW.shape[1]
 
 JP = {"model_p3": "モデルの3着内の確率", "model_p1": "モデルの1着の確率", "rule_score": "30か条の評価(点)", "rule_ability": "能力(着差とクラス)",
       "rule_plus": "加点の数", "rule_minus": "減点の数", "rule_cut": "負け要因が重なる", "rule_axis_ng": "軸にできない",
@@ -121,7 +140,7 @@ def cl_fit(F, y, sz, l2=0.0):
         s = s - np.repeat(np.maximum.reduceat(s, st), sz)
         e = np.exp(s); se = np.add.reduceat(e, st)
         p = e / np.repeat(se, sz)
-        return -(s[y == 1].sum() - np.log(se).sum()) + l2 * (b[1:] @ b[1:]) / 2, -(F.T @ (y - p)) + l2 * np.r_[0, b[1:]]
+        return -(s[y == 1].sum() - np.log(se).sum()) + l2 * (b[KW:] @ b[KW:]) / 2, -(F.T @ (y - p)) + l2 * np.r_[np.zeros(KW), b[KW:]]
     b0 = np.zeros(F.shape[1]); b0[0] = 1.0
     return minimize(f, b0, jac=True, method="L-BFGS-B").x
 
@@ -142,12 +161,12 @@ def first_top(p, sz):
     return idx[np.unique(g, return_index=True)[1]]
 
 
-def win_eval(cols, l2=0.0):
+def win_eval(cols, l2=0.0, keep=False):
     """cols = 足す評価値の列番号(空なら土台だけ)。確かめる年ごとの数字を合わせて返す"""
-    o = dict(ll=[], hit=0, pay=0.0, n=0, sn=0, shit=0, spay=0.0, up_a=0.0, up_e=0.0, up_pay=0.0, up_n=0, dn_a=0.0, dn_e=0.0, b=[], yll=[], swn=0, sw_new=0, sw_fav=0)
+    o = dict(ll=[], hit=0, pay=0.0, n=0, sn=0, shit=0, spay=0.0, up_a=0.0, up_e=0.0, up_pay=0.0, up_n=0, dn_a=0.0, dn_e=0.0, b=[], yll=[], swn=0, sw_new=0, sw_fav=0, keep=[])
     for yy in YS:
         te = hyear == yy; tr = ~te
-        Ftr = np.column_stack([H["logq"][tr]] + [Z[tr, c] for c in cols]); Fte = np.column_stack([H["logq"][te]] + [Z[te, c] for c in cols])
+        Ftr = np.column_stack([BW[tr]] + [Z[tr, c] for c in cols]); Fte = np.column_stack([BW[te]] + [Z[te, c] for c in cols])
         sz_tr, sz_te = sizes[ryear != yy], sizes[ryear == yy]
         b = cl_fit(Ftr, H["win"][tr], sz_tr, l2)
         p = cl_prob(Fte, b, sz_te); y = H["win"][te]; od = H["odds"][te]
@@ -162,21 +181,23 @@ def win_eval(cols, l2=0.0):
         o["sn"] += k; o["shit"] += y[sel].sum(); o["spay"] += (y[sel] * od[sel]).sum()
         # 評価値がいちばん押し上げる1割・押し下げる1割の馬(単勝20倍以下の中で)。土台(オッズだけ)の見込みとくらべる
         if cols:
-            pb = cl_prob(Fte[:, :1], BASE_B[yy], sz_te)
-            adj = Fte[:, 1:] @ b[1:]; m = od <= 20
+            pb = cl_prob(Fte[:, :KW], BASE_B[yy], sz_te)
+            adj = Fte[:, KW:] @ b[KW:]; m = od <= 20
             hi = m & (adj >= np.quantile(adj[m], 0.9)); lo = m & (adj <= np.quantile(adj[m], 0.1))
             o["up_a"] += y[hi].sum(); o["up_e"] += pb[hi].sum(); o["up_pay"] += (y[hi] * od[hi]).sum(); o["up_n"] += hi.sum()
             o["dn_a"] += y[lo].sum(); o["dn_e"] += pb[lo].sum()
+            if keep:
+                o["keep"].append(dict(yy=yy, p=p, pb=pb, y=y, od=od, adj=adj, top=top, sel=sel))
     return o
 
 
 BASE_B = {}
 for yy in YS:
     tr = hyear != yy
-    BASE_B[yy] = cl_fit(H["logq"][tr][:, None], H["win"][tr], sizes[ryear != yy])
+    BASE_B[yy] = cl_fit(BW[tr], H["win"][tr], sizes[ryear != yy])
 W0 = win_eval([])
-print("\n■ 1着(単勝)。土台 = 単勝オッズだけ: 全レースで1番人気 的中 {:.1%}・回収率 {:.1f}% / 堅い単勝と同じ数({}R) 的中 {:.1%}・回収率 {:.1f}%".format(
-    W0["hit"] / W0["n"], 100 * W0["pay"] / W0["n"], W0["sn"], W0["shit"] / W0["sn"], 100 * W0["spay"] / W0["sn"]), flush=True)
+print("\n■ 1着(単勝)。土台 = {}: 対数尤度 {:.5f}/R。全レースで土台の1位 的中 {:.1%}・回収率 {:.1f}% / 堅い単勝と同じ数({}R) 的中 {:.1%}・回収率 {:.1f}%".format(
+    "単勝オッズだけ" if BASE == "simple" else "オッズ全部", sum(W0["ll"]) / NR, W0["hit"] / W0["n"], 100 * W0["pay"] / W0["n"], W0["sn"], W0["shit"] / W0["sn"], 100 * W0["spay"] / W0["sn"]), flush=True)
 WR = {}
 for c in range(NF):
     WR[names[c]] = win_eval([c])
@@ -188,7 +209,7 @@ def wsum(o):
     return dict(dll=(sum(o["ll"]) - sum(W0["ll"])) / NR * 1000, yrs=sum(x > 0 for x in d), hit=o["hit"] / o["n"], roi=100 * o["pay"] / o["n"],
                 shit=o["shit"] / o["sn"], sroi=100 * o["spay"] / o["sn"], up_ae=o["up_a"] / o["up_e"] if o["up_e"] else float("nan"),
                 up_roi=100 * o["up_pay"] / o["up_n"] if o["up_n"] else float("nan"), dn_ae=o["dn_a"] / o["dn_e"] if o["dn_e"] else float("nan"),
-                b=float(np.mean([b[1] for b in o["b"]])) if len(o["b"][0]) == 2 else None, swn=int(o["swn"]),
+                swn=int(o["swn"]),
                 sw_new=o["sw_new"] / o["swn"] if o["swn"] else float("nan"), sw_fav=o["sw_fav"] / o["swn"] if o["swn"] else float("nan"))
 
 
@@ -205,7 +226,7 @@ print(hd)
 for k in real:
     x = WS[k]
     print("  {:28s} {:+7.2f} {:>3d}/5 {:6.1%} {:6.1f} | {:7.1%} {:6.1f} | {:8.2f} {:6.0f} {:8.2f} | {:6d} {:7.1%} {:7.1%}".format(
-        jp(k)[:28], x["dll"], x["yrs"], x["hit"], x["roi"], x["shit"], x["sroi"], x["up_ae"], x["up_roi"], x["dn_ae"], x["swn"], x["sw_new"], x["sw_fav"]))
+        (jp(k) + ("※" if k in LEAK else ""))[:28], x["dll"], x["yrs"], x["hit"], x["roi"], x["shit"], x["sroi"], x["up_ae"], x["up_roi"], x["dn_ae"], x["swn"], x["sw_new"], x["sw_fav"]))
 
 # ---------------------------------------------------------------- ワイド: 組ごとのロジスティック回帰
 pos = {}
@@ -227,17 +248,20 @@ for g, rid in enumerate(ridx):
         if (g, a) not in pos or (g, b) not in pos:
             continue
         P["ia"].append(pos[(g, a)]); P["ib"].append(pos[(g, b)]); P["pt"].append(min(PT * s, 0.98)); P["y"].append(int(a in top3 and b in top3))
-        P["pay"].append(pay.get(key, 0) / 100.0); P["mid"].append((v[0] + v[1]) / 2); n += 1
+        P["pay"].append(pay.get(key, 0) / 100.0); P["mid"].append((v[0] + v[1]) / 2); P["lo"].append(v[0]); P["hi"].append(v[1]); n += 1
     psz.append(n)
 psz = np.array(psz); has = psz > 0
 P = {k: np.array(v, dtype=float if k not in ("ia", "ib") else int) for k, v in P.items()}
 prace = np.repeat(np.arange(NR), psz); pyear = ryear[prace]
 x0 = lg(P["pt"]); NP_ = len(x0)
+xw = lg(np.minimum(0.775 / P["mid"], 0.98))
+BP = np.column_stack([np.ones(NP_), x0]) if BASE == "simple" else np.column_stack([np.ones(NP_), x0, x0 ** 2, xw, xw ** 2, ZQ[P["ia"]] + ZQ[P["ib"]], H["logq"][P["ia"]] + H["logq"][P["ib"]]])
+KP = BP.shape[1]
 print("\n■ ワイド。組 {}点・{}R ({:.0f}分)".format(NP_, int(has.sum()), (time.time() - t0) / 60), flush=True)
 
 
 def lr_fit(F, y, l2=0.0):
-    b = np.zeros(F.shape[1]); R = np.eye(F.shape[1]) * l2; R[0, 0] = R[1, 1] = 0
+    b = np.zeros(F.shape[1]); R = np.eye(F.shape[1]) * l2; R[:KP, :KP] = 0
     for _ in range(40):
         p = 1 / (1 + np.exp(-(F @ b)))
         step = np.linalg.solve((F * (p * (1 - p))[:, None]).T @ F + R + 1e-9 * np.eye(F.shape[1]), F.T @ (y - p) - R @ b)
@@ -247,12 +271,12 @@ def lr_fit(F, y, l2=0.0):
     return b
 
 
-def pair_eval(cols, l2=0.0):
-    o = dict(ll=[], yll=[], n=0, hit=0, pay=0.0, sn=0, shit=0, spay=0.0, up_a=0.0, up_e=0.0, up_pay=0.0, up_n=0, dn_a=0.0, dn_e=0.0)
+def pair_eval(cols, l2=0.0, keep=False):
+    o = dict(ll=[], yll=[], n=0, hit=0, pay=0.0, sn=0, shit=0, spay=0.0, up_a=0.0, up_e=0.0, up_pay=0.0, up_n=0, dn_a=0.0, dn_e=0.0, keep=[])
     zs = [Z[P["ia"], c] + Z[P["ib"], c] for c in cols]
     for yy in YS:
         te = pyear == yy; tr = ~te
-        Ftr = np.column_stack([np.ones(tr.sum()), x0[tr]] + [z[tr] for z in zs]); Fte = np.column_stack([np.ones(te.sum()), x0[te]] + [z[te] for z in zs])
+        Ftr = np.column_stack([BP[tr]] + [z[tr] for z in zs]); Fte = np.column_stack([BP[te]] + [z[te] for z in zs])
         b = lr_fit(Ftr, P["y"][tr], l2)
         p = 1 / (1 + np.exp(-(Fte @ b))); y = P["y"][te]; pay = P["pay"][te]
         sz = psz[(ryear == yy) & has]
@@ -266,22 +290,24 @@ def pair_eval(cols, l2=0.0):
         sel = top[np.argsort(-p[top], kind="stable")[:k]]
         o["sn"] += k; o["shit"] += y[sel].sum(); o["spay"] += pay[sel].sum()
         if cols:
-            pb = 1 / (1 + np.exp(-(Fte[:, :2] @ PBASE[yy])))
-            adj = Fte[:, 2:] @ b[2:]; m = P["mid"][te] <= 15
+            pb = 1 / (1 + np.exp(-(Fte[:, :KP] @ PBASE[yy])))
+            adj = Fte[:, KP:] @ b[KP:]; m = P["mid"][te] <= 15
             hi = m & (adj >= np.quantile(adj[m], 0.9)); lo = m & (adj <= np.quantile(adj[m], 0.1))
             o["up_a"] += y[hi].sum(); o["up_e"] += pb[hi].sum(); o["up_pay"] += pay[hi].sum(); o["up_n"] += hi.sum()
             o["dn_a"] += y[lo].sum(); o["dn_e"] += pb[lo].sum()
+            if keep:
+                o["keep"].append(dict(yy=yy, p=p, pb=pb, y=y, pay=pay, adj=adj, top=top, sel=sel, mid=P["mid"][te], exp=P["lo"][te] + 0.35 * (P["hi"][te] - P["lo"][te])))
     return o
 
 
 PBASE = {}
 for yy in YS:
     tr = pyear != yy
-    PBASE[yy] = lr_fit(np.column_stack([np.ones(tr.sum()), x0[tr]]), P["y"][tr])
+    PBASE[yy] = lr_fit(BP[tr], P["y"][tr])
 P0 = pair_eval([])
 NRW = int(has.sum())
-print("  土台 = 3連複から見た組の確率だけ: 全レースでいちばん来そうな組 的中 {:.1%}・回収率 {:.1f}% / 堅いワイドと同じ数({}R) 的中 {:.1%}・回収率 {:.1f}%".format(
-    P0["hit"] / P0["n"], 100 * P0["pay"] / P0["n"], P0["sn"], P0["shit"] / P0["sn"], 100 * P0["spay"] / P0["sn"]), flush=True)
+print("  土台 = {}: 対数尤度 {:.5f}/R。全レースでいちばん来そうな組 的中 {:.1%}・回収率 {:.1f}% / 堅いワイドと同じ数({}R) 的中 {:.1%}・回収率 {:.1f}%".format(
+    "3連複から見た組の確率だけ" if BASE == "simple" else "オッズ全部", sum(P0["ll"]) / NRW, P0["hit"] / P0["n"], 100 * P0["pay"] / P0["n"], P0["sn"], P0["shit"] / P0["sn"], 100 * P0["spay"] / P0["sn"]), flush=True)
 PR = {}
 for c in range(NF):
     PR[names[c]] = pair_eval([c])
@@ -306,18 +332,63 @@ print("  {:28s} {:>7s} {:>4s} {:>7s} {:>6s} | {:>7s} {:>6s} | {:>8s} {:>6s} {:>8
 for k in realp:
     x = PS[k]
     print("  {:28s} {:+7.2f} {:>3d}/5 {:6.1%} {:6.1f} | {:7.1%} {:6.1f} | {:8.2f} {:6.0f} {:8.2f}".format(
-        jp(k)[:28], x["dll"], x["yrs"], x["hit"], x["roi"], x["shit"], x["sroi"], x["up_ae"], x["up_roi"], x["dn_ae"]))
+        (jp(k) + ("※" if k in LEAK else ""))[:28], x["dll"], x["yrs"], x["hit"], x["roi"], x["shit"], x["sroi"], x["up_ae"], x["up_roi"], x["dn_ae"]))
 
 # ---------------------------------------------------------------- 全部まとめて足す(効きすぎないよう縮める)
-allc = [c for c in range(NF) if not names[c].startswith("rand")]
-print("\n■ 評価値を全部まとめて足す({}個。縮める強さを変えて)".format(len(allc)))
+allc = [c for c in range(NF) if not names[c].startswith("rand") and names[c] not in LEAK]
+print("\n■ 評価値を全部まとめて足す({}個。コース傾向の2つ(※ 先の結果が混ざる)は外す。縮める強さを変えて)".format(len(allc)))
 ALL = {}
 for l2 in (10.0, 100.0, 1000.0):
     w = wsum(win_eval(allc, l2)); p = psum(pair_eval(allc, l2)); ALL[str(l2)] = {"win": w, "pair": p}
     print("  縮め {:6.0f}: 1着 伸び {:+.2f}({}/5年) 的中 {:.1%} 回収 {:.1f}% 同数 {:.1%}・{:.1f}% 上1割 A/E {:.2f}・回収 {:.0f}% | ワイド 伸び {:+.2f}({}/5年) 的中 {:.1%} 回収 {:.1f}% 同数 {:.1%}・{:.1f}% 上1割 A/E {:.2f}・回収 {:.0f}%".format(
         l2, w["dll"], w["yrs"], w["hit"], w["roi"], w["shit"], w["sroi"], w["up_ae"], w["up_roi"],
         p["dll"], p["yrs"], p["hit"], p["roi"], p["shit"], p["sroi"], p["up_ae"], p["up_roi"]), flush=True)
+
+# くわしく(縮め 100): 年ごと、押し上げの深さごと、期待値(見込みの確率×払戻の見込み)で買う場合
+fy = lambda v: " ".join("{:3.0f}".format(x) for x in v)
+ow = win_eval(allc, 100.0, keep=True)
+print("\n■ まとめて足した式(縮め 100)をくわしく。[ ] は 2022〜2026年")
+print("  1着: 全レースの1位 的中 [{}]% 回収率 [{}]% / 堅い単勝と同じ数 的中 [{}]% 回収率 [{}]%".format(
+    fy([100 * k["y"][k["top"]].mean() for k in ow["keep"]]), fy([100 * (k["y"][k["top"]] * k["od"][k["top"]]).mean() for k in ow["keep"]]),
+    fy([100 * k["y"][k["sel"]].mean() for k in ow["keep"]]), fy([100 * (k["y"][k["sel"]] * k["od"][k["sel"]]).mean() for k in ow["keep"]])))
+for q_ in (0.9, 0.95, 0.98, 0.99):
+    n = h = e = pay = 0; yr = []
+    for k in ow["keep"]:
+        m = k["od"] <= 20; hi = m & (k["adj"] >= np.quantile(k["adj"][m], q_))
+        n += hi.sum(); h += k["y"][hi].sum(); e += k["pb"][hi].sum(); pay += (k["y"][hi] * k["od"][hi]).sum(); yr.append(100 * (k["y"][hi] * k["od"][hi]).mean())
+    print("  1着: 評価値がいちばん押し上げる上 {:4.0%} の馬(単勝20倍以下): {:6d}頭 的中 {:.1%} A/E {:.2f} 回収率 {:.1f}% [{}]".format(1 - q_, n, h / n, h / e, 100 * pay / n, fy(yr)))
+for th in (0.9, 1.0, 1.1, 1.2):
+    n = h = pay = 0; yr = []
+    for k in ow["keep"]:
+        m = (k["p"] * k["od"] >= th) & (k["od"] <= 50)
+        n += m.sum(); h += k["y"][m].sum(); pay += (k["y"][m] * k["od"][m]).sum(); yr.append(100 * (k["y"][m] * k["od"][m]).mean() if m.sum() else 0)
+    print("  1着: 期待値(確率×単勝オッズ)が {:.1f} 以上の馬(50倍以下): {:6d}頭 的中 {:.1%} 回収率 {:.1f}% [{}]".format(th, n, h / max(n, 1), 100 * pay / max(n, 1), fy(yr)))
+op = pair_eval(allc, 100.0, keep=True)
+print("  ワイド: 全レースの1位 的中 [{}]% 回収率 [{}]% / 堅いワイドと同じ数 的中 [{}]% 回収率 [{}]%".format(
+    fy([100 * k["y"][k["top"]].mean() for k in op["keep"]]), fy([100 * k["pay"][k["top"]].mean() for k in op["keep"]]),
+    fy([100 * k["y"][k["sel"]].mean() for k in op["keep"]]), fy([100 * k["pay"][k["sel"]].mean() for k in op["keep"]])))
+for q_ in (0.9, 0.95, 0.98, 0.99):
+    n = h = e = pay = 0; yr = []
+    for k in op["keep"]:
+        m = k["mid"] <= 15; hi = m & (k["adj"] >= np.quantile(k["adj"][m], q_))
+        n += hi.sum(); h += k["y"][hi].sum(); e += k["pb"][hi].sum(); pay += k["pay"][hi].sum(); yr.append(100 * k["pay"][hi].mean())
+    print("  ワイド: 評価値がいちばん押し上げる上 {:4.0%} の組(15倍以下): {:7d}点 的中 {:.1%} A/E {:.2f} 回収率 {:.1f}% [{}]".format(1 - q_, n, h / n, h / e, 100 * pay / n, fy(yr)))
+for th in (0.9, 1.0, 1.1, 1.2):
+    n = h = pay = 0; yr = []
+    for k in op["keep"]:
+        m = (k["p"] * k["exp"] >= th) & (k["mid"] <= 30)
+        n += m.sum(); h += k["y"][m].sum(); pay += k["pay"][m].sum(); yr.append(100 * k["pay"][m].mean() if m.sum() else 0)
+    print("  ワイド: 期待値(確率×払戻の見込み)が {:.1f} 以上の組(30倍以下): {:7d}点 的中 {:.1%} 回収率 {:.1f}% [{}]".format(th, n, h / max(n, 1), 100 * pay / max(n, 1), fy(yr)))
+# 物差し: 土台だけの式で同じ「期待値で買う」をしたとき
+for th in (1.0, 1.1):
+    n = pay = 0
+    for k in ow["keep"]:
+        m = (k["pb"] * k["od"] >= th) & (k["od"] <= 50); n += m.sum(); pay += (k["y"][m] * k["od"][m]).sum()
+    n2 = pay2 = 0
+    for k in op["keep"]:
+        m = (k["pb"] * k["exp"] >= th) & (k["mid"] <= 30); n2 += m.sum(); pay2 += k["pay"][m].sum()
+    print("  (物差し)土台だけの式で期待値 {:.1f} 以上: 1着 {}頭 回収率 {:.1f}% / ワイド {}点 回収率 {:.1f}%".format(th, n, 100 * pay / max(n, 1), n2, 100 * pay2 / max(n2, 1)))
 json.dump({"win0": {"hit": W0["hit"] / W0["n"], "roi": 100 * W0["pay"] / W0["n"], "shit": W0["shit"] / W0["sn"], "sroi": 100 * W0["spay"] / W0["sn"], "sn": int(W0["sn"])},
            "pair0": {"hit": P0["hit"] / P0["n"], "roi": 100 * P0["pay"] / P0["n"], "shit": P0["shit"] / P0["sn"], "sroi": 100 * P0["spay"] / P0["sn"], "sn": int(P0["sn"])},
-           "win": WS, "pair": PS, "all": ALL}, open(os.path.join(OUT, "odds_plus.json"), "w"), ensure_ascii=False, indent=1, default=float)
+           "win": WS, "pair": PS, "all": ALL}, open(os.path.join(OUT, "odds_plus_{}.json".format(BASE)), "w"), ensure_ascii=False, indent=1, default=float)
 print("かかった時間 {:.0f}分".format((time.time() - t0) / 60))
