@@ -294,7 +294,8 @@ dialog.sheet .close{display:block;width:100%;margin-top:10px;padding:9px;border-
 .pk-h{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 10px;background:var(--surface2);font-size:12px;font-weight:700;color:var(--ink2)}
 .pk-h span:last-child{font-weight:500;color:var(--muted);font-size:11px;text-align:right}
 .pk-h em{font-style:normal;font-size:10.5px;font-weight:700;margin-left:6px;padding:1px 7px;border-radius:999px;background:var(--accent-bg);color:var(--accent)}
-.pk-h em.vB{background:var(--pos-bg);color:var(--pos)}
+.pk-h em.vB,.pk-h em.vS{background:var(--pos-bg);color:var(--pos)}
+.pk.solid{border-color:var(--pos)}
 .pk-b{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:8px 10px 2px}
 .pk-b .ty{font-weight:700;font-size:13px;color:var(--ink2)}
 .pk-b .cb{font-size:19px;font-weight:800;letter-spacing:.02em}
@@ -498,11 +499,11 @@ function calendar(month, stat, selected, ids) {
       <button data-cm="${months[mi + 1] || ""}" aria-label="次の月" ${mi < 0 || mi >= months.length - 1 ? "disabled" : ""}>▶</button>
     </div><div class="calg" id="${ids}">${cells}</div></div>`;
 }
-// 日付を選ぶカレンダーの1日分。買い目の数と収支は、割安ワイドとモデルの買い目の合計
+// 日付を選ぶカレンダーの1日分。買い目の数と収支は、堅い買い目とモデルの買い目の合計
 function dayStat(d) {
   const x = (state.hist?.days || []).find(r => r.date === d);
-  const g = (state.hist?.gap || []).find(r => r[0] === d);
-  const gn = g ? g[7] ?? g[1] : 0, gpl = g ? (g[9] ?? g[3]) - gn * 100 : 0;
+  const g = (state.hist?.solid || []).find(r => r[0] === d);          // 堅い買い目(単勝+ワイド)
+  const gn = g ? g[1] + g[4] : 0, gpl = g ? g[3] + g[6] - gn * 100 : 0;
   if (!x && !g) return state.day && state.day.date === d ? {races: 1, buy: 0, settled: 0, pl: 0} : null;
   return {races: x ? x.races : 1, buy: (x ? x.buy : 0) + gn, settled: (x ? x.settled : 0) + gn, pl: (x ? x.ret - x.stake : 0) + gpl};
 }
@@ -532,7 +533,8 @@ const KIND = {buy: "買い目あり", hit: "的中", lose: "外れ", skip: KOCHI
 // そのレースの買い目(モデルの買い目)。結果が出ていれば払戻も。
 // 割安ワイドは 2026-11-14 から参考(買い目に数えない): 発走前のオッズで選ぶと、確定までにオッズが動いて割安でなくなる
 function picksOf(r) {
-  const out = [], p = r.pred;
+  const out = [], p = r.pred, so = solidOf(r);
+  if (so) for (const x of so.picks) out.push({k: "solid", stake: 100, done: so.done, ret: x.ret || 0, hit: so.done && x.ret > 0});
   if (p && r.horses && p.verdict !== "見送り") {
     const s = r.settle, done = !!(s && r.result);
     out.push({k: "model", stake: s ? s.stake : p.stake, done, ret: s ? s.ret : 0, hit: !!(s && s.hit)});
@@ -608,27 +610,29 @@ function staleNote() {
 function daySumInner() {
   const rs = races().filter(centerOkR);
   if (KOCHI) return `<div class="hd">高知の最終レースは予想だけ(買う基準は付けていません)。全 ${rs.length} レース</div><div style="height:8px"></div>`;
-  const gp = [], mp = [];
+  const gp = [], mp = [], sp = [];
   let fin = 0;
   for (const r of rs) {
-    mp.push(...picksOf(r));
+    for (const x of picksOf(r)) (x.k === "solid" ? sp : mp).push(x);
     const g = gapOf(r);
     if (g && g.buy && !g.void) gp.push({stake: 100, done: g.done, ret: g.ret || 0, hit: g.done && g.ret > 0});
     if (g && g.buy && g.src === "fin") fin++;
   }
-  const line = (name, sub, ps) => {
+  const line = (name, sub, ps, unit = "レース") => {
     const dn = ps.filter(x => x.done), st = dn.reduce((a, x) => a + x.stake, 0), rt = dn.reduce((a, x) => a + x.ret, 0);
     return `<div class="dsrow"><div class="nm">${name}<small>${sub}</small></div>
-      <div class="v"><b class="num">${ps.length}</b><small>レース</small></div>
+      <div class="v"><b class="num">${ps.length}</b><small>${unit}</small></div>
       <div class="v"><b class="num">${dn.length ? dn.filter(x => x.hit).length + "/" + dn.length : "-"}</b><small>的中</small></div>
       <div class="v">${dn.length ? `<span class="pl num ${rt - st >= 0 ? "good" : "neg"}">${yen(rt - st)}</span><small>回収率 ${pct(rt, st)}</small>`
         : `<span class="pl muted">-</span><small>${ps.length ? "結果待ち" : "なし"}</small>`}</div></div>`;
   };
   return `<div class="hd">この日の買い目(1点100円)</div>
+    ${line("堅い買い目", "的中重視(単勝・ワイド)", sp, "点")}
     ${line("モデルの買い目", "3連複 ◎-○-▲", mp)}
     ${line("割安ワイド", "参考(買わない)", gp)}
-    <div class="ft"><b>割安ワイドは参考です(買い目にしません)</b>。${fin ? "この日の分は確定オッズで選べた場合の成績です。" : ""}
-      発走前のオッズで選ぶと、確定までにオッズが動いて割安でなくなります(2026-11-14 の実戦: 16レース買って的中0。「考え方」に説明)。</div>`;
+    <div class="ft">堅い買い目は、1番人気が ${SOLID.win_odds}倍以下の単勝と、来そうな確率 ${Math.round(SOLID.wide_p * 100)}%以上のワイド。よく当たるが配当は安い(5年で的中 53%・60%、回収率 81%・88%)。
+      ${rs.some(r => r.center === "jra" && !r.result) ? `<b>発走の${GAP.fresh}分前から</b>のオッズで出します。` : ""}
+      割安ワイドは参考(発走前のオッズでは選べない。「考え方」に説明)。</div>`;
 }
 function drawDaySum() {
   const el = $("#daysum");
@@ -724,7 +728,8 @@ function drawNextBuy() {
   if (!el || !d) return;
   const r = races().filter(x => centerOkR(x) && !x.result && picksOf(x).length && (untilClose(d.date, x) ?? -1) > 0)[0];
   if (!r) { el.innerHTML = ""; return; }
-  const m = untilClose(d.date, r), p = r.pred, bets = [];
+  const m = untilClose(d.date, r), p = r.pred, bets = [], so = solidOf(r);
+  if (so) bets.push(...so.picks.map(x => `${x.type} ${x.c.join("-")}(${x.odds})`));
   if (p.verdict !== "見送り") bets.push(...p.bets.map(b => `${b.type} ${b.combos.map(c => comboText(b.type, c)
     + (comboOdds(r, b.type, c) ? `(${comboOdds(r, b.type, c)})` : "")).join(",")}`));
   el.innerHTML = `<button class="nextb" data-rid="${esc(r.id)}">
@@ -842,6 +847,68 @@ function gapInner(r) {
       <span class="od num">${g.odds[0]}〜${g.odds[1]}倍 · 期待値 ${g.ev.toFixed(2)}</span>${st}</div>
     <div class="pk-n">${g.pair.map(u => `${u} ${esc(hname(r, u))}`).join(" ・ ")}</div></div>`;
 }
+// ---------------------------------------------------------------- 堅い買い目(的中重視。2026-11-14)
+// 当たりやすいレースだけをオッズで選ぶ(keiba_logic.SOLID・solid_win・solid_wide と同じ計算。tools/experiments/hit_rate.py)。
+//  単勝 … 1番人気の単勝オッズが 1.8倍以下(5年で的中 53%・回収率 81%)
+//  ワイド … 3連複から見ていちばん来そうな組の確率(0.75×組の強さ)が 45%以上(的中 60%・回収率 88%)
+// 馬の選び方はオッズの方がモデルより当たるので、ここだけはオッズで選ぶ。よく当たるが配当は安い
+const SOLID = {win_odds: 1.8, wide_p: 0.45, pt: 0.75, cal: 1.12, win_pay: 0.80};
+function solidWin(odds) {
+  const us = Object.keys(odds || {}).filter(u => +odds[u] > 1);
+  if (us.length < 5) return null;
+  const u = us.reduce((a, b) => (+odds[b] < +odds[a] || (+odds[b] === +odds[a] && +b < +a)) ? b : a), o = +odds[u];
+  return {u: +u, odds: o, p: Math.min(0.95, SOLID.win_pay / o), buy: o <= SOLID.win_odds};
+}
+function solidWide(tp, wide) {
+  if (!tp || !wide) return null;
+  let best = null;
+  for (const [k, v] of Object.entries(wide)) {
+    const sv = tp[k], lo = Array.isArray(v) ? v[0] : v, hi = Array.isArray(v) ? v[1] : v;
+    if (!sv || !(lo > 1)) continue;
+    if (!best || sv > best.s || (sv === best.s && k > best.key)) best = {s: sv, key: k, odds: [lo, hi || lo]};
+  }
+  if (!best) return null;
+  const raw = SOLID.pt * best.s;
+  return {key: best.key, pair: best.key.split("-").map(Number), p: Math.min(0.95, raw * SOLID.cal), odds: best.odds, buy: raw >= SOLID.wide_p - 1e-9};
+}
+// そのレースの堅い買い目(keiba.py の solid_picks と同じ: 発走の30分前より後のオッズがあればそれ、無ければ確定オッズ)。
+// picks = [{type, c, odds(表示用), p(見込みの的中), ret(結果が出ていれば払戻)}]
+function solidOf(r) {
+  if (KOCHI || r.center !== "jra" || !r.horses) return null;
+  const done = !!(r.result && (r.result.order || []).length >= 3);
+  let win, wide, src;
+  if (gapFresh(r)) {
+    const od = {};
+    for (const h of r.horses) if (!h.scratched && h.odds) od[h.umaban] = h.odds;
+    win = solidWin(od); wide = solidWide(r.trio_pair, r.gw || r.wide_odds); src = "pre";
+  } else if (done) { win = solidWin(r.result.odds); wide = solidWide(r.trio_pair_final, r.wide_final); src = "fin"; }
+  else return null;
+  const gone = r.horses.filter(h => h.scratched).map(h => h.umaban), pay = (r.result || {}).payout || {};
+  const picks = [];
+  if (win && win.buy && !gone.includes(win.u))
+    picks.push({type: "単勝", c: [win.u], odds: win.odds + "倍", p: win.p, ret: done ? ((pay["単勝"] || {})[win.u] || 0) : null});
+  if (wide && wide.buy && !wide.pair.some(u => gone.includes(u)))
+    picks.push({type: "ワイド", c: wide.pair, odds: wide.odds[0] + "〜" + wide.odds[1] + "倍", p: wide.p, ret: done ? ((pay["ワイド"] || {})[wide.key] || 0) : null});
+  return {src, done, picks};
+}
+function solidInner(r) {
+  const so = solidOf(r);
+  if (!so || !so.picks.length) return "";
+  const p3top = ((r.pred || {}).horses || []).slice().sort((a, b) => (b.p3 || 0) - (a.p3 || 0))[0];
+  const rows = so.picks.map(x => {
+    const st = so.done ? (x.ret ? `<span class="pk-r good">的中 ${yen(x.ret)}</span>` : `<span class="pk-r neg">外れ</span>`) : `<span class="pk-r muted">発走前</span>`;
+    const warn = x.type === "単勝" && p3top && p3top.p3 != null && p3top.umaban !== x.c[0]
+      ? ` · <span class="neg">モデルは${p3top.umaban}番が上(このときは当たりにくい: 的中 45%)</span>` : "";
+    return `<div class="pk-b"><span class="ty">${x.type}</span><span class="cb num">${x.c.join("-")}</span>
+      <span class="od num">${esc(x.odds)} · 見込み ${Math.round(x.p * 100)}%</span>${st}</div>
+      <div class="pk-n">${x.c.map(u => `${u} ${esc(hname(r, u))}`).join(" ・ ")}${warn}</div>
+      ${!so.done && buyBtn(r, x.type, x.c) ? `<div class="pk-a">${buyBtn(r, x.type, x.c)}</div>` : ""}`;
+  }).join("");
+  const hitAll = so.done && so.picks.some(x => x.ret), loseAll = so.done && !so.picks.some(x => x.ret);
+  return `<div class="pk solid ${hitAll ? "hit" : loseAll ? "lose" : ""}">
+    <div class="pk-h"><span>堅い買い目<em class="vS">的中重視</em></span><span>${so.src === "pre" ? (so.done ? "発走前のオッズで選んだ" : "いまのオッズで") : "確定オッズで選んだ場合"}</span></div>${rows}</div>`;
+}
+
 // モデルの買い目(3連複◎-○-▲、▲が延長ならワイド◎-○)。always なら見送りのときも理由を出す
 function modelPick(r, always) {
   const p = r.pred, s = r.settle, done = !!(r.result && s);
@@ -907,7 +974,7 @@ function detailInner(r) {
 }
 function card(r) {
   return `<article class="rc" id="r-${esc(r.id)}">${rcHead(r)}${marks(r)}
-    <div class="gapw">${gapInner(r)}</div>${modelPick(r, true)}
+    <div class="solidw">${solidInner(r)}</div>${modelPick(r, true)}<div class="gapw">${gapInner(r)}</div>
     <details class="more"><summary>くわしく(理由・コース・全馬の評価)</summary>${detailInner(r)}</details></article>`;
 }
 
@@ -1123,7 +1190,7 @@ function cumChart(pts) {
   const ticks = [...new Set([hi, 0, lo])].filter(v => v === 0 || Math.abs(y(v) - y(0)) >= 16);     // 0 の目盛りと重なるものは出さない
   const last = pts[pts.length - 1];
   const md = d => `${d.slice(2, 4)}/${+d.slice(4, 6)}/${+d.slice(6)}`;
-  return `<div class="lgd"><span><i style="background:var(--s1)"></i>割安ワイド <b class="num">${yen(last.cg)}</b></span>
+  return `<div class="lgd"><span><i style="background:var(--s1)"></i>堅い買い目 <b class="num">${yen(last.cg)}</b></span>
       <span><i style="background:var(--s2)"></i>モデルの買い目 <b class="num">${yen(last.cm)}</b></span></div>
     <div class="chart" id="cum">
     <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="累積収支の推移(下の表と同じ数字)">
@@ -1154,7 +1221,7 @@ function wireChart(pts) {
     const sy = v => (T + (H - T - B) * (hi - v) / span) / H * rc.height + (rc.top - bx.top);
     cx.setAttribute("x1", px); cx.setAttribute("x2", px); cx.setAttribute("visibility", "visible");
     for (const [dot, v] of [[d1, p.cg], [d2, p.cm]]) { dot.style.display = "block"; dot.style.left = sx + "px"; dot.style.top = sy(v) + "px"; }
-    tip.innerHTML = `${fmtD(p.date)}<br><i style="background:var(--s1)"></i>割安ワイド ${yen(p.g)} / 累積 <b>${yen(p.cg)}</b>
+    tip.innerHTML = `${fmtD(p.date)}<br><i style="background:var(--s1)"></i>堅い ${yen(p.g)} / 累積 <b>${yen(p.cg)}</b>
       <br><i style="background:var(--s2)"></i>モデル ${yen(p.m)} / 累積 <b>${yen(p.cm)}</b>`;
     tip.style.display = "block";
     const tw = tip.offsetWidth, bw = box.clientWidth;
@@ -1263,13 +1330,16 @@ function renderMoney() {
       その前の当日の予想はワイド◎-○)。
       ${altMissing ? `馬単の払戻をまだ取っていないレース(${altMissing}R)は馬単に数えていない。` : ""}</p>`;
 
-  // ---- 割安ワイド(history.json の gap。アプリに出している買い目 = 発走前のオッズがあればそれ、無ければ確定オッズで選んだもの)
-  const G = h.gap || [];
-  const gFrom = state.period === "all" && G.length && G[0][0] < from ? G[0][0] : from;     // 全期間は、割安ワイドのいちばん古い日から
-  const gIn = G.filter(r => r[0] >= gFrom && r[0] <= to);
+  // ---- 堅い買い目(history.json の solid = [日付, 単勝の点数, 的中, 払戻, ワイドの点数, 的中, 払戻, 発走前のオッズで選んだ点数, 的中, 払戻])
+  //      下の gDay・gs は「堅い買い目」(グラフ・表の1本目)。割安ワイド(参考)は G・ga で別に出す
+  const G = h.gap || [], SD = h.solid || [];
+  const gFrom = state.period === "all" && SD.length && SD[0][0] < from ? SD[0][0] : from;     // 全期間は、いちばん古い日(2022年)から
   const gDay = {};
-  for (const r of gIn) gDay[r[0]] = {n: r[7] ?? r[1], hit: r[8] ?? r[2], ret: r[9] ?? r[3]};
-  const gs = Object.values(gDay).reduce((a, x) => [a[0] + x.n, a[1] + x.hit, a[2] + x.ret], [0, 0, 0]);
+  for (const r of SD) if (r[0] >= gFrom && r[0] <= to) gDay[r[0]] = {n: r[1] + r[4], hit: r[2] + r[5], ret: r[3] + r[6], wn: r[1], wh: r[2], wr: r[3], dn: r[4], dh: r[5], dr: r[6]};
+  const gs = Object.values(gDay).reduce((a, x) => [a[0] + x.n, a[1] + x.hit, a[2] + x.ret, a[3] + x.wn, a[4] + x.wh, a[5] + x.wr, a[6] + x.dn, a[7] + x.dh, a[8] + x.dr], [0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const sPre = SD.reduce((a, r) => [a[0] + r[7], a[1] + r[8], a[2] + r[9]], [0, 0, 0]);
+  const gaIn = G.filter(r => r[0] >= gFrom && r[0] <= to);
+  const ga = gaIn.reduce((a, r) => [a[0] + (r[7] ?? r[1]), a[1] + (r[8] ?? r[2]), a[2] + (r[9] ?? r[3])], [0, 0, 0]);
   const gPre = G.reduce((a, r) => [a[0] + r[4], a[1] + r[5], a[2] + r[6]], [0, 0, 0]);
   // 日ごと(2つの買い方を並べる。グラフ・表・カレンダー)
   const dates = [...new Set([...Object.keys(gDay), ...Object.keys(byDay)])].sort();
@@ -1288,22 +1358,28 @@ function renderMoney() {
     if (byDay[d]) { x.mn += byDay[d].n; x.mst += byDay[d].stake; x.mrt += byDay[d].ret; }
   }
   const plc = (rt, st, n) => n ? `<td class="${rt >= st ? "good" : "neg"}"><b>${yen(rt - st)}</b></td>` : `<td class="muted">-</td>`;
-  const perTbl = `<table class="tbl nw"><thead><tr><th>${byMonth ? "月" : "日"}</th><th>割安 R</th><th>割安 収支</th><th>モデル R</th><th>モデル 収支</th></tr></thead><tbody>
+  const perTbl = `<table class="tbl nw"><thead><tr><th>${byMonth ? "月" : "日"}</th><th>堅い 点</th><th>堅い 収支</th><th>モデル R</th><th>モデル 収支</th></tr></thead><tbody>
     ${Object.keys(per).sort().reverse().map(k => { const x = per[k];
       return `<tr ${byMonth ? "" : `class="link" tabindex="0" data-day="${k}"`}><td>${byMonth ? `${k.slice(0, 4)}/${+k.slice(4)}` : fmtD(k).slice(5)}</td>
         <td>${x.gn || "-"}</td>${plc(x.grt, x.gst, x.gn)}<td>${x.mn || "-"}</td>${plc(x.mrt, x.mst, x.mn)}</tr>`; }).join("")}</tbody></table>`;
   // 年ごと(期間に関係なく全部)
+  const Y0 = () => ({gn: 0, gh: 0, grt: 0, mn: 0, mst: 0, mrt: 0, an: 0, art: 0});
   const yrs = {};
-  for (const r of G) { const x = yrs[r[0].slice(0, 4)] = yrs[r[0].slice(0, 4)] || {gn: 0, grt: 0, mn: 0, mst: 0, mrt: 0}; x.gn += r[7] ?? r[1]; x.grt += r[9] ?? r[3]; }
-  for (const r of (h.races || [])) { const x = yrs[r.date.slice(0, 4)] = yrs[r.date.slice(0, 4)] || {gn: 0, grt: 0, mn: 0, mst: 0, mrt: 0}; x.mn++; x.mst += r.stake; x.mrt += r.ret; }
+  for (const r of SD) { const x = yrs[r[0].slice(0, 4)] = yrs[r[0].slice(0, 4)] || Y0(); x.gn += r[1] + r[4]; x.gh += r[2] + r[5]; x.grt += r[3] + r[6]; }
+  for (const r of G) { const x = yrs[r[0].slice(0, 4)] = yrs[r[0].slice(0, 4)] || Y0(); x.an += r[7] ?? r[1]; x.art += r[9] ?? r[3]; }
+  for (const r of (h.races || [])) { const x = yrs[r.date.slice(0, 4)] = yrs[r.date.slice(0, 4)] || Y0(); x.mn++; x.mst += r.stake; x.mrt += r.ret; }
   const rc = (rt, st) => st ? `<td class="${rt >= st ? "good" : "neg"}"><b>${pct(rt, st)}</b></td>` : `<td class="muted">-</td>`;
-  const yrTot = Object.values(yrs).reduce((a, x) => ({gn: a.gn + x.gn, grt: a.grt + x.grt, mn: a.mn + x.mn, mst: a.mst + x.mst, mrt: a.mrt + x.mrt}), {gn: 0, grt: 0, mn: 0, mst: 0, mrt: 0});
-  const yrRow = (k, x, bold) => `<tr><td>${bold ? `<b>${k}</b>` : k}</td><td>${x.gn ? x.gn.toLocaleString() : "-"}</td>${rc(x.grt, x.gn * 100)}
+  const yrTot = Object.values(yrs).reduce((a, x) => { for (const k in a) a[k] += x[k]; return a; }, Y0());
+  const yrRow = (k, x, bold) => `<tr><td>${bold ? `<b>${k}</b>` : k}</td><td>${x.gn ? x.gn.toLocaleString() : "-"}</td><td>${x.gn ? pct(x.gh, x.gn) : "-"}</td>${rc(x.grt, x.gn * 100)}
     <td>${x.mn ? x.mn.toLocaleString() : "-"}</td>${rc(x.mrt, x.mst)}</tr>`;
-  const yrTbl = `<table class="tbl nw"><thead><tr><th>年</th><th>割安 R</th><th>割安 回収率</th><th>モデル R</th><th>モデル 回収率</th></tr></thead><tbody>
+  const yrTbl = `<table class="tbl nw"><thead><tr><th>年</th><th>堅い 点</th><th>的中</th><th>回収率</th><th>モデル R</th><th>回収率</th></tr></thead><tbody>
     ${Object.keys(yrs).sort().map(k => yrRow(k, yrs[k])).join("")}${yrRow("全部", yrTot, true)}</tbody></table>`;
-  const sumRow = (name, sub, n, hitN, st, rt) => `<div class="dsrow w"><div class="nm">${name}<small>${sub}</small></div>
-    <div class="v"><b class="num">${n.toLocaleString()}</b><small>レース</small></div>
+  // 割安ワイド(参考)の年ごと
+  const gapTbl = `<table class="tbl nw"><thead><tr><th>年</th><th>R</th><th>回収率</th></tr></thead><tbody>
+    ${Object.keys(yrs).sort().map(k => `<tr><td>${k}</td><td>${yrs[k].an ? yrs[k].an.toLocaleString() : "-"}</td>${rc(yrs[k].art, yrs[k].an * 100)}</tr>`).join("")}
+    <tr><td><b>全部</b></td><td>${yrTot.an.toLocaleString()}</td>${rc(yrTot.art, yrTot.an * 100)}</tr></tbody></table>`;
+  const sumRow = (name, sub, n, hitN, st, rt, unit = "レース") => `<div class="dsrow w"><div class="nm">${name}<small>${sub}</small></div>
+    <div class="v"><b class="num">${n.toLocaleString()}</b><small>${unit}</small></div>
     <div class="v"><b class="num">${n ? pct(hitN, n) : "-"}</b><small>的中</small></div>
     <div class="v">${n ? `<span class="pl num ${rt >= st ? "good" : "neg"}">${yen(rt - st)}</span><small>回収率 ${pct(rt, st)}</small>`
       : `<span class="pl muted">-</span><small>なし</small>`}</div></div>`;
@@ -1322,11 +1398,11 @@ function renderMoney() {
     </div>
     <div class="daysum">
       <div class="hd">${fmtD(gFrom)} 〜 ${fmtD(to)} の成績(1点${h.unit}円)</div>
+      ${sumRow("堅い買い目", `単勝 ${gs[3].toLocaleString()}・ワイド ${gs[6].toLocaleString()}`, gs[0], gs[1], gs[0] * 100, gs[2], "点")}
       ${sumRow("モデルの買い目", "3連複 ◎-○-▲", rs.length, hit, S, R)}
-      ${sumRow("割安ワイド", "参考(買わない)", gs[0], gs[1], gs[0] * 100, gs[2])}
-      <div class="ft"><b>割安ワイドは参考です(買い目にしません)</b>。上の数字は<b>確定オッズで選べた場合</b>で、実際には選べません:
-        発走前のオッズで選ぶと、確定までにオッズが動いて割安でなくなります(2026-11-14 の実戦で確かめた。「考え方」に説明)。
-        発走前のオッズで選んだ分(実際に買える形): ${gPre[0] ? `<b>${gPre[0]}R · 的中 ${gPre[1]} · 回収率 ${pct(gPre[2], gPre[0] * 100)}</b>` : "まだありません(2026-11-14 の開催からたまります)"}。
+      <div class="ft"><b>堅い買い目(的中重視)</b>: 単勝 ${gs[3] ? `的中 ${pct(gs[4], gs[3])}・回収率 ${pct(gs[5], gs[3] * 100)}` : "-"} / ワイド ${gs[6] ? `的中 ${pct(gs[7], gs[6])}・回収率 ${pct(gs[8], gs[6] * 100)}` : "-"}。
+        よく当たるが配当は安く、続ければ少しずつ減ります。過去の日は確定オッズで選んだ場合(1番人気と来そうな組は締切前でもほぼ同じ)。
+        発走前のオッズで選んだ分: ${sPre[0] ? `<b>${sPre[0]}点 · 的中 ${sPre[1]} · 回収率 ${pct(sPre[2], sPre[0] * 100)}</b>` : "まだありません"}。
         モデルの買い目は2024年から(その日より前のレースだけで学んだモデルで再現)。</div>
     </div>
     ${pts2.length >= 2 ? `<div class="sec">累積収支</div>${cumChart(pts2)}<p class="legendnote">指でなぞると日ごとの数字が出ます。</p>` : ""}
@@ -1336,9 +1412,14 @@ function renderMoney() {
     <p class="legendnote">モデルの買い目は、買い方を選ぶのに使った2024〜2026年の成績です。選ぶのに使っていない2022・2023年に当てはめると 71% でした(「考え方」に説明)。</p>
     <div class="sec">カレンダー</div>
     <div id="mcal">${calendar(state.moneyMonth, calStat2, null, "calg2")}</div>
-    <p class="legendnote">日付を押すとその日のレースを開きます。数字はその日の収支(2つの買い方の合計)。</p>
+    <p class="legendnote">日付を押すとその日のレースを開きます。数字はその日の収支(堅い買い目とモデルの買い目の合計)。</p>
     <div class="sec">くわしく</div>
     <div class="card">
+    ${det("gap", "割安ワイド(参考・買わない)", `
+      <p class="muted" style="font-size:12.5px;margin-bottom:8px">この期間: ${ga[0].toLocaleString()}R · 的中 ${pct(ga[1], ga[0])} · 回収率 ${pct(ga[2], ga[0] * 100)}(確定オッズで選べた場合)</p>
+      ${gapTbl}
+      <p class="legendnote"><b>買い目にしません。</b>上の数字は確定オッズで選べた場合で、実際には選べません。発走前のオッズで選ぶと、確定までにオッズが動いて割安でなくなります
+        (2026-11-14 の実戦で確かめた。「考え方」に説明)。発走前のオッズで選んだ分: ${gPre[0] ? `${gPre[0]}R · 的中 ${gPre[1]} · 回収率 ${pct(gPre[2], gPre[0] * 100)}` : "まだありません"}。</p>`)}
     ${det("model", "モデルの買い目の分析(券種・条件・印・負けパターン)", `
       ${srcs.length > 1 ? `<div class="chips" role="group" aria-label="予想の出どころ">
         ${[["all","すべて"],["live","当日の予想"],["backfill","再現"]].map(([k, t]) => `<button class="chip" data-s="${k}" aria-pressed="${state.src === k}">${t}</button>`).join("")}
@@ -1524,7 +1605,10 @@ function renderVote() {
     const p = r.pred;
     if (p.verdict !== "見送り") for (const b of p.bets) for (const c of b.combos)
       items.push({r, type: b.type, c, unit: b.unit, verdict: p.verdict, id: voteId(r.id, b.type, c)});
-    // (割安ワイドは参考なので、投票の一覧には入れない。2026-11-14)
+    // 堅い買い目(的中重視)。モデルの買い目と同じ組なら1つにまとめる。(割安ワイドは参考なので入れない)
+    const so = solidOf(r);
+    if (so) for (const x of so.picks) if (!items.some(y => y.id === voteId(r.id, x.type, x.c)))
+      items.push({r, type: x.type, c: x.c, unit: 100, verdict: "堅", id: voteId(r.id, x.type, x.c)});
   }
   // 自分で作った買い目(予想に無いレース・券種も)
   for (const t of Object.values(tickets)) {
@@ -1566,7 +1650,7 @@ function renderVote() {
   const rows = items.map((x, n) => {
     const v = bought(x), done = closed(x);
     const tag = x.t ? `<span class="tag o">自分で</span>`
-      : x.verdict ? `<span class="badge ${x.verdict === "割安" ? "A" : x.verdict}" style="display:inline-grid;min-width:22px;height:20px;font-size:12px;border-radius:6px;vertical-align:1px;padding:0 5px">${x.verdict}</span>` : "";
+      : x.verdict ? `<span class="badge ${x.verdict === "堅" ? "B" : x.verdict}" style="display:inline-grid;min-width:22px;height:20px;font-size:12px;border-radius:6px;vertical-align:1px;padding:0 5px">${x.verdict}</span>` : "";
     const what = x.t ? `${esc(x.type)}${x.t.method !== "通常" ? " " + esc(x.t.method) : ""} <b>${esc(selText(x.t))}</b>
         ${x.cs.length > 1 ? `${x.cs.length}点×${x.unit}円` : x.unit + "円"}`
       : `${esc(x.type)} <b>${esc(comboText(x.type, x.c))}</b> ${x.unit}円`;
@@ -1890,12 +1974,15 @@ function updateOddsDom(r) {
   });
   const gw = box.querySelector(".gapw");
   if (gw) gw.innerHTML = gapInner(r);
+  const sw = box.querySelector(".solidw");
+  if (sw) sw.innerHTML = solidInner(r);
   const bs = box.querySelectorAll(".bet .bo");
   (r.pred.bets || []).forEach((b, i) => { if (bs[i]) bs[i].innerHTML = betOdds(r, b); });
   drawNextBuy();
 }
 // 割安ワイドの買い目の並び(オッズを取り直して変わったら、一覧を作り直す)
-const gapSig = () => allRaces().map(r => { const g = gapOf(r); return g && g.buy ? r.id + ":" + g.key : ""; }).join(",");
+const gapSig = () => allRaces().map(r => { const g = gapOf(r), so = solidOf(r);
+  return (g && g.buy ? r.id + ":" + g.key : "") + (so && so.picks.length ? "|" + r.id + ":" + so.picks.map(x => x.type + x.c.join("-")).join("+") : ""); }).join(",");
 async function refreshOdds(manual) {
   if (!canLive() || oddsState.busy || !state.day) return;
   const d = state.day;
@@ -2365,6 +2452,33 @@ function chaosRule() {
     <p class="muted" style="font-size:11px;margin:4px 0 0">中央 ${esc((c.years || []).join("〜"))}年の ${(c.races || 0).toLocaleString()}R(年ごとに、ほかの年で学んだ式で読んだ分)。
       毎週の学び直しで作り直す(${esc(c.fitted || "")})</p>`;
 }
+// 堅い買い目(的中重視)の説明
+function solidRule() {
+  const t = ((state.hist || {}).solid || []).reduce((a, r) => a.map((v, i) => v + r[i + 1]), [0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const yr = {};
+  for (const r of (state.hist || {}).solid || []) { const x = yr[r[0].slice(0, 4)] = yr[r[0].slice(0, 4)] || [0, 0, 0, 0, 0, 0]; for (let i = 0; i < 6; i++) x[i] += r[i + 1]; }
+  const rows = Object.keys(yr).sort().map(k => { const x = yr[k];
+    return `<tr><td>${k}</td><td>${x[0]}</td><td>${pct(x[1], x[0])}</td><td>${pct(x[2], x[0] * 100)}</td><td>${x[3]}</td><td>${pct(x[4], x[3])}</td><td>${pct(x[5], x[3] * 100)}</td></tr>`; }).join("");
+  return `<div class="sec">堅い買い目(的中重視)</div>
+    <ul class="rules">
+      <li><b>何か</b>「当たりやすいレースだけ」をオッズで選んだ買い目。<b>よく当たるが配当は安く、回収率は 81〜88%</b>(続ければ少しずつ減る)。当たる回数を増やしたいとき用</li>
+      <li><b>単勝</b>1番人気の単勝オッズが <b>${SOLID.win_odds}倍以下</b>のレースで、その馬の単勝。5レースに1つくらい
+        ${t[0] ? `(${t[0].toLocaleString()}R・的中 <b>${pct(t[1], t[0])}</b>・回収率 ${pct(t[2], t[0] * 100)})` : ""}</li>
+      <li><b>ワイド</b>3連複のオッズから見て、2頭とも3着内に来る確率がいちばん高い組が <b>${Math.round(SOLID.wide_p * 100)}%以上</b>のレースで、その組のワイド。8レースに1つくらい
+        ${t[3] ? `(${t[3].toLocaleString()}R・的中 <b>${pct(t[4], t[3])}</b>・回収率 ${pct(t[5], t[3] * 100)})` : ""}。
+        確率 = ${SOLID.pt} × その2頭を含む3連複の組の 1/オッズ の合計(実際はその ${SOLID.cal}倍くらい当たるので、画面の「見込み」は ${SOLID.cal}倍した数字)</li>
+      <li><b>なぜオッズで選ぶか</b>5年・16,212レースでくらべると、1着を当てるのは1番人気 33.7% > モデルの確率1位 29.5% > いまの◎ 27.6%。
+        ワイドも、3連複から見ていちばん来そうな組 32.7% > いまの◎-○ 25.8%。馬の選び方はオッズに勝てないので、ここはオッズで選ぶ。
+        的中率を上げるには「馬の選び方」より「レースの選び方」が効く(1番人気が 1.8倍以下のレースだけにすると 33.7% → 53%)</li>
+      <li><b>モデルと合わないとき</b>1番人気が ${SOLID.win_odds}倍以下でも、モデルの確率1位が別の馬のレース(10レースに1つ)は的中 45%・回収率 73%
+        (同じ馬なら 54%・83%。5年とも低い)。買い目の下に赤字で出す</li>
+      <li><b>これ以上は上げられない</b>基準を厳しくすれば的中率は上がるが、レースが減って配当も下がる(単勝 1.5倍以下なら的中 63%・全体の8%、ワイド 55%以上なら的中 72%・全体の4%)。
+        どの基準でも回収率は 80〜91% で、100% を超える帯は無い</li>
+      <li><b>オッズ</b>当日は発走の${GAP.fresh}分前から、取り直したオッズで出す(それより前は出さない)。過去の日は確定オッズで選んだもの。
+        1番人気と来そうな組は締切前でもほとんど変わらないので、割安ワイドのような「締切までに消える」問題は小さい(発走前のオッズで選んだ分の成績は「収支・分析」に出す)</li>
+    </ul>
+    ${rows ? `<div style="overflow-x:auto"><table class="tbl nw" style="font-size:12.5px"><thead><tr><th>年</th><th>単勝</th><th>的中</th><th>回収</th><th>ワイド</th><th>的中</th><th>回収</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}`;
+}
 // 割安ワイドの説明
 function gapRule() {
   const g = (state.hist || {}).gap || [];
@@ -2400,7 +2514,7 @@ function gapRule() {
 function renderRule() {
   if (KOCHI) { renderRuleKochi(); return; }
   $("#v-rule").innerHTML = `
-    ${gapRule()}
+    ${solidRule()}
     <div class="sec">モデルの買い目の流れ</div>
     <div class="flow"><div>全レースの各馬に、3着以内に来る確率を出す</div>
       <div>各馬の負け要因(距離・展開・枠・斤量・休み明け・クラス差・馬場)を数える(30か条の評価。確率モデルの材料)</div>
@@ -2411,6 +2525,7 @@ function renderRule() {
     <div class="sec">3着以内の確率モデル(◎○と買うレースを決める)</div>
     <div id="modelbox"><p class="muted" style="font-size:13px">モデルの情報を読み込み中…</p></div>
     ${chaosRule()}
+    ${gapRule()}
     <div class="sec">印</div>
     <div class="flow" style="font-size:13px">◎○ 軸にできる馬の確率の上位2頭 / ▲ その次(3連複の3頭目) / △ 4番目。
       印は確率の順だけで付ける。「負け要因が3つ重なる」「能力差が大きい」の札が出ていても、印が付いた馬は買い目から外さない

@@ -1056,6 +1056,56 @@ def gap_history():
     return out
 
 
+def solid_picks(d, rc):
+    """そのレースの堅い買い目(L.solid_win・L.solid_wide)。アプリの solidOf と同じ:
+    発走前のオッズ(発走の30分前より後に取ったもの)があればそれで、無ければ確定オッズで選ぶ。
+    -> {"win": {...} か None, "wide": {...} か None, "src": "pre" / "fin"}。結果が無いレースで発走前のオッズも無ければ None"""
+    res = rc.get("result") or {}
+    done = len(res.get("order") or []) >= 3
+    if gap_pre_ok(d, rc):
+        odds = {h["umaban"]: h.get("odds") for h in rc.get("horses") or [] if not h.get("scratched")}
+        return {"win": L.solid_win(odds), "wide": L.solid_wide(rc.get("trio_pair"), rc.get("wide_odds")), "src": "pre"}
+    if not done:
+        return None
+    return {"win": L.solid_win(res.get("odds")), "wide": L.solid_wide(rc.get("trio_pair_final"), rc.get("wide_final")), "src": "fin"}
+
+
+def solid_history():
+    """堅い買い目の日ごとの成績。[日付, 単勝の点数, 的中, 払戻, ワイドの点数, 的中, 払戻, うち発走前のオッズで選んだ点数(単勝+ワイド), 的中, 払戻]"""
+    out = []
+    if "jra" not in CENTERS:
+        return out
+    for f in sorted(glob.glob(OUT + "/days/*.json")):
+        day = load(f, None)
+        if not day:
+            continue
+        row = [day["date"], 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        for rid, rc in day.get("races", {}).items():
+            res = rc.get("result") or {}
+            if center_of(rid) != "jra" or not target(rid) or len(res.get("order") or []) < 3:
+                continue
+            sp = solid_picks(day["date"], rc)
+            if not sp:
+                continue
+            gone = {h["umaban"] for h in rc.get("horses") or [] if h.get("scratched")}
+            pay = res.get("payout") or {}
+            w = sp["win"]
+            if w and w["buy"] and w["u"] not in gone:
+                p = (pay.get("単勝") or {}).get(str(w["u"]), 0)
+                row[1] += 1; row[2] += p > 0; row[3] += p
+                if sp["src"] == "pre":
+                    row[7] += 1; row[8] += p > 0; row[9] += p
+            x = sp["wide"]
+            if x and x["buy"] and not gone & set(x["pair"]):
+                p = (pay.get("ワイド") or {}).get(x["key"], 0)
+                row[4] += 1; row[5] += p > 0; row[6] += p
+                if sp["src"] == "pre":
+                    row[7] += 1; row[8] += p > 0; row[9] += p
+        if row[1] or row[4]:
+            out.append(row)
+    return out
+
+
 def build_history():
     """日別ファイルから、期間で絞れる形の成績を作る。
     days  … 日ごとの合計と、印・負けパターンの集計(アプリが期間で足し合わせる)
@@ -1129,7 +1179,7 @@ def build_history():
                 "alt": alt_bets(p, rc.get("result") or {})})
         days.append(row)
     hist = {"updated": datetime.now(JST).isoformat(timespec="seconds"), "unit": L.UNIT,
-            "days": days, "races": races, "gap": gap_history()}
+            "days": days, "races": races, "gap": gap_history(), "solid": solid_history()}
     save(OUT + "/history.json", hist)
     return hist
 

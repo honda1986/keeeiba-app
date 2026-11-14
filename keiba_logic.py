@@ -295,6 +295,43 @@ def wide_gap(tp, wide):
     return best
 
 
+# 堅い買い目(的中重視。2026-11-14): 当たりやすいレースだけを、オッズで選ぶ(tools/experiments/hit_rate.py。2022〜2026年の 16,212R)。
+# 馬の選び方はオッズの方がモデルより当たる(1着: 今の◎ 28%・1着を当てるモデル 30%・1番人気 34%)ので、ここだけはオッズで選ぶ。
+#  単勝 … 1番人気の単勝オッズが win_odds 倍以下のレース。的中 53%(5年とも 51〜56%)・レースの 19%・回収率 82%
+#  ワイド … 3連複から見ていちばん来そうな組(0.75×組の強さ がいちばん大きい組)の確率が wide_p 以上のレース。
+#           的中 60%(58〜66%)・レースの 12%・回収率 88%。確率は少し低めに出る(見込み 45〜55% の組は実際 50〜61%)ので、見せるときは cal 倍する
+# よく当たるが配当は安く、続ければ少しずつ減る(回収率 82〜88%)。的中を楽しむための買い目
+SOLID = {"win_odds": 1.8, "wide_p": 0.45, "pt": 0.75, "cal": 1.12, "win_pay": 0.80}
+
+
+def solid_win(odds):
+    """堅い単勝。odds = 馬番 -> 単勝オッズ。1番人気(オッズがいちばん低い馬)と、買うか。
+    -> {"u": 馬番, "odds": オッズ, "p": 見込みの的中(win_pay÷オッズ), "buy": オッズが win_odds 以下か}。馬が5頭いなければ None"""
+    od = {int(u): float(o) for u, o in (odds or {}).items() if o and float(o) > 1.0}
+    if len(od) < 5:
+        return None
+    u = min(od, key=lambda k: (od[k], k))
+    return {"u": u, "odds": od[u], "p": round(min(0.95, SOLID["win_pay"] / od[u]), 3), "buy": od[u] <= SOLID["win_odds"]}
+
+
+def solid_wide(tp, wide):
+    """堅いワイド。tp = 組ごとの強さ、wide = ワイドのオッズ。3連複から見ていちばん来そうな組と、買うか。
+    -> {"key": "a-b", "pair": [a, b], "p": 見込みの的中(cal 倍した確率), "odds": [下限, 上限], "buy": 確率が wide_p 以上か}。無ければ None"""
+    best = None
+    for k, v in (wide or {}).items():
+        s = (tp or {}).get(k)
+        lo, hi = (v[0], v[1]) if isinstance(v, (list, tuple)) else (v, v)
+        if not s or not lo or lo <= 1.0:
+            continue
+        if best is None or (s, k) > (best[0], best[1]):
+            best = (s, k, [lo, hi or lo])
+    if not best:
+        return None
+    raw = SOLID["pt"] * best[0]
+    return {"key": best[1], "pair": [int(x) for x in best[1].split("-")], "p": round(min(0.95, raw * SOLID["cal"]), 3),
+            "odds": best[2], "buy": raw >= SOLID["wide_p"] - 1e-9}
+
+
 # ---------------------------------------------------------------- 文字の整理
 def nfkc(s):
     return unicodedata.normalize("NFKC", s or "")

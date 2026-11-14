@@ -399,6 +399,50 @@ class Parse(unittest.TestCase):
         m = re.search(r"const GAP = \{lo: ([\d.]+), hi: ([\d.]+), ev: ([\d.]+), pt: ([\d.]+), alpha: ([\d.]+), fresh: ([\d.]+)\};", html)
         self.assertEqual([float(x) for x in m.groups()], [L.GAP[k] for k in ("lo", "hi", "ev", "pt", "alpha", "fresh")])
 
+    def test_solid(self):
+        # 堅い単勝: 1番人気(オッズがいちばん低い馬)。1.8倍以下で買い目。見込みの的中 = 0.80÷オッズ
+        w = L.solid_win({1: 1.6, 2: 4.0, 3: 9.0, 4: 15.0, 5: 30.0})
+        self.assertEqual((w["u"], w["odds"], w["p"], w["buy"]), (1, 1.6, 0.5, True))
+        self.assertTrue(L.solid_win({"3": 1.8, "1": 4.0, "2": 9.0, "4": 15.0, "5": 30.0})["buy"])          # ちょうど 1.8倍は買う。馬番は文字でもよい
+        w = L.solid_win({1: 1.9, 2: 4.0, 3: 9.0, 4: 15.0, 5: 30.0})
+        self.assertEqual((w["u"], w["buy"]), (1, False))
+        self.assertEqual(L.solid_win({1: 2.5, 2: 2.5, 3: 9.0, 4: 15.0, 5: 30.0, 6: None, 7: 0})["u"], 1)   # 同じオッズなら馬番の小さい方。オッズ無しは数えない
+        self.assertEqual(L.solid_win({1: 1.0, 2: 1.2, 3: 9.0, 4: 15.0, 5: 30.0, 6: 40.0})["p"], 0.667)
+        self.assertIsNone(L.solid_win({1: 1.5, 2: 4.0, 3: 9.0, 4: 15.0}))                                  # 5頭いない
+        self.assertIsNone(L.solid_win(None))
+        # 堅いワイド: 組の強さがいちばん大きい組。0.75×強さ が 45%以上で買い目。見込みの的中はその 1.12倍
+        tp = {"1-2": 0.62, "1-3": 0.30, "2-3": 0.25, "1-4": 0.9}
+        wide = {"1-2": [1.3, 1.5], "1-3": [3.0, 3.6], "2-3": [4.0, 5.0], "1-4": [1.0, 1.0], "3-4": [5.0, 6.0]}
+        x = L.solid_wide(tp, wide)
+        self.assertEqual((x["key"], x["pair"], x["odds"], x["buy"]), ("1-2", [1, 2], [1.3, 1.5], True))    # 1-4 はオッズ無し(1.0)なので外す
+        self.assertAlmostEqual(x["p"], 0.75 * 0.62 * 1.12, places=3)                                       # 0.521
+        self.assertTrue(L.solid_wide({"1-2": 0.60}, {"1-2": [1.3, 1.5]})["buy"])                           # ちょうど 45%
+        self.assertFalse(L.solid_wide({"1-2": 0.59}, {"1-2": [1.3, 1.5]})["buy"])
+        self.assertEqual(L.solid_wide({"1-2": 1.5}, {"1-2": [1.1, 1.1]})["p"], 0.95)                       # 見込みは 95% まで
+        self.assertEqual(L.solid_wide({"1-2": 0.3}, {"1-2": 2.2})["odds"], [2.2, 2.2])                     # 幅の無いオッズ
+        self.assertIsNone(L.solid_wide(None, wide))
+        self.assertIsNone(L.solid_wide(tp, None))
+        self.assertIsNone(L.solid_wide({"5-6": 0.5}, wide))
+        # アプリの計算(index.html の SOLID)と同じ数字
+        html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "index.html"), encoding="utf-8").read()
+        m = re.search(r"const SOLID = \{win_odds: ([\d.]+), wide_p: ([\d.]+), pt: ([\d.]+), cal: ([\d.]+), win_pay: ([\d.]+)\};", html)
+        self.assertEqual([float(v) for v in m.groups()], [L.SOLID[k] for k in ("win_odds", "wide_p", "pt", "cal", "win_pay")])
+
+    def test_solid_picks(self):
+        # 発走の30分前より後のオッズがあればそれで、無ければ確定オッズで選ぶ。結果もオッズも無ければ None
+        hs = [{"umaban": 1, "odds": 1.7}, {"umaban": 2, "odds": 4.0}, {"umaban": 3, "odds": 9.0}, {"umaban": 4, "odds": 15.0},
+              {"umaban": 5, "odds": 30.0}, {"umaban": 6, "odds": 1.2, "scratched": True}]
+        pre = {"start": "10:05", "horses": hs, "trio_pair_at": "2026-11-14T09:58:00+09:00", "trio_pair": {"1-2": 0.7}, "wide_odds": {"1-2": [1.2, 1.4]}}
+        sp = K.solid_picks("20261114", pre)
+        self.assertEqual((sp["src"], sp["win"]["u"], sp["win"]["buy"], sp["wide"]["key"], sp["wide"]["buy"]), ("pre", 1, True, "1-2", True))   # 取消の6番は数えない
+        res = {"order": [2, 1, 3], "odds": {"1": 2.4, "2": 3.0, "3": 9.0, "4": 15.0, "5": 30.0}, "payout": {}}
+        fin = {"start": "10:05", "horses": hs, "result": res, "trio_pair_final": {"1-2": 0.4}, "wide_final": {"1-2": [1.8, 2.2]}}
+        sp = K.solid_picks("20261114", fin)
+        self.assertEqual((sp["src"], sp["win"]["buy"], sp["wide"]["buy"]), ("fin", False, False))
+        self.assertEqual(K.solid_picks("20261114", dict(pre, result=res))["src"], "pre")                   # 発走前のオッズがあれば、結果が出たあともそれで
+        self.assertIsNone(K.solid_picks("20261114", {"start": "10:05", "horses": hs}))
+        self.assertIsNone(K.solid_picks("20261114", dict(pre, trio_pair_at="2026-11-14T03:00:00+09:00")))  # 朝のオッズは使わない
+
     def test_apply_pc_odds(self):
         # PC が取った発走前のオッズは、手元の分より新しく、発走より前に取ったものだけ入れる
         day = {"races": {

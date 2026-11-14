@@ -142,3 +142,27 @@ print("  -- 自信のあるレースだけ(3連複から見た確率 = 0.75×組
 for th in (.30, .40, .50, .60):
     line("来そうな組の確率 {:.0%} 以上".format(th), [r for r in Tk if 0.75 * r["tp"][r["tk"]] >= th], whit(lambda r: kpair(r["tk"])), wd(lambda r: kpair(r["tk"])))
 print("かかった時間 {:.0f}分".format((time.time() - t0) / 60))
+
+# ---- アプリに入れやすい選び方(今ある3着内の確率とオッズだけで決める。1着のモデルは使わない)
+print("\n■ アプリに入れる候補: 堅い単勝(1番人気の単勝オッズと、モデルの見立て)")
+fav = lambda r: r["byq"][0]
+for oth in (2.5, 2.0, 1.8, 1.7, 1.5):
+    S = [r for r in R if r["od"][fav(r)] <= oth]
+    line("1番人気 {:.1f}倍以下".format(oth), S, lambda r: fav(r) == r["win"], tan(fav))
+    line("  + 3着内の確率1位も同じ馬", [r for r in S if r["by3"][0] == fav(r)], lambda r: fav(r) == r["win"], tan(fav))
+    line("  + その馬の3着内の確率 70%以上", [r for r in S if r["p3"](fav(r)) >= .70], lambda r: fav(r) == r["win"], tan(fav))
+    line("  - モデルは別の馬が1位", [r for r in S if r["by3"][0] != fav(r)], lambda r: fav(r) == r["win"], tan(fav))
+print("\n■ アプリに入れる候補: 堅いワイド(3連複から見ていちばん来そうな組の確率と、モデルの見立て)")
+tkp = lambda r: 0.75 * r["tp"][r["tk"]]
+for pth in (.35, .40, .45, .50, .55):
+    S = [r for r in Tk if tkp(r) >= pth]
+    line("来そうな組の確率 {:.0%}以上".format(pth), S, whit(lambda r: kpair(r["tk"])), wd(lambda r: kpair(r["tk"])))
+    line("  + 2頭ともモデルの3着内の確率の上位3頭", [r for r in S if set(kpair(r["tk"])) <= set(r["by3"][:3])], whit(lambda r: kpair(r["tk"])), wd(lambda r: kpair(r["tk"])))
+    line("  - どちらかがモデルの上位3頭にいない", [r for r in S if not set(kpair(r["tk"])) <= set(r["by3"][:3])], whit(lambda r: kpair(r["tk"])), wd(lambda r: kpair(r["tk"])))
+# 見込みの確率と実際(合っているか)
+print("\n■ 3連複から見た確率は合っているか(いちばん来そうな組)")
+for a, b in ((0, .2), (.2, .3), (.3, .4), (.4, .5), (.5, .6), (.6, 1)):
+    S = [r for r in Tk if a <= tkp(r) < b]
+    if S:
+        print("  見込み {:.0%}〜{:.0%}: {:5d}R 見込みの平均 {:.1%} 実際 {:.1%}".format(a, b, len(S), np.mean([tkp(r) for r in S]), np.mean([set(kpair(r["tk"])) <= r["top3"] for r in S])))
+print("■ 1日あたり(中央の開催日 {}日)".format(len({r["rid"][:4] + r["rid"][6:10] + r["y"] for r in R})))
