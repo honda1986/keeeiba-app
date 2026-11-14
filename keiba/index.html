@@ -458,7 +458,7 @@ async function boot() {
   if (!state.day && state.days.length) { try { state.day = await loadDay(state.days[state.days.length - 1]); } catch (e) { /* 無いまま */ } }
   chaosState.model = ((chaosP && await chaosP) || {}).chaos || null;
   renderRace(); renderMoney(); renderRule(); renderVote();
-  autoOdds(); autoNavi();
+  autoOdds(); autoNavi(); loadPcOdds(true);
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.get("d") && state.days.includes(h.get("d"))) openDay(h.get("d"), h.get("r"));
 }
@@ -467,7 +467,7 @@ async function boot() {
 async function openDay(d, rid) {
   try { state.day = await loadDay(d); } catch (e) { return; }
   renderRace(); renderVote(); showTab("race");
-  autoOdds(); autoNavi();
+  autoOdds(); autoNavi(); loadPcOdds(true);
   if (rid && allRaces().some(r => r.id === rid)) jumpRace(rid, false);
   else { scrollTo(0, 0); setHash(d); }
 }
@@ -1864,6 +1864,9 @@ function drawOddsBar() {
     const at = Object.values(d.races || {}).map(r => r.odds_at || "").sort().pop();
     t = at ? `オッズ ${+at.slice(5, 7)}/${+at.slice(8, 10)} ${at.slice(11, 16)} の分` : "オッズ まだ";
   }
+  // PC が取ったオッズが入っていれば、その時刻(発走が近いレースを1分おきに取っている)
+  const pcAt = Object.values(d.races || {}).filter(r => r.odds_src === "PC").map(r => r.odds_at || "").sort().pop();
+  if (!oddsState.busy && pcAt && d.date === jstDate()) t += ` · PC ${pcAt.slice(11, 16)}`;
   el.innerHTML = `<span>${esc(t)}</span>` +
     (canLive() ? `<button class="btn sm" id="oddsupd" ${oddsState.busy ? "disabled" : ""}>オッズ更新</button>` : "");
   if (canLive()) $("#oddsupd").onclick = () => refreshOdds(true);
@@ -1938,6 +1941,52 @@ async function refreshOdds(manual) {
   Object.assign(oddsState, {at: Date.now(), day: d.date, busy: false, ok, ng});
   drawOddsBar();
 }
+// ---------------------------------------------------------------- PC が取ったオッズ(odds-live ブランチの latest.json)
+// GitHub の時刻指定は 3〜8時間遅れることがあるので、開催日のオッズは PC(pc/odds.js。競輪と同じ形)が1分おきに取って
+// odds-live ブランチに置く。ここではそれを読んで、手元(GitHub の更新・アプリが取った分)より新しければ入れ替える。
+// どの端末でも動く(ブラウザでも)。PC が動いていなければ何も変わらない
+const PCODDS = {at: 0, updated: "", n: 0};
+const PC_API = "https://api.github.com/repos/honda1986/keeeiba-app/contents/latest.json?ref=odds-live";
+const PC_RAW = "https://raw.githubusercontent.com/honda1986/keeeiba-app/odds-live/latest.json";
+function applyPcOdds(j) {
+  if (!state.day || !j || j.date !== state.day.date) return 0;
+  const sig0 = gapSig();
+  let n = 0;
+  for (const [rid, s] of Object.entries(j.races || {})) {
+    const r = (state.day.races || {})[rid], at = Date.parse(s.at || "");
+    if (!r || !r.horses || r.result || isNaN(at)) continue;
+    if (at <= (Date.parse(r.trio_pair_at || r.odds_at || "") || 0)) continue;       // 手元の方が新しい
+    for (const h of r.horses) { const o = (s.odds || {})[h.umaban]; if (o) { h.odds = o[0]; h.ninki = o[1]; } }
+    if (s.wide && Object.keys(s.wide).length) { r.wide_odds = s.wide; r.gw = s.wide; }
+    if (s.tp && Object.keys(s.tp).length) { r.trio_pair = s.tp; r.trio_pair_at = s.at; }
+    if (s.trio && Object.keys(s.trio).length) r.trio_odds = s.trio;
+    r.odds_at = s.at; r.odds_src = "PC";
+    updateOddsDom(r);
+    n++;
+  }
+  PCODDS.updated = j.updated || ""; PCODDS.n += n;
+  if (n) { if (gapSig() !== sig0) drawList(); drawDaySum(); }
+  drawOddsBar();
+  return n;
+}
+async function loadPcOdds(force) {
+  if (KOCHI || !state.day || state.day.date !== jstDate()) return;
+  const d = state.day.date, ms = allRaces().filter(r => !r.result && r.start).map(r => untilClose(d, r));
+  if (!ms.some(m => m > -30)) return;                       // これからのレースが無い
+  const near = ms.some(m => m >= -3 && m <= 40);             // 発走が近いレースがある間は70秒おき、ほかは5分おき
+  const now = Date.now();
+  if (!force && now - PCODDS.at < (near && !document.hidden ? 70e3 : 300e3)) return;
+  PCODDS.at = now;
+  let j = null;
+  try { const r = await fetch(PC_API, {headers: {Accept: "application/vnd.github.raw"}, cache: "no-cache"}); if (r.ok) j = await r.json(); } catch (e) { /* 次で */ }
+  if (!j) {     // 回数の上限(1時間に60回)などで API が使えないときは raw(数分遅れることがある)
+    try { const r = await fetch(PC_RAW + "?t=" + now, {cache: "no-store"}); if (r.ok) j = await r.json(); } catch (e) { /* PC が動いていない・枝が無い */ }
+  }
+  if (j) applyPcOdds(j);
+}
+setInterval(() => loadPcOdds(false), 20e3);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) loadPcOdds(false); });
+
 // 今日・これからの日を開いたとき、最後に取ってから3分たっていれば取り直す
 function autoOdds() {
   if (!canLive() || !state.day) return;

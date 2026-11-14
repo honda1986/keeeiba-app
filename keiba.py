@@ -895,6 +895,8 @@ def run_day(d, now, backfill=False):
             rc["settle"] = L.settle(rc["pred"], rc["result"])
 
     pmap(one, sorted(races))
+    if not backfill:
+        merge_pc_odds(d, day)             # PC が取った発走前のオッズ(あれば。この更新より新しい分だけ)
     # 馬場差の表に無い日(前回の学習より後の日)を、この日の全レースの馬柱から足してから予想する
     SP.extend(SP.load(), [r for rc in races.values() for h in rc.get("horses") or [] for r in h.get("past") or []],
               KM.center_of)
@@ -962,6 +964,50 @@ def gap_pay(rc, g):
     if out & set(g["pair"]):
         return None
     return ((res.get("payout") or {}).get("ワイド") or {}).get(g["key"], 0)
+
+
+PC_SNAP = "https://raw.githubusercontent.com/honda1986/keeeiba-app/odds-live/snap/{}.json"
+
+
+def apply_pc_odds(d, day, snap):
+    """PC が取った発走前のオッズ(pc/odds.js が odds-live ブランチの snap/日付.json に置く)を、その日のレースに入れる。
+    レースごとに、PC の分が手元の分(この更新が取った分)より新しく、発走より前に取ったものなら入れ替える。入れ替えた数を返す。
+    GitHub の時刻指定が遅れてこの更新が発走に間に合わなくても、発走前のオッズが記録に残る(pc/README.md)"""
+    n = 0
+    for rid, s in ((snap or {}).get("races") or {}).items():
+        rc = (day.get("races") or {}).get(rid)
+        st = start_dt(d, rc.get("start")) if rc else None
+        try:
+            at = datetime.fromisoformat(s.get("at") or "")
+            cur = datetime.fromisoformat(rc.get("trio_pair_at") or rc.get("odds_at") or "2000-01-01T00:00:00+09:00") if rc else None
+        except (ValueError, AttributeError):
+            continue
+        if not rc or center_of(rid) != "jra" or st is None or at > st or at <= cur or not s.get("wide") or not s.get("tp"):
+            continue
+        for h in rc.get("horses") or []:
+            o = (s.get("odds") or {}).get(str(h.get("umaban")))
+            if o:
+                h["odds"], h["ninki"] = o[0], o[1]
+        rc["wide_odds"], rc["trio_pair"] = s["wide"], s["tp"]
+        rc["trio_pair_at"] = rc["odds_at"] = s["at"]
+        rc["odds_src"] = "PC"
+        if s.get("trio"):
+            rc["trio_odds"] = s["trio"]
+        n += 1
+    return n
+
+
+def merge_pc_odds(d, day):
+    """その日の PC のオッズを取って入れる(中央だけ。無ければ何もしない)"""
+    if "jra" not in CENTERS:
+        return 0
+    snap = get(PC_SNAP.format(d), as_json=True)
+    if not snap or snap.get("date") != d:
+        return 0
+    n = apply_pc_odds(d, day, snap)
+    if n:
+        print("PC の発走前のオッズを入れた", n, "レース")
+    return n
 
 
 def gap_pre_ok(d, rc):

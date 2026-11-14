@@ -399,6 +399,28 @@ class Parse(unittest.TestCase):
         m = re.search(r"const GAP = \{lo: ([\d.]+), hi: ([\d.]+), ev: ([\d.]+), pt: ([\d.]+), alpha: ([\d.]+), fresh: ([\d.]+)\};", html)
         self.assertEqual([float(x) for x in m.groups()], [L.GAP[k] for k in ("lo", "hi", "ev", "pt", "alpha", "fresh")])
 
+    def test_apply_pc_odds(self):
+        # PC が取った発走前のオッズは、手元の分より新しく、発走より前に取ったものだけ入れる
+        day = {"races": {
+            "202605010101": {"start": "10:05", "horses": [{"umaban": 1, "odds": 3.0, "ninki": 2}, {"umaban": 2, "odds": 2.0, "ninki": 1}],
+                             "trio_pair_at": "2026-11-14T09:40:00+09:00", "trio_pair": {"1-2": 0.1}, "wide_odds": {"1-2": [9, 9]}},
+            "202605010102": {"start": "10:35", "horses": [{"umaban": 1}], "trio_pair_at": "2026-11-14T10:20:00+09:00", "trio_pair": {"1-2": 0.5}},
+            "202605010103": {"start": "11:05", "horses": [{"umaban": 1}]}}}
+        s = lambda at: {"at": at, "odds": {"1": [2.5, 1], "2": [4.1, 2]}, "wide": {"1-2": [2.0, 2.4]}, "tp": {"1-2": 0.3}, "trio": {"1-2-3": 5.0}}
+        snap = {"date": "20261114", "races": {"202605010101": s("2026-11-14T10:03:00+09:00"),      # 新しい → 入れる
+                                              "202605010102": s("2026-11-14T10:10:00+09:00"),      # 手元の方が新しい → そのまま
+                                              "202605010103": s("2026-11-14T11:06:00+09:00"),      # 発走のあと → 入れない
+                                              "209999999999": s("2026-11-14T10:00:00+09:00")}}     # その日に無いレース
+        self.assertEqual(K.apply_pc_odds("20261114", day, snap), 1)
+        r = day["races"]["202605010101"]
+        self.assertEqual((r["trio_pair"], r["wide_odds"], r["trio_pair_at"], r["odds_src"], r["trio_odds"]),
+                         ({"1-2": 0.3}, {"1-2": [2.0, 2.4]}, "2026-11-14T10:03:00+09:00", "PC", {"1-2-3": 5.0}))
+        self.assertEqual([(h["odds"], h["ninki"]) for h in r["horses"]], [(2.5, 1), (4.1, 2)])
+        self.assertTrue(K.gap_pre_ok("20261114", r))
+        self.assertEqual(day["races"]["202605010102"]["trio_pair"], {"1-2": 0.5})
+        self.assertNotIn("trio_pair", day["races"]["202605010103"])
+        self.assertEqual(K.apply_pc_odds("20261114", day, None), 0)
+
     def test_gap_pre_ok(self):
         # 発走前のオッズは、発走の30分前より後に取ったものだけ使う(朝のオッズは売れ始めで当てにならない)
         rc = {"start": "10:05", "trio_pair_at": "2026-11-14T09:50:00+09:00"}
