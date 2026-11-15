@@ -20,6 +20,8 @@
   var esc = function (s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); };
   var z2 = function (u) { return (u < 10 ? "0" : "") + u; };
   var CLICKABLE = "a,button,input,label,[onclick],[ng-click],[role=button],[data-role=button]";
+  // 競馬場名の画面だけ、押すまでをほかの画面より長く待つ(ミリ秒。ほかの画面は、出てから 0.25 秒で押す)
+  var VENUE_WAIT_MS = 200;
   // 押したタッチが画面に届いたか(届いた所の形)を残す。うまく進まないときの手がかり
   if (!window.__kbHook) {
     window.__kbHook = 1;
@@ -465,6 +467,9 @@
     var vre = new RegExp("^" + esc(B.venue) + "\\s*[(（]" + esc(B.dow) + "[)）]$");
     if (!findAll(vre).length) return out("error", B.venue + "(" + B.dow + ") がまだ発売されていません(または見つかりません)",
       {info: "似た所 " + near(new RegExp(esc(B.venue) + "|[(（][土日月][)）]"))});
+    // 競馬場を選ぶのは、画面が出てから 0.25 秒 + 0.2 秒たってから(2026-11-15。出てすぐ押すと早すぎるため)
+    if (!settled()) return waitMove();
+    if (Date.now() - window.__kbPkAt < 250 + VENUE_WAIT_MS) return out("wait", B.venue + "(" + B.dow + ") を選ぶ前に少し待っています");
     return clickText("venue", vre, B.venue + "(" + B.dow + ")");
   }
   // 購入限度額が 0 のときの注意: このまま進む(入金は自分で)
