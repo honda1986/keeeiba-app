@@ -147,4 +147,31 @@ BB = [r for r in R if r["buy"]]
 table("今の買うレース(◎80%以上・◎と○の差15%以上)", BB, [NOW] + BETS, 100)
 table("今の買うレース・◎が1番人気", [r for r in BB if r["nk"] == 1], [NOW] + BETS, 100)
 table("今の買うレース・◎が1番人気でない", [r for r in BB if r["nk"] > 1], [NOW] + BETS, 60)
+# ---- 良く見えた2つ(◎の確率が高い / ◎の後押しが強い)を、境目を変えて確かめる
+q_ = lambda v: np.quantile(w[h["odds"] <= 20], v)
+for nm, f in (("◎の確率 65%以上", lambda r: r["ph"] >= .65), ("◎の確率 75%以上", lambda r: r["ph"] >= .75),
+              ("◎の後押しが上3割", lambda r: r["wh"] >= q_(0.7)), ("◎の後押しが上1割", lambda r: r["wh"] >= q_(0.9)),
+              ("◎の確率 70%以上 か 後押しが上2割", lambda r: r["ph"] >= .70 or r["wh"] >= cut_hi),
+              ("◎の確率 70%以上 で 後押しが上2割でない", lambda r: r["ph"] >= .70 and r["wh"] < cut_hi)):
+    table("◎が1番人気でない・" + nm, [r for r in NF if f(r)], SHORT, 100)
+# ---- ◎に限らず: 1番人気でない馬(単勝20倍以下)を、後押しの強さで分けて、1番人気と組む買い方
+print("\n■ ◎に限らず、1番人気でない馬 x(単勝20倍以下)を後押しで分けて、1番人気と組む  [ ] は 2022〜2026年の回収率")
+ALLR = []
+for rid, rs in jg.items():
+    if rid not in info or (rid, rs[0]["u"]) not in PW:
+        continue
+    res = info[rid]["result"]; order = res.get("order") or []
+    od = {int(u): o for u, o in (res.get("odds") or {}).items() if o and o > 1}
+    if len(order) < 3 or len(od) < 5:
+        continue
+    f1 = min(od, key=lambda u: (od[u], u))
+    for u in od:
+        if u != f1 and od[u] <= 20 and (rid, u) in PW:
+            ALLR.append(dict(y=rs[0]["date"][:4], x=u, f1=f1, od=od, order=order, pay=res.get("payout") or {}, wx=PW[(rid, u)], nk=sorted(od, key=lambda v: (od[v], v)).index(u) + 1))
+XB = [("単勝 x", lambda r: [("単勝", [r["x"]])]), ("ワイド x-1番人気", lambda r: [("ワイド", [r["x"], r["f1"]])]),
+      ("馬連 x-1番人気", lambda r: [("馬連", [r["x"], r["f1"]])]), ("馬単 1番人気→x", lambda r: [("馬単", [r["f1"], r["x"]])]), ("馬単 x→1番人気", lambda r: [("馬単", [r["x"], r["f1"]])])]
+for nm, f in (("全部", lambda r: True), ("後押しが上5%", lambda r: r["wx"] >= q_(0.95)), ("後押しが上1割", lambda r: r["wx"] >= q_(0.9)), ("後押しが上2割", lambda r: r["wx"] >= q_(0.8)),
+              ("後押しが上2割・2〜4番人気", lambda r: r["wx"] >= q_(0.8) and r["nk"] <= 4), ("後押しが上2割・5番人気以下", lambda r: r["wx"] >= q_(0.8) and r["nk"] >= 5),
+              ("後押しが下2割", lambda r: r["wx"] <= q_(0.2))):
+    table("1番人気でない馬 x・" + nm, [r for r in ALLR if f(r)], XB, 100)
 print("かかった時間 {:.0f}分".format((time.time() - t0) / 60))
