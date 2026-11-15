@@ -76,7 +76,7 @@ jobs:
             # あるものだけ足す(無いファイルを1つでも渡すと git add が全部やめてしまう)
             # 種を変えた2本目からのモデル(keiba_model_s2.txt など)。使わなくなって消したものも
             git ls-files -d -- "keiba_model${T}_s*.txt" | xargs -r git rm -q --cached
-            for f in keiba_model$T.txt keiba_model${T}_s*.txt keiba_model${T}_meta.json keiba_speed$T.json $KEIBA_OUT/model_wf.json.gz $KEIBA_OUT/final_model.json $KEIBA_OUT/chaos_model.json $KEIBA_OUT/push_model.json $KEIBA_OUT/days $KEIBA_OUT/history.json; do
+            for f in keiba_model$T.txt keiba_model${T}_s*.txt keiba_model${T}_meta.json keiba_speed$T.json $KEIBA_OUT/model_wf.json.gz $KEIBA_OUT/final_model.json $KEIBA_OUT/chaos_model.json $KEIBA_OUT/push_model.json $KEIBA_OUT/oshi_past.json $KEIBA_OUT/days $KEIBA_OUT/history.json; do
               [ -e "$f" ] && git add "$f"
             done
             if git diff --cached --quiet; then echo "変更なし"; exit 0; fi

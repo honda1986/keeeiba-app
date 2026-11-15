@@ -9,7 +9,9 @@
    評価値の重みは縮める(L2)。後押し = 評価値の分だけ(オッズの分は入れない)
   保存するもの: 全部の年で作った重み / 境目(単勝20倍以下の馬の後押しの上5%など・モデルの買い目を3つに分ける)/
                成績(その年を除いて作った式で、その年を確かめたもの。アプリに出す)/
-               後押しの買い目(馬連: 後押しが上5%の馬 × 1番人気。keiba_logic.oshi_picks)の日ごとの成績(days)"""
+               後押しの買い目(馬連: 後押しが上5%の馬 × 1番人気。keiba_logic.oshi_picks)の日ごとの成績(days)
+  keiba/oshi_past.json にも保存: 予想に後押しが入る前の日(keiba.PUSH_FROM より前)のレースごとの、後押しの買い目の馬(x)と
+               モデルの買い目の後押しの強さ(m)。その年を除いて作った式のもの(days と同じ)。アプリが過去の日を開いたときに出す"""
 import gc, json, os, pickle, sys, time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -168,7 +170,7 @@ def stats(D, w, q, log=print):
     out["win_top"] = wt
     # 後押しの買い目: 後押しが上5%(L.OSHI["q"])の馬 x(1番人気でない・単勝 max_odds 倍以下)× 1番人気 の馬連。日ごとの成績も残す
     cut = cuts["win_top"][L.OSHI["q"]]
-    days = {}; oy = {y: [0, 0, 0.0] for y in ys}
+    days = {}; oy = {y: [0, 0, 0.0] for y in ys}; past_x = {}
     for g, (s0, n) in enumerate(zip(st, sizes)):
         us = h["u"][s0:s0 + n].astype(int); od = h["odds"][s0:s0 + n]
         push = {int(u): float(v) for u, v in zip(us, w[s0:s0 + n])}
@@ -178,19 +180,22 @@ def stats(D, w, q, log=print):
             d = days.setdefault(D["date"][g], [D["date"][g], 0, 0, 0])
             d[1] += 1; d[2] += int(v > 0); d[3] += int(v)
             t = oy[D["year"][g]]; t[0] += 1; t[1] += v > 0; t[2] += v
+            if D["date"][g] < T.K.PUSH_FROM:
+                past_x.setdefault(D["rid"][g], []).append(pk["u"])
     tn, th, tp_ = (sum(t[k] for t in oy.values()) for k in (0, 1, 2))
     out["oshi"] = {"n": int(tn), "hit": round(th / max(tn, 1), 4), "roi": round(tp_ / max(tn, 1), 1),
                    "yn": [int(oy[y][0]) for y in ys], "yh": [int(oy[y][1]) for y in ys], "yr": [round(oy[y][2] / max(oy[y][0], 1), 1) for y in ys]}
     out["_days"] = [days[k] for k in sorted(days)]
+    out["_past"] = {"x": past_x, "m": {}}
     # モデルの買い目(記録に残っている予想。3連複◎-○-▲ は3頭、ワイド◎-○ は2頭の push2 の平均)。
     # アプリの収支と同じく HISTORY_FROM から(それより前の日の予想は、その日より前だけで学んだモデルのものではない)
-    pos = {}
+    pos = {}; _date = dict(zip(D["rid"], D["date"]))
     k0 = 0
     for g, rid in enumerate(D["rid"]):
         for j in range(sizes[g]):
             pos[(rid, int(h["u"][k0 + j]))] = k0 + j
         k0 += sizes[g]
-    tv, th, tpay, ty = [], [], [], []
+    tv, th, tpay, ty, trid = [], [], [], [], []
     for g, rid in enumerate(D["rid"]):
         rc = D["info"][rid]; pr = rc.get("pred") or {}; stl = rc.get("settle")
         if D["date"][g] < T.K.HISTORY_FROM or pr.get("verdict") not in ("A", "B") or not stl or not pr.get("bets") or not stl.get("stake"):
@@ -198,11 +203,13 @@ def stats(D, w, q, log=print):
         us = sorted({u for bt in pr["bets"] for c in bt.get("combos") or [] for u in c})
         if not us or any((rid, u) not in pos for u in us):
             continue
-        tv.append(sum(q[pos[(rid, u)]] for u in us) / len(us)); th.append(int(stl.get("ret", 0) > 0)); tpay.append(stl.get("ret", 0) / stl["stake"]); ty.append(D["year"][g])
+        tv.append(sum(q[pos[(rid, u)]] for u in us) / len(us)); th.append(int(stl.get("ret", 0) > 0)); tpay.append(stl.get("ret", 0) / stl["stake"]); ty.append(D["year"][g]); trid.append(rid)
     if len(tv) >= 60:
         tv, th, tpay, ty = np.array(tv), np.array(th), np.array(tpay), np.array(ty)
         cuts["model"] = [round(float(v), 4) for v in np.quantile(tv, [1 / 3, 2 / 3])]
         out["model"] = tab(np.digitize(tv, cuts["model"]), th, tpay, ty)
+        # 過去のレースの強さ(アプリの pushOf・keiba_push.level と同じ分け方)
+        out["_past"]["m"] = {r_: PU.level(float(v), cuts["model"]) for r_, v in zip(trid, tv) if _date[r_] < T.K.PUSH_FROM}
         out["model_years"] = sorted(set(ty))
     for k in ("model",):
         if k in out:
@@ -220,11 +227,12 @@ def main():
     del rows, races; gc.collect()
     w, q, bw, bp = loyo(D)
     cuts, st = stats(D, w, q)
-    days = st.pop("_days")
+    days = st.pop("_days"); past = st.pop("_past")
     out = {"updated": datetime.now(timezone(timedelta(hours=9))).isoformat(timespec="seconds"), "races": len(D["rid"]), "l2": L2,
            "features": D["names"], "win": [round(float(v), 5) for v in bw], "pair": [round(float(v), 5) for v in bp], "cuts": cuts, "stats": st, "days": days}
     json.dump(out, open(PU.FILE, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
-    print("保存:", PU.FILE, "({:.0f}分)".format((time.time() - t0) / 60))
+    json.dump({"updated": out["updated"], "to": max(D["date"]), "x": past["x"], "m": past["m"]}, open(PU.PAST_FILE, "w", encoding="utf-8"), separators=(",", ":"))
+    print("保存:", PU.FILE, PU.PAST_FILE, "過去のレース {} / モデルの買い目 {} ({:.0f}分)".format(len(past["x"]), len(past["m"]), (time.time() - t0) / 60))
 
 
 if __name__ == "__main__":

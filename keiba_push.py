@@ -14,6 +14,8 @@ import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FILE = os.path.join(HERE, "keiba", "push_model.json")
+# 過去のレース(予想に push が入る前の日)の後押しの買い目と、モデルの買い目の後押しの強さ。アプリが過去の日を開いたときに出す
+PAST_FILE = os.path.join(HERE, "keiba", "oshi_past.json")
 SUF = ("_dhi", "_dlo", "_dmean", "_rank")       # レースの中でそろえ直した値(元の値だけ使う)
 CATS = ("style", "sex")                          # 種類ごとの 0/1 にするもの
 # レースの中で同じ値のもの(場・馬場など)と、コース傾向の2つ(表が 2021〜2025年の集計で、その年までの成績には先の結果が混ざる)は使わない

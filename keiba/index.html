@@ -439,6 +439,7 @@ async function boot() {
   drawBrand();
   const chaosP = KOCHI ? null : getJSON("chaos_model.json").catch(() => null);      // 荒れ度の式(中央)
   const pushP = KOCHI ? null : getJSON("push_model.json").catch(() => null);        // 後押しの境目と成績(中央)
+  const pastP = KOCHI ? null : getJSON("oshi_past.json").catch(() => null);         // 過去のレースの後押しの買い目(予想に後押しが入る前の日)
   try { state.hist = await getJSON(DATA + "history.json"); } catch (e) { state.hist = null; }
   state.days = (state.hist?.days || []).filter(d => d.races).map(d => d.date);
   try { state.day = await getJSON(DATA + "data.json"); } catch (e) { state.day = null; }
@@ -460,6 +461,7 @@ async function boot() {
   if (!state.day && state.days.length) { try { state.day = await loadDay(state.days[state.days.length - 1]); } catch (e) { /* 無いまま */ } }
   chaosState.model = ((chaosP && await chaosP) || {}).chaos || null;
   state.push = (pushP && await pushP) || null;
+  state.oshiPast = (pastP && await pastP) || null;
   renderRace(); renderMoney(); renderRule(); renderVote();
   autoOdds(); autoNavi(); loadPcOdds(true);
   const h = new URLSearchParams(location.hash.slice(1));
@@ -798,7 +800,9 @@ function trioPairSums(to) {
 // 後押し(push)が上5%の馬 x と、1番人気の馬連(keiba_logic.OSHI・oshi_picks と同じ)。
 //  x … 1番人気でない・単勝 20倍以下・push が境目(push_model.json の cuts.win_top["0.95"])以上
 // 過去5年(その年を除いて作った式)で年に約1,000点・的中 7%・回収率 103%(99・107・100・109・100%)。当たりは少ないが、いちばん回収率が高い形。
-// 人気と20倍以下はオッズで決まる: 終わったレースは確定オッズ、これからのレースはいまのオッズ
+// 人気と20倍以下はオッズで決まる: 終わったレースは確定オッズ、これからのレースはいまのオッズ。
+// 予想に後押しが入る前の日(2026-11-14 まで)のレースは、oshi_past.json に残してある後押しの馬で出す
+// (その年を除いて作った式で選んだもの。tools/train_push.py。「収支・分析」の数字と同じ買い目)
 const OSHI = {q: "0.95", max_odds: 20};
 function oshiPicks(push, odds, cut) {
   const us = Object.keys(odds || {}).map(Number).filter(u => +odds[u] > 1);
@@ -819,7 +823,14 @@ function oshiOf(r) {
   if (done) odds = r.result.odds || {};
   else for (const h of r.horses) if (!h.scratched && h.odds) odds[h.umaban] = h.odds;
   const pay = ((r.result || {}).payout || {})["馬連"] || {};
-  const picks = oshiPicks(push, odds, cut).filter(x => !gone.includes(x.u) && !gone.includes(x.fav)).map(x => {
+  let raw;
+  const past = ((state.oshiPast || {}).x || {})[r.id];
+  if (done && !Object.keys(push).length) {          // 後押しの入っていない過去のレース: 残してある後押しの馬と、確定オッズの1番人気
+    const us = Object.keys(odds).map(Number).filter(u => +odds[u] > 1);
+    const fav = us.length ? us.reduce((a, b) => (+odds[b] < +odds[a] || (+odds[b] === +odds[a] && b < a)) ? b : a) : null;
+    raw = fav == null ? [] : (past || []).filter(u => u !== fav && odds[u]).map(u => ({u, fav}));
+  } else raw = oshiPicks(push, odds, cut);
+  const picks = raw.filter(x => !gone.includes(x.u) && !gone.includes(x.fav)).map(x => {
     const c = [x.u, x.fav].sort((a, b) => a - b);
     return {type: "馬連", c, x: x.u, fav: x.fav, od: +odds[x.u], fod: +odds[x.fav], ret: done ? (pay[c.join("-")] || 0) : null};
   });
@@ -849,7 +860,11 @@ function pushOf(r, kind, us) {
   const m = state.push;
   if (!m || !m.cuts || !m.cuts[kind] || KOCHI) return null;
   const hs = us.map(u => ((r.pred || {}).horses || []).find(h => h.umaban === u) || {});
-  if (!hs.length || hs.some(h => h.push == null || h.push2 == null)) return null;
+  if (!hs.length) return null;
+  if (hs.some(h => h.push == null || h.push2 == null)) {     // 後押しの入っていない過去のレース: 残してある強さ(oshi_past.json の m)
+    const lv = ((state.oshiPast || {}).m || {})[r.id];
+    return lv == null ? null : {v: null, lv, st: ((m.stats || {})[kind] || [])[lv] || null};
+  }
   const v = hs.reduce((a, h) => a + h.push2, 0) / hs.length;
   const cut = m.cuts[kind], lv = v <= cut[0] ? 0 : v >= cut[1] ? 2 : 1;
   return {v, lv, st: ((m.stats || {})[kind] || [])[lv] || null};
@@ -1406,7 +1421,7 @@ function renderMoney() {
         <td>${+r.date.slice(4,6)}/${+r.date.slice(6)} ${esc(r.venue)}${r.rno}R${r.src === "backfill" ? ` <span class="tag o">再現</span>` : ""}</td>
         <td>${esc(r.verdict)}</td><td class="num">${r.hr ?? "-"}着 ${r.tr ?? "-"}着</td>
         <td class="${r.ret - r.stake >= 0 ? "good" : "neg"}"><b>${yen(r.ret - r.stake)}</b></td></tr>`).join("")}</tbody></table>
-      <p class="legendnote">行を押すとそのレースを開きます。後押しの買い目は、レースの画面で日付を選ぶと見られます(2026-11-15 から)。</p>` : `<p class="muted" style="font-size:13px">この期間に買ったレースはありません。</p>`)}
+      <p class="legendnote">行を押すとそのレースを開きます。後押しの買い目は、レースの画面で日付を選ぶと見られます。</p>` : `<p class="muted" style="font-size:13px">この期間に買ったレースはありません。</p>`)}
     </div>`;
 
   el.querySelectorAll("details[data-md]").forEach(dt => dt.ontoggle = () => { open[dt.dataset.md] = dt.open; });
