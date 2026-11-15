@@ -148,7 +148,8 @@ table("今の買うレース(◎80%以上・◎と○の差15%以上)", BB, [NOW
 table("今の買うレース・◎が1番人気", [r for r in BB if r["nk"] == 1], [NOW] + BETS, 100)
 table("今の買うレース・◎が1番人気でない", [r for r in BB if r["nk"] > 1], [NOW] + BETS, 60)
 # ---- 良く見えた2つ(◎の確率が高い / ◎の後押しが強い)を、境目を変えて確かめる
-q_ = lambda v: np.quantile(w[h["odds"] <= 20], v)
+_Q = {v: np.quantile(w[h["odds"] <= 20], v) for v in (0.2, 0.7, 0.8, 0.9, 0.95)}
+q_ = lambda v: _Q[v]
 for nm, f in (("◎の確率 65%以上", lambda r: r["ph"] >= .65), ("◎の確率 75%以上", lambda r: r["ph"] >= .75),
               ("◎の後押しが上3割", lambda r: r["wh"] >= q_(0.7)), ("◎の後押しが上1割", lambda r: r["wh"] >= q_(0.9)),
               ("◎の確率 70%以上 か 後押しが上2割", lambda r: r["ph"] >= .70 or r["wh"] >= cut_hi),
