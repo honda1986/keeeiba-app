@@ -263,41 +263,26 @@ UNIT = 100                   # 1点あたりの金額(円)
 PRE = {"pt": 0.75, "alpha": 0.35, "fresh": 30}
 
 
-# 堅い買い目(的中重視。2026-11-14): 当たりやすいレースだけを、オッズで選ぶ(tools/experiments/hit_rate.py。2022〜2026年の 16,212R)。
-# 馬の選び方はオッズの方がモデルより当たる(1着: 今の◎ 28%・1着を当てるモデル 30%・1番人気 34%)ので、ここだけはオッズで選ぶ。
-#  単勝 … 1番人気の単勝オッズが win_odds 倍以下のレース。的中 53%(5年とも 51〜56%)・レースの 19%・回収率 82%
-#  ワイド … 3連複から見ていちばん来そうな組(0.75×組の強さ がいちばん大きい組)の確率が wide_p 以上のレース。
-#           的中 60%(58〜66%)・レースの 12%・回収率 88%。確率は少し低めに出る(見込み 45〜55% の組は実際 50〜61%)ので、見せるときは cal 倍する
-# よく当たるが配当は安く、続ければ少しずつ減る(回収率 82〜88%)。的中を楽しむための買い目
-SOLID = {"win_odds": 1.8, "wide_p": 0.45, "pt": 0.75, "cal": 1.12, "win_pay": 0.80}
+# 後押しの買い目(回収重視。2026-11-15): 後押し(keiba_push.py の push)が上5%の馬 x と、1番人気の馬連。
+#  x … 1番人気でない・単勝 max_odds 倍以下・push が境目(keiba/push_model.json の cuts.win_top[q])以上。
+# 2022〜2026年(その年を除いて作った式)で 4,864点・的中 7.0%・回収率 103%(99・107・100・109・100%)。年に 950〜1,050点、1開催日に 9〜10点。
+# 上1割に広げると 9,633点・94%。単勝 x は上5%で 100%、ワイド x-1番人気は 95%(tools/experiments/honmei_not_fav.py)。
+# 過去の成績が見劣りするのに売れている馬(後押しが強い)は、同じオッズなら来る。相手は市場がいちばん正しく見ている1番人気にする。
+# (2026-11-14〜15 に出していた「堅い買い目」= 1番人気 1.8倍以下の単勝・来そうな確率 45%以上のワイド は、的中は 53%・60% だが
+#  回収率 81%・88% なので消した。調べた記録は README と tools/experiments/hit_rate.py)
+OSHI = {"q": "0.95", "max_odds": 20.0}
 
 
-def solid_win(odds):
-    """堅い単勝。odds = 馬番 -> 単勝オッズ。1番人気(オッズがいちばん低い馬)と、買うか。
-    -> {"u": 馬番, "odds": オッズ, "p": 見込みの的中(win_pay÷オッズ), "buy": オッズが win_odds 以下か}。馬が5頭いなければ None"""
+def oshi_picks(push, odds, cut):
+    """後押しの買い目。push = 馬番 -> 後押し、odds = 馬番 -> 単勝オッズ、cut = 後押しの境目。
+    -> [{"u": 馬番, "fav": 1番人気の馬番, "push": 後押し}](馬番の順)。馬が5頭いない・境目が無いなら []"""
     od = {int(u): float(o) for u, o in (odds or {}).items() if o and float(o) > 1.0}
-    if len(od) < 5:
-        return None
-    u = min(od, key=lambda k: (od[k], k))
-    return {"u": u, "odds": od[u], "p": round(min(0.95, SOLID["win_pay"] / od[u]), 3), "buy": od[u] <= SOLID["win_odds"]}
-
-
-def solid_wide(tp, wide):
-    """堅いワイド。tp = 組ごとの強さ、wide = ワイドのオッズ。3連複から見ていちばん来そうな組と、買うか。
-    -> {"key": "a-b", "pair": [a, b], "p": 見込みの的中(cal 倍した確率), "odds": [下限, 上限], "buy": 確率が wide_p 以上か}。無ければ None"""
-    best = None
-    for k, v in (wide or {}).items():
-        s = (tp or {}).get(k)
-        lo, hi = (v[0], v[1]) if isinstance(v, (list, tuple)) else (v, v)
-        if not s or not lo or lo <= 1.0:
-            continue
-        if best is None or (s, k) > (best[0], best[1]):
-            best = (s, k, [lo, hi or lo])
-    if not best:
-        return None
-    raw = SOLID["pt"] * best[0]
-    return {"key": best[1], "pair": [int(x) for x in best[1].split("-")], "p": round(min(0.95, raw * SOLID["cal"]), 3),
-            "odds": best[2], "buy": raw >= SOLID["wide_p"] - 1e-9}
+    if len(od) < 5 or cut is None:
+        return []
+    fav = min(od, key=lambda u: (od[u], u))
+    pu = {int(u): v for u, v in (push or {}).items() if v is not None}
+    return [{"u": u, "fav": fav, "push": pu[u]} for u in sorted(od)
+            if u != fav and od[u] <= OSHI["max_odds"] and u in pu and pu[u] >= cut]
 
 
 # ---------------------------------------------------------------- 文字の整理

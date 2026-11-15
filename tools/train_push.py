@@ -7,8 +7,9 @@
    2頭とも3着内 … 組ごとのロジスティック回帰。土台 = 3連複から見た組の確率(曲がりも)+ ワイドのオッズ + 2頭の単勝オッズ。
                   これに 2頭の評価値の合計を足す
    評価値の重みは縮める(L2)。後押し = 評価値の分だけ(オッズの分は入れない)
-  保存するもの: 全部の年で作った重み / 境目(堅い単勝・堅いワイド・モデルの3連複を3つに分ける)/
-               成績(その年を除いて作った式で、その年を確かめたもの。アプリに出す)"""
+  保存するもの: 全部の年で作った重み / 境目(単勝20倍以下の馬の後押しの上5%など・モデルの買い目を3つに分ける)/
+               成績(その年を除いて作った式で、その年を確かめたもの。アプリに出す)/
+               後押しの買い目(馬連: 後押しが上5%の馬 × 1番人気。keiba_logic.oshi_picks)の日ごとの成績(days)"""
 import gc, json, os, pickle, sys, time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -20,7 +21,7 @@ import keiba_logic as L
 import keiba_push as PU
 
 L2 = 100.0
-PT = L.SOLID["pt"]
+PT = L.PRE["pt"]
 lg = lambda p: np.log(np.clip(p, 1e-4, 1 - 1e-4) / (1 - np.clip(p, 1e-4, 1 - 1e-4)))
 
 
@@ -156,20 +157,6 @@ def stats(D, w, q, log=print):
     h, p = D["H"], D["P"]; sizes = D["sizes"]; st = np.concatenate([[0], np.cumsum(sizes)[:-1]])
     race_of = np.repeat(np.arange(len(sizes)), sizes); hy = D["hyear"]
     cuts, out = {}, {"years": sorted(set(D["year"]))}
-    # 堅い単勝(1番人気が SOLID.win_odds 倍以下)
-    fav = np.array([s + int(np.lexsort((h["u"][s:s + n], h["odds"][s:s + n]))[0]) for s, n in zip(st, sizes)])
-    f = fav[h["odds"][fav] <= L.SOLID["win_odds"]]
-    cuts["solid_win"] = [round(float(v), 4) for v in np.quantile(w[f], [1 / 3, 2 / 3])]
-    lv = np.digitize(w[f], cuts["solid_win"]); out["solid_win"] = tab(lv, h["win"][f], h["win"][f] * h["odds"][f], hy[f])
-    # 堅いワイド(3連複から見ていちばん来そうな組が SOLID.wide_p 以上)。同じ強さなら文字の順で後の組(keiba_logic.solid_wide と同じ)
-    pst = np.concatenate([[0], np.cumsum(D["psz"])[:-1]]); best = []
-    for s, n in zip(pst, D["psz"]):
-        if n:
-            best.append(s + int(np.argmax(p["pt"][s:s + n])))
-    best = np.array(best); b = best[p["pt"][best] >= L.SOLID["wide_p"] - 1e-9]
-    pp = q[p["ia"][b]] + q[p["ib"][b]]
-    cuts["solid_wide"] = [round(float(v), 4) for v in np.quantile(pp, [1 / 3, 2 / 3])]
-    out["solid_wide"] = tab(np.digitize(pp, cuts["solid_wide"]), p["y"][b], p["pay"][b], D["pyear"][b])
     # 単勝(20倍以下の馬を、後押しの強さで)
     m = h["odds"] <= 20
     cuts["win_top"] = {str(k): round(float(np.quantile(w[m], k)), 4) for k in (0.2, 0.8, 0.9, 0.95)}
@@ -179,6 +166,22 @@ def stats(D, w, q, log=print):
         wt[nm] = {"n": int(sel.sum()), "hit": round(float(h["win"][sel].mean()), 4), "roi": round(float(100 * (h["win"][sel] * h["odds"][sel]).mean()), 1),
                   "yr": [round(float(100 * (h["win"][sel & (hy == y)] * h["odds"][sel & (hy == y)]).mean()), 0) for y in ys]}
     out["win_top"] = wt
+    # 後押しの買い目: 後押しが上5%(L.OSHI["q"])の馬 x(1番人気でない・単勝 max_odds 倍以下)× 1番人気 の馬連。日ごとの成績も残す
+    cut = cuts["win_top"][L.OSHI["q"]]
+    days = {}; oy = {y: [0, 0, 0.0] for y in ys}
+    for g, (s0, n) in enumerate(zip(st, sizes)):
+        us = h["u"][s0:s0 + n].astype(int); od = h["odds"][s0:s0 + n]
+        push = {int(u): float(v) for u, v in zip(us, w[s0:s0 + n])}
+        pay = (D["info"][D["rid"][g]]["result"].get("payout") or {}).get("馬連") or {}
+        for pk in L.oshi_picks(push, {int(u): float(o) for u, o in zip(us, od)}, cut):
+            v = pay.get("-".join(str(x) for x in sorted((pk["u"], pk["fav"]))), 0)
+            d = days.setdefault(D["date"][g], [D["date"][g], 0, 0, 0])
+            d[1] += 1; d[2] += int(v > 0); d[3] += int(v)
+            t = oy[D["year"][g]]; t[0] += 1; t[1] += v > 0; t[2] += v
+    tn, th, tp_ = (sum(t[k] for t in oy.values()) for k in (0, 1, 2))
+    out["oshi"] = {"n": int(tn), "hit": round(th / max(tn, 1), 4), "roi": round(tp_ / max(tn, 1), 1),
+                   "yn": [int(oy[y][0]) for y in ys], "yh": [int(oy[y][1]) for y in ys], "yr": [round(oy[y][2] / max(oy[y][0], 1), 1) for y in ys]}
+    out["_days"] = [days[k] for k in sorted(days)]
     # モデルの買い目(記録に残っている予想。3連複◎-○-▲ は3頭、ワイド◎-○ は2頭の push2 の平均)。
     # アプリの収支と同じく HISTORY_FROM から(それより前の日の予想は、その日より前だけで学んだモデルのものではない)
     pos = {}
@@ -201,9 +204,10 @@ def stats(D, w, q, log=print):
         cuts["model"] = [round(float(v), 4) for v in np.quantile(tv, [1 / 3, 2 / 3])]
         out["model"] = tab(np.digitize(tv, cuts["model"]), th, tpay, ty)
         out["model_years"] = sorted(set(ty))
-    for k in ("solid_win", "solid_wide", "model"):
+    for k in ("model",):
         if k in out:
             log("  {}: {}".format(k, " / ".join("{}点 的中{:.1%} 回収率{:.1f}% {}".format(x["n"], x["hit"] or 0, x["roi"] or 0, x["yr"]) for x in out[k])))
+    log("  後押しの買い目(馬連): {}点 的中{:.1%} 回収率{:.1f}% 年ごとの点数 {} 回収率 {}".format(out["oshi"]["n"], out["oshi"]["hit"], out["oshi"]["roi"], out["oshi"]["yn"], out["oshi"]["yr"]))
     log("  単勝(20倍以下): " + " / ".join("{} {}頭 的中{:.1%} 回収率{:.1f}% {}".format(k, v["n"], v["hit"], v["roi"], v["yr"]) for k, v in wt.items()))
     return cuts, out
 
@@ -216,8 +220,9 @@ def main():
     del rows, races; gc.collect()
     w, q, bw, bp = loyo(D)
     cuts, st = stats(D, w, q)
+    days = st.pop("_days")
     out = {"updated": datetime.now(timezone(timedelta(hours=9))).isoformat(timespec="seconds"), "races": len(D["rid"]), "l2": L2,
-           "features": D["names"], "win": [round(float(v), 5) for v in bw], "pair": [round(float(v), 5) for v in bp], "cuts": cuts, "stats": st}
+           "features": D["names"], "win": [round(float(v), 5) for v in bw], "pair": [round(float(v), 5) for v in bp], "cuts": cuts, "stats": st, "days": days}
     json.dump(out, open(PU.FILE, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
     print("保存:", PU.FILE, "({:.0f}分)".format((time.time() - t0) / 60))
 

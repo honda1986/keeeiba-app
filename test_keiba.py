@@ -382,49 +382,49 @@ class Parse(unittest.TestCase):
         self.assertEqual(K.parse_trio_odds(j, (9, 2)), {"2-3-9": 12.3})       # ◎○を含む組だけ
         self.assertEqual(K.parse_trio_odds({"data": {"odds": {}}}), {})
 
-    def test_solid(self):
-        # 堅い単勝: 1番人気(オッズがいちばん低い馬)。1.8倍以下で買い目。見込みの的中 = 0.80÷オッズ
-        w = L.solid_win({1: 1.6, 2: 4.0, 3: 9.0, 4: 15.0, 5: 30.0})
-        self.assertEqual((w["u"], w["odds"], w["p"], w["buy"]), (1, 1.6, 0.5, True))
-        self.assertTrue(L.solid_win({"3": 1.8, "1": 4.0, "2": 9.0, "4": 15.0, "5": 30.0})["buy"])          # ちょうど 1.8倍は買う。馬番は文字でもよい
-        w = L.solid_win({1: 1.9, 2: 4.0, 3: 9.0, 4: 15.0, 5: 30.0})
-        self.assertEqual((w["u"], w["buy"]), (1, False))
-        self.assertEqual(L.solid_win({1: 2.5, 2: 2.5, 3: 9.0, 4: 15.0, 5: 30.0, 6: None, 7: 0})["u"], 1)   # 同じオッズなら馬番の小さい方。オッズ無しは数えない
-        self.assertEqual(L.solid_win({1: 1.0, 2: 1.2, 3: 9.0, 4: 15.0, 5: 30.0, 6: 40.0})["p"], 0.667)
-        self.assertIsNone(L.solid_win({1: 1.5, 2: 4.0, 3: 9.0, 4: 15.0}))                                  # 5頭いない
-        self.assertIsNone(L.solid_win(None))
-        # 堅いワイド: 組の強さがいちばん大きい組。0.75×強さ が 45%以上で買い目。見込みの的中はその 1.12倍
-        tp = {"1-2": 0.62, "1-3": 0.30, "2-3": 0.25, "1-4": 0.9}
-        wide = {"1-2": [1.3, 1.5], "1-3": [3.0, 3.6], "2-3": [4.0, 5.0], "1-4": [1.0, 1.0], "3-4": [5.0, 6.0]}
-        x = L.solid_wide(tp, wide)
-        self.assertEqual((x["key"], x["pair"], x["odds"], x["buy"]), ("1-2", [1, 2], [1.3, 1.5], True))    # 1-4 はオッズ無し(1.0)なので外す
-        self.assertAlmostEqual(x["p"], 0.75 * 0.62 * 1.12, places=3)                                       # 0.521
-        self.assertTrue(L.solid_wide({"1-2": 0.60}, {"1-2": [1.3, 1.5]})["buy"])                           # ちょうど 45%
-        self.assertFalse(L.solid_wide({"1-2": 0.59}, {"1-2": [1.3, 1.5]})["buy"])
-        self.assertEqual(L.solid_wide({"1-2": 1.5}, {"1-2": [1.1, 1.1]})["p"], 0.95)                       # 見込みは 95% まで
-        self.assertEqual(L.solid_wide({"1-2": 0.3}, {"1-2": 2.2})["odds"], [2.2, 2.2])                     # 幅の無いオッズ
-        self.assertIsNone(L.solid_wide(None, wide))
-        self.assertIsNone(L.solid_wide(tp, None))
-        self.assertIsNone(L.solid_wide({"5-6": 0.5}, wide))
-        # アプリの計算(index.html の SOLID)と同じ数字
+    def test_oshi(self):
+        # 後押しの買い目: 後押しが境目以上の馬 x(1番人気でない・単勝20倍以下)と、1番人気の馬連
+        odds = {1: 2.0, 2: 5.0, 3: 9.0, 4: 20.0, 5: 20.1, 6: 40.0}
+        push = {1: 0.9, 2: 0.3, 3: 0.1, 4: 0.25, 5: 0.9, 6: 0.9}
+        pk = L.oshi_picks(push, odds, 0.2171)
+        self.assertEqual([(x["u"], x["fav"]) for x in pk], [(2, 1), (4, 1)])          # 1番人気(1)・20倍より上(5・6)・境目より下(3)は入らない
+        self.assertEqual(L.oshi_picks({"2": 0.3}, {"1": 2.0, "2": 5.0, "3": 9.0, "4": 20.0, "5": 30.0}, 0.2171)[0]["u"], 2)     # 馬番は文字でもよい
+        self.assertEqual(L.oshi_picks({2: 0.2171}, {1: 2.0, 2: 5.0, 3: 9.0, 4: 20.0, 5: 30.0}, 0.2171)[0]["push"], 0.2171)      # ちょうど境目は入る
+        self.assertEqual(L.oshi_picks({1: 0.5, 2: 0.5}, {1: 2.0, 2: 2.0, 3: 9.0, 4: 20.0, 5: 30.0}, 0.2)[0]["fav"], 1)          # 同じオッズなら馬番の小さい方が1番人気
+        self.assertEqual(L.oshi_picks(push, {1: 2.0, 2: 5.0, 3: 9.0, 4: 20.0}, 0.2171), [])                                      # 5頭いない
+        self.assertEqual(L.oshi_picks(push, odds, None), [])                                                                    # 境目が無い(式が無い)
+        self.assertEqual(L.oshi_picks({2: None}, odds, 0.2171), [])
+        # アプリの数字(index.html の OSHI・PRE)と同じ。消した買い目(割安ワイド・堅い買い目)がアプリに残っていないこと
         html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "index.html"), encoding="utf-8").read()
-        m = re.search(r"const SOLID = \{win_odds: ([\d.]+), wide_p: ([\d.]+), pt: ([\d.]+), cal: ([\d.]+), win_pay: ([\d.]+)\};", html)
-        self.assertEqual([float(v) for v in m.groups()], [L.SOLID[k] for k in ("win_odds", "wide_p", "pt", "cal", "win_pay")])
+        m = re.search(r'const OSHI = \{q: "([\d.]+)", max_odds: ([\d.]+)\};', html)
+        self.assertEqual((m.group(1), float(m.group(2))), (L.OSHI["q"], L.OSHI["max_odds"]))
+        m = re.search(r"const PRE = \{pt: ([\d.]+), alpha: ([\d.]+), fresh: ([\d.]+)\};", html)
+        self.assertEqual([float(x) for x in m.groups()], [L.PRE[k] for k in ("pt", "alpha", "fresh")])
+        self.assertNotIn("割安", html)
+        self.assertNotIn("堅い買い目", html)
 
-    def test_solid_picks(self):
-        # 発走の30分前より後のオッズがあればそれで、無ければ確定オッズで選ぶ。結果もオッズも無ければ None
-        hs = [{"umaban": 1, "odds": 1.7}, {"umaban": 2, "odds": 4.0}, {"umaban": 3, "odds": 9.0}, {"umaban": 4, "odds": 15.0},
-              {"umaban": 5, "odds": 30.0}, {"umaban": 6, "odds": 1.2, "scratched": True}]
-        pre = {"start": "10:05", "horses": hs, "trio_pair_at": "2026-11-14T09:58:00+09:00", "trio_pair": {"1-2": 0.7}, "wide_odds": {"1-2": [1.2, 1.4]}}
-        sp = K.solid_picks("20261114", pre)
-        self.assertEqual((sp["src"], sp["win"]["u"], sp["win"]["buy"], sp["wide"]["key"], sp["wide"]["buy"]), ("pre", 1, True, "1-2", True))   # 取消の6番は数えない
-        res = {"order": [2, 1, 3], "odds": {"1": 2.4, "2": 3.0, "3": 9.0, "4": 15.0, "5": 30.0}, "payout": {}}
-        fin = {"start": "10:05", "horses": hs, "result": res, "trio_pair_final": {"1-2": 0.4}, "wide_final": {"1-2": [1.8, 2.2]}}
-        sp = K.solid_picks("20261114", fin)
-        self.assertEqual((sp["src"], sp["win"]["buy"], sp["wide"]["buy"]), ("fin", False, False))
-        self.assertEqual(K.solid_picks("20261114", dict(pre, result=res))["src"], "pre")                   # 発走前のオッズがあれば、結果が出たあともそれで
-        self.assertIsNone(K.solid_picks("20261114", {"start": "10:05", "horses": hs}))
-        self.assertIsNone(K.solid_picks("20261114", dict(pre, trio_pair_at="2026-11-14T03:00:00+09:00")))  # 朝のオッズは使わない
+    def test_oshi_history(self):
+        # 後押しの買い目の日ごとの成績: PUSH_FROM より前は push_model.json の days、そこからは予想に入っている push と確定オッズで数える
+        import tempfile, keiba_push as PU
+        hs = [{"umaban": u} for u in (1, 2, 3, 4, 5, 6)]
+        ph = [{"umaban": 1, "push": 0.9, "push2": 0.0}, {"umaban": 2, "push": 0.3, "push2": 0.0}, {"umaban": 3, "push": 0.25, "push2": 0.0},
+              {"umaban": 4, "push": -0.1, "push2": 0.0}, {"umaban": 5, "push": 0.5, "push2": 0.0}, {"umaban": 6}]
+        res = {"order": [1, 3, 2], "odds": {"1": 1.5, "2": 4.0, "3": 9.0, "4": 15.0, "5": 30.0, "6": 12.0}, "payout": {"馬連": {"1-3": 620}}}
+        race = {"horses": hs, "result": res, "pred": {"verdict": "見送り", "horses": ph}}
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "days"))
+            json.dump({"date": "20261115", "races": {"202605050811": race, "202605050812": dict(race, result={"order": [1]})}}, open(os.path.join(tmp, "days", "20261115.json"), "w"))
+            json.dump({"date": "20261108", "races": {"202605050811": race}}, open(os.path.join(tmp, "days", "20261108.json"), "w"))     # PUSH_FROM より前は数え直さない
+            keep = K.OUT
+            K.OUT = tmp
+            PU._M["m"] = {"cuts": {"win_top": {"0.95": 0.2171}}, "days": [["20261107", 9, 1, 1200], ["20261115", 99, 9, 9999]]}
+            try:
+                out = K.oshi_history()
+            finally:
+                K.OUT = keep
+                PU._M.clear()
+        # 1番人気は1番。2番(0.3)・3番(0.25)が後押しの馬 → 馬連 1-2(外れ)・1-3(620円)。5番は20倍より上、6番は push が無い
+        self.assertEqual(out, [["20261107", 9, 1, 1200], ["20261115", 2, 1, 620]])
 
     def test_push(self):
         # 後押し: 評価値をレースの中で平均0・ばらつき1にそろえて、重みを掛けて足す(keiba_push.py)
@@ -454,15 +454,13 @@ class Parse(unittest.TestCase):
         self.assertEqual(names, ["a", "style=1", "sex=0"])                    # そろえ直した値・場・コース傾向は入れない。少ない種類(2%以下)も入れない
 
     def test_push_history(self):
-        # 後押しの強さごとの成績: 予想に push が入っているレースだけ数える(堅い単勝 = その馬の push、堅いワイド = 2頭の push2 の合計、
-        # モデルの買い目 = 買い目の馬の push2 の平均)
+        # モデルの買い目の、後押しの強さごとの成績: 予想に push2 が入っているレースだけ数える(買い目の馬の push2 の平均を cuts.model で分ける)
         import tempfile, keiba_push as PU
-        hs = [{"umaban": u, "odds": o} for u, o in ((1, 1.5), (2, 4.0), (3, 9.0), (4, 15.0), (5, 30.0))]
+        hs = [{"umaban": u} for u in (1, 2, 3, 4, 5)]
         ph = [{"umaban": 1, "push": 0.3, "push2": 0.2}, {"umaban": 2, "push": -0.5, "push2": -0.1}, {"umaban": 3, "push": 0.0, "push2": -0.4},
               {"umaban": 4, "push": 0.0, "push2": 0.0}, {"umaban": 5, "push": 0.0, "push2": 0.0}]
-        res = {"order": [1, 3, 2], "odds": {"1": 1.5, "2": 4.0, "3": 9.0, "4": 15.0, "5": 30.0},
-               "payout": {"単勝": {"1": 150}, "ワイド": {"1-2": 130, "1-3": 300, "2-3": 800}, "3連複": {"1-2-3": 900}}}
-        race = {"start": "10:05", "horses": hs, "result": res, "trio_pair_final": {"1-2": 0.7}, "wide_final": {"1-2": [1.2, 1.4]},
+        res = {"order": [1, 3, 2], "odds": {"1": 1.5, "2": 4.0, "3": 9.0, "4": 15.0, "5": 30.0}, "payout": {"3連複": {"1-2-3": 900}}}
+        race = {"horses": hs, "result": res,
                 "pred": {"verdict": "B", "horses": ph, "bets": [{"type": "3連複", "combos": [[1, 2, 3]], "unit": 100}]}, "settle": {"stake": 100, "ret": 900, "hit": True}}
         old = dict(race, pred=dict(race["pred"], horses=[{"umaban": h["umaban"]} for h in ph]))       # push の無い予想は数えない
         with tempfile.TemporaryDirectory() as tmp:
@@ -471,16 +469,13 @@ class Parse(unittest.TestCase):
             json.dump({"date": "20261108", "races": {"202605050811": race}}, open(os.path.join(tmp, "days", "20261108.json"), "w"))     # PUSH_FROM より前
             keep = K.OUT
             K.OUT = tmp
-            PU._M["m"] = {"cuts": {"solid_win": [-0.1, 0.2], "solid_wide": [-0.1, 0.2], "model": [-0.15, 0.0]}}
+            PU._M["m"] = {"cuts": {"model": [-0.15, 0.0]}}
             try:
                 out = K.push_history()
             finally:
                 K.OUT = keep
                 PU._M.clear()
-        self.assertEqual(out["from"], "20261115")
-        self.assertEqual(out["solid_win"], [[0, 0, 0], [0, 0, 0], [1, 1, 150]])       # 1番の push 0.3 → 強い。単勝 150円
-        self.assertEqual(out["solid_wide"], [[0, 0, 0], [1, 1, 130], [0, 0, 0]])      # 1-2 の push2 の合計 0.1 → ふつう
-        self.assertEqual(out["model"], [[0, 0, 0], [1, 1, 900], [0, 0, 0]])           # 1-2-3 の push2 の平均 -0.1 → ふつう
+        self.assertEqual(out, {"from": "20261115", "model": [[0, 0, 0], [1, 1, 900], [0, 0, 0]]})     # 1-2-3 の push2 の平均 -0.1 → ふつう
 
     def test_apply_pc_odds(self):
         # PC が取った発走前のオッズは、手元の分より新しく、発走より前に取ったものだけ入れる
@@ -499,25 +494,9 @@ class Parse(unittest.TestCase):
         self.assertEqual((r["trio_pair"], r["wide_odds"], r["trio_pair_at"], r["odds_src"], r["trio_odds"]),
                          ({"1-2": 0.3}, {"1-2": [2.0, 2.4]}, "2026-11-14T10:03:00+09:00", "PC", {"1-2-3": 5.0}))
         self.assertEqual([(h["odds"], h["ninki"]) for h in r["horses"]], [(2.5, 1), (4.1, 2)])
-        self.assertTrue(K.pre_odds_ok("20261114", r))
         self.assertEqual(day["races"]["202605010102"]["trio_pair"], {"1-2": 0.5})
         self.assertNotIn("trio_pair", day["races"]["202605010103"])
         self.assertEqual(K.apply_pc_odds("20261114", day, None), 0)
-
-    def test_pre_odds_ok(self):
-        # 発走前のオッズは、発走の30分前より後に取ったものだけ使う(朝のオッズは売れ始めで当てにならない)
-        rc = {"start": "10:05", "trio_pair_at": "2026-11-14T09:50:00+09:00"}
-        self.assertTrue(K.pre_odds_ok("20261114", rc))
-        self.assertTrue(K.pre_odds_ok("20261114", dict(rc, trio_pair_at="2026-11-14T09:35:00+09:00")))      # ちょうど30分前
-        self.assertFalse(K.pre_odds_ok("20261114", dict(rc, trio_pair_at="2026-11-14T03:29:00+09:00")))     # 朝
-        self.assertFalse(K.pre_odds_ok("20261114", dict(rc, trio_pair_at="2026-11-14T10:06:00+09:00")))     # 発走のあと
-        self.assertFalse(K.pre_odds_ok("20261114", {"start": "10:05"}))
-        # アプリの数字(index.html の PRE)と同じ
-        html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "index.html"), encoding="utf-8").read()
-        m = re.search(r"const PRE = \{pt: ([\d.]+), alpha: ([\d.]+), fresh: ([\d.]+)\};", html)
-        self.assertEqual([float(x) for x in m.groups()], [L.PRE[k] for k in ("pt", "alpha", "fresh")])
-        # 割安ワイドは消した(2026-11-14)。アプリにも記録にも残っていないこと
-        self.assertNotIn("割安", html)
 
     def test_trio_pair_sums(self):
         # 2頭を含む3連複の組の 1/オッズ の合計。小さい組は保存しない

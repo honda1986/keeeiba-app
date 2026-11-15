@@ -54,7 +54,7 @@ WAIT = 0.4                 # 1リクエストごとの間隔(秒。スレッド�
 WORKERS = 4                # 1日のレースを同時に取る数
 CARD_REFRESH = 50          # 出馬表(馬場・取消)を取り直す間隔(分)
 ODDS_REFRESH = 20          # オッズを取り直す間隔(分)
-ODDS_NEAR = (45, 5)        # 発走まで45分以内のレースは5分たっていれば取り直す(堅い買い目は発走が近いオッズで選ぶ。更新は10分ごと)
+ODDS_NEAR = (45, 5)        # 発走まで45分以内のレースは5分たっていれば取り直す(発走が近いオッズを残す。更新は10分ごと)
 RESULT_AFTER = 8           # 発走から何分後に結果を見に行くか
 # 予想する中央・地方(2026-10-21: 中央だけに絞る。地方は取らない・予想しない・収支に出さない)
 CENTERS = tuple(c for c in os.environ.get("KEIBA_CENTERS", "jra").split(",") if c)
@@ -999,87 +999,51 @@ def merge_pc_odds(d, day):
     return n
 
 
-def pre_odds_ok(d, rc):
-    """発走前の組の強さ(trio_pair)が、発走の L.PRE["fresh"] 分前より後に取ったものか。
-    それより前のオッズは売れ始めで当てにならないので、買い目には使わない(アプリの preFresh と同じ)"""
-    st = start_dt(d, rc.get("start"))
-    try:
-        at = datetime.fromisoformat(rc.get("trio_pair_at") or "")
-    except ValueError:
-        return False
-    return st is not None and 0 <= (st - at).total_seconds() / 60 <= L.PRE["fresh"]
+PUSH_FROM = "20261115"        # 予想に後押し(push・push2)が入り始めた日
 
 
-def solid_picks(d, rc):
-    """そのレースの堅い買い目(L.solid_win・L.solid_wide)。アプリの solidOf と同じ:
-    発走前のオッズ(発走の30分前より後に取ったもの)があればそれで、無ければ確定オッズで選ぶ。
-    -> {"win": {...} か None, "wide": {...} か None, "src": "pre" / "fin"}。結果が無いレースで発走前のオッズも無ければ None"""
-    res = rc.get("result") or {}
-    done = len(res.get("order") or []) >= 3
-    if pre_odds_ok(d, rc):
-        odds = {h["umaban"]: h.get("odds") for h in rc.get("horses") or [] if not h.get("scratched")}
-        return {"win": L.solid_win(odds), "wide": L.solid_wide(rc.get("trio_pair"), rc.get("wide_odds")), "src": "pre"}
-    if not done:
-        return None
-    return {"win": L.solid_win(res.get("odds")), "wide": L.solid_wide(rc.get("trio_pair_final"), rc.get("wide_final")), "src": "fin"}
-
-
-def solid_history():
-    """堅い買い目の日ごとの成績。[日付, 単勝の点数, 的中, 払戻, ワイドの点数, 的中, 払戻, うち発走前のオッズで選んだ点数(単勝+ワイド), 的中, 払戻]"""
-    out = []
-    if "jra" not in CENTERS:
-        return out
+def oshi_history():
+    """後押しの買い目(馬連: 後押しが上5%の馬 × 1番人気。L.oshi_picks)の日ごとの成績 [日付, 点数, 的中, 払戻(100円あたりの合計)]。
+    PUSH_FROM より前の日は keiba/push_model.json の days(その年を除いて作った式で再現したもの。tools/train_push.py)、
+    PUSH_FROM からは予想に入っている後押し(push)で数える。どちらも人気と単勝20倍以下は確定オッズで決める"""
+    import keiba_push as PU
+    m = PU.load()
+    if not m or "jra" not in CENTERS:
+        return []
+    out = [r for r in m.get("days") or [] if r[0] < PUSH_FROM]
+    cut = ((m.get("cuts") or {}).get("win_top") or {}).get(L.OSHI["q"])
     for f in sorted(glob.glob(OUT + "/days/*.json")):
-        day = load(f, None)
-        if not day:
+        if os.path.basename(f)[:8] < PUSH_FROM:
             continue
-        row = [day["date"], 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        for rid, rc in day.get("races", {}).items():
+        day = load(f, None)
+        row = [(day or {}).get("date"), 0, 0, 0]
+        for rid, rc in ((day or {}).get("races") or {}).items():
             res = rc.get("result") or {}
             if center_of(rid) != "jra" or not target(rid) or len(res.get("order") or []) < 3:
                 continue
-            sp = solid_picks(day["date"], rc)
-            if not sp:
-                continue
+            push = {h["umaban"]: h.get("push") for h in (rc.get("pred") or {}).get("horses") or []}
             gone = {h["umaban"] for h in rc.get("horses") or [] if h.get("scratched")}
-            pay = res.get("payout") or {}
-            w = sp["win"]
-            if w and w["buy"] and w["u"] not in gone:
-                p = (pay.get("単勝") or {}).get(str(w["u"]), 0)
-                row[1] += 1; row[2] += p > 0; row[3] += p
-                if sp["src"] == "pre":
-                    row[7] += 1; row[8] += p > 0; row[9] += p
-            x = sp["wide"]
-            if x and x["buy"] and not gone & set(x["pair"]):
-                p = (pay.get("ワイド") or {}).get(x["key"], 0)
-                row[4] += 1; row[5] += p > 0; row[6] += p
-                if sp["src"] == "pre":
-                    row[7] += 1; row[8] += p > 0; row[9] += p
-        if row[1] or row[4]:
+            pay = (res.get("payout") or {}).get("馬連") or {}
+            for pk in L.oshi_picks(push, res.get("odds"), cut):
+                if pk["u"] in gone or pk["fav"] in gone:
+                    continue
+                v = pay.get("-".join(str(x) for x in sorted((pk["u"], pk["fav"]))), 0)
+                row[1] += 1; row[2] += v > 0; row[3] += v
+        if row[1]:
             out.append(row)
     return out
 
 
-PUSH_FROM = "20261115"        # 予想に後押し(push・push2)が入り始めた日
-
-
 def push_history():
-    """後押しの強さ(弱い・ふつう・強い)ごとの成績。予想に push が入った日からの記録(それより前の成績は push_model.json の stats)。
-    -> {"from": 最初の日, "solid_win": [[点数, 的中, 払戻] × 3], "solid_wide": …, "model": …}(払戻は100円あたり)。
-    強さの境目は keiba/push_model.json の cuts(アプリの pushOf と同じ数え方)"""
+    """モデルの買い目の、後押しの強さ(弱い・ふつう・強い)ごとの成績。予想に push が入った日からの記録。
+    -> {"from": 最初の日, "model": [[点数, 的中, 払戻] × 3]}(払戻は100円あたり)。
+    強さ = 買い目の馬の push2 の平均を、keiba/push_model.json の cuts.model で分ける(アプリの pushOf と同じ)"""
     import keiba_push as PU
-    out = {"from": None, "solid_win": [[0, 0, 0] for _ in range(3)], "solid_wide": [[0, 0, 0] for _ in range(3)], "model": [[0, 0, 0] for _ in range(3)]}
+    out = {"from": None, "model": [[0, 0, 0] for _ in range(3)]}
     m = PU.load()
     if not m or "jra" not in CENTERS:
         return out
-    cuts = m.get("cuts") or {}
-
-    def add(kind, v, pay):
-        lv = PU.level(v, cuts.get(kind))
-        if lv is not None:
-            t = out[kind][lv]
-            t[0] += 1; t[1] += pay > 0; t[2] += pay
-
+    cut = (m.get("cuts") or {}).get("model")
     for f in sorted(glob.glob(OUT + "/days/*.json")):
         if os.path.basename(f)[:8] < PUSH_FROM:
             continue
@@ -1087,23 +1051,18 @@ def push_history():
         for rid, rc in ((day or {}).get("races") or {}).items():
             res = rc.get("result") or {}
             pr = rc.get("pred") or {}
-            ph = {h["umaban"]: h for h in pr.get("horses") or [] if h.get("push") is not None and h.get("push2") is not None}
+            ph = {h["umaban"]: h for h in pr.get("horses") or [] if h.get("push2") is not None}
             if center_of(rid) != "jra" or not target(rid) or len(res.get("order") or []) < 3 or not ph:
                 continue
             out["from"] = out["from"] or day["date"]
-            gone = {h["umaban"] for h in rc.get("horses") or [] if h.get("scratched")}
-            pay = res.get("payout") or {}
-            sp = solid_picks(day["date"], rc) or {}
-            w = sp.get("win")
-            if w and w["buy"] and w["u"] not in gone and w["u"] in ph:
-                add("solid_win", ph[w["u"]]["push"], (pay.get("単勝") or {}).get(str(w["u"]), 0))
-            x = sp.get("wide")
-            if x and x["buy"] and not gone & set(x["pair"]) and all(u in ph for u in x["pair"]):
-                add("solid_wide", sum(ph[u]["push2"] for u in x["pair"]), (pay.get("ワイド") or {}).get(x["key"], 0))
             stl = rc.get("settle") or {}
             us = sorted({u for b in pr.get("bets") or [] for c in b.get("combos") or [] for u in c})
             if pr.get("verdict") in ("A", "B") and stl.get("stake") and us and all(u in ph for u in us):
-                add("model", sum(ph[u]["push2"] for u in us) / len(us), stl.get("ret", 0) * 100 / stl["stake"])
+                lv = PU.level(sum(ph[u]["push2"] for u in us) / len(us), cut)
+                if lv is not None:
+                    t = out["model"][lv]
+                    pay = stl.get("ret", 0) * 100 / stl["stake"]
+                    t[0] += 1; t[1] += pay > 0; t[2] += pay
     return out
 
 
@@ -1180,7 +1139,7 @@ def build_history():
                 "alt": alt_bets(p, rc.get("result") or {})})
         days.append(row)
     hist = {"updated": datetime.now(JST).isoformat(timespec="seconds"), "unit": L.UNIT,
-            "days": days, "races": races, "solid": solid_history(), "push": push_history()}
+            "days": days, "races": races, "oshi": oshi_history(), "push": push_history()}
     save(OUT + "/history.json", hist)
     return hist
 
