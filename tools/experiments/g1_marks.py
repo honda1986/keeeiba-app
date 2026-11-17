@@ -78,7 +78,7 @@ def show(title, sel):
     if not n:
         return
     f = lambda k: np.mean([k(r) for r in sel])
-    print("\n■ {}: {}R".format(title, n))
+    print("\n■ {}: {}R  年ごとのレース数 [{}]".format(title, n, " ".join("{:3d}".format(sum(r["y"] == y for r in sel)) for y in YS)))
     print("  ◎ 1着 {:5.1%}(±{:.0f}) 3着内 {:5.1%}(見込み {:4.1%}) / ○ 3着内 {:5.1%}(見込み {:4.1%}) / ▲ 3着内 {:5.1%}(見込み {:4.1%})".format(
         f(lambda r: r["order"][0] == r["hon"]), pm(f(lambda r: r["order"][0] == r["hon"]), n), f(lambda r: r["hon"] in r["top3"]), f(lambda r: r["ph"]),
         f(lambda r: r["tai"] in r["top3"]), f(lambda r: r["pt"]), f(lambda r: r["a"] in r["top3"]), f(lambda r: r["pa"])))
@@ -87,7 +87,8 @@ def show(title, sel):
                          ("3連複 ◎-○-▲", lambda r: {r["hon"], r["tai"], r["a"]} == r["top3"], "trio")):
         h = f(hit)
         yr = " ".join("{:3.0f}".format(np.mean([r[pay] for r in sel if r["y"] == y])) if any(r["y"] == y for r in sel) else "  -" for y in YS)
-        print("  {:12s} 的中 {:5.1%}(±{:4.1f}) {:3d}回 回収率 {:6.1f}% [{}]".format(nm, h, pm(h, n), int(round(h * n)), f(lambda r: r[pay]), yr))
+        yh = " ".join("{:3d}".format(sum(1 for r in sel if r["y"] == y and r[pay] > 0)) for y in YS)
+        print("  {:12s} 的中 {:5.1%}(±{:4.1f}) {:3d}回 回収率 {:6.1f}% [{}] 的中の回数 [{}]".format(nm, h, pm(h, n), int(round(h * n)), f(lambda r: r[pay]), yr, yh))
     print("  ◎が1番人気 {:.0%} / ◎の確率 平均 {:.0%} / 1番人気の3着内 {:.1%}・2番人気 {:.1%}・3番人気 {:.1%} / 今の買う基準(◎80%以上・差15%以上)を満たす {}R".format(
         f(lambda r: r["nk"] == 1), f(lambda r: r["ph"]), f(lambda r: r["f"][0] in r["top3"]), f(lambda r: r["f"][1] in r["top3"]), f(lambda r: r["f"][2] in r["top3"]),
         sum(r["buy"] for r in sel)))
