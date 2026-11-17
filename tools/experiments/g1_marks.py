@@ -114,15 +114,23 @@ for r in G1:
 # アプリに出ている印(日別ファイルの予想)
 print("\n■ アプリに出ている印で数える(日別ファイルの予想。◎○▲は馬の印)")
 for lab, ys in (("2022・2023年(モデルなしの評価)", ("2022", "2023")), ("2024年〜(その月より前だけで学んだモデル)", ("2024", "2025", "2026"))):
-    n = hon1 = hon3 = tai3 = a3 = wd = tr = 0
+    n = hon1 = hon3 = tai3 = a3 = wd = tr = um = 0; pay = defaultdict(float)
     for r in G1:
         if r["y"] not in ys:
             continue
         hs = {h.get("mark"): h["umaban"] for h in ((r["apred"] or {}).get("horses") or []) if h.get("mark") in ("◎", "○", "▲")}
         if len(hs) < 3:
             continue
+        res = info[r["rid"]]["result"]; py = res.get("payout") or {}
+        od = {int(u): o for u, o in (res.get("odds") or {}).items() if o}
         n += 1; hon1 += r["order"][0] == hs["◎"]; hon3 += hs["◎"] in r["top3"]; tai3 += hs["○"] in r["top3"]; a3 += hs["▲"] in r["top3"]
-        wd += hs["◎"] in r["top3"] and hs["○"] in r["top3"]; tr += {hs["◎"], hs["○"], hs["▲"]} == r["top3"]
+        wd += hs["◎"] in r["top3"] and hs["○"] in r["top3"]; tr += {hs["◎"], hs["○"], hs["▲"]} == r["top3"]; um += set(r["order"][:2]) == {hs["◎"], hs["○"]}
+        pay["単勝"] += od.get(hs["◎"], 0) * 100 if r["order"][0] == hs["◎"] else 0
+        pay["馬連"] += (py.get("馬連") or {}).get(srt((hs["◎"], hs["○"])), 0)
+        pay["ワイド"] += (py.get("ワイド") or {}).get(srt((hs["◎"], hs["○"])), 0)
+        pay["3連複"] += (py.get("3連複") or {}).get(srt((hs["◎"], hs["○"], hs["▲"])), 0)
     if n:
         print("  {}: {}R ◎1着 {}({:.0%}) ◎3着内 {}({:.0%}) ○3着内 {}({:.0%}) ▲3着内 {}({:.0%}) ◎○が3着内 {}({:.0%}) ◎○▲が3着内 {}({:.0%})".format(
             lab, n, hon1, hon1 / n, hon3, hon3 / n, tai3, tai3 / n, a3, a3 / n, wd, wd / n, tr, tr / n))
+        print("    回収率: 単勝◎ {:.1f}%(的中 {}) / 馬連◎-○ {:.1f}%(的中 {}) / ワイド◎-○ {:.1f}%(的中 {}) / 3連複◎-○-▲ {:.1f}%(的中 {})".format(
+            pay["単勝"] / n, hon1, pay["馬連"] / n, um, pay["ワイド"] / n, wd, pay["3連複"] / n, tr))
