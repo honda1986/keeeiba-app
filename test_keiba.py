@@ -477,6 +477,37 @@ class Parse(unittest.TestCase):
                 PU._M.clear()
         self.assertEqual(out, {"from": "20261115", "model": [[0, 0, 0], [1, 1, 900], [0, 0, 0]]})     # 1-2-3 の push2 の平均 -0.1 → ふつう
 
+    def test_course_own(self):
+        # 自前のコース傾向: コースごとの 実際の3着内 ÷ 頭数から見た見込み を、芝ダ全体の同じ値で割る(少ないうちは寄せる)
+        import keiba_model as M
+        def race(v, s, d, order, styles):
+            hs = [{"umaban": u, "waku": u, "past": [{"pass": {"逃げ": [1], "先行": [2], "差し": [6], "追込": [10]}[styles.get(u, "先行")], "n": 12, "surface": s}] * 3}
+                  for u in range(1, 9)]
+            return {"center": "jra", "venue": v, "surface": s, "dist": d, "horses": hs, "result": {"order": order}}
+        acc = {}
+        for _ in range(40):
+            M.course_add(acc, race("新潟", "芝", 1000, [8, 7, 6], {}))          # 外の馬番ばかり来るコース
+            M.course_add(acc, race("東京", "芝", 1600, [1, 4, 8], {}))
+        M.course_add(acc, dict(race("東京", "芝", 1600, [1, 2, 3], {}), center="nar"))     # 地方は数えない
+        M.course_add(acc, race("東京", "障", 3000, [1, 2, 3], {}))                       # 障害は数えない
+        jt = {"course": {"by": acc["course"]}}
+        r = race("新潟", "芝", 1000, [], {})
+        self.assertGreater(M.course_own(jt, r, "gate", "外"), 1.2)
+        self.assertLess(M.course_own(jt, r, "gate", "内"), 0.8)
+        self.assertGreater(M.course_own(jt, r, "waku", 8), M.course_own(jt, r, "waku", 1))
+        self.assertEqual(M.course_own(jt, race("中山", "芝", 2000, [], {}), "gate", "外"), 1.0)   # 数えていないコースは芝全体(= 1)
+        self.assertIsNone(M.course_own(jt, r, "gate", None))
+        self.assertIsNone(M.course_own({}, r, "gate", "外"))
+        self.assertIsNone(M.course_own(jt, race("新潟", "ダ", 1200, [], {}), "gate", "外"))      # ダートはまだ数えていない(30より少ない)
+        self.assertEqual(acc["course"]["C|東京芝1600|all|all"], [120, 120.0])                 # 8頭立て: 1頭あたり見込み 3/8
+        self.assertNotIn("C|東京障3000|all|all", acc["course"])
+        # ふだんの脚質(同じ数なら新しい走り)・馬番の位置
+        self.assertEqual(M.usual_style([{"pass": [9], "n": 10}, {"pass": [1], "n": 10}]), "追込")
+        self.assertEqual(M.usual_style([{"pass": [1], "n": 10}, {"pass": [9], "n": 10}, {"pass": [9], "n": 10}]), "追込")
+        self.assertIsNone(M.usual_style([{"pass": [], "n": 10}]))
+        self.assertEqual([M.gate_of(u, 12) for u in (1, 4, 5, 8, 9, 12)], ["内", "内", "中", "中", "外", "外"])
+        self.assertIsNone(M.gate_of(None, 12))
+
     def test_apply_pc_odds(self):
         # PC が取った発走前のオッズは、手元の分より新しく、発走より前に取ったものだけ入れる
         day = {"races": {
