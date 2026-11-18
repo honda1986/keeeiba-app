@@ -19,7 +19,10 @@ PAST_FILE = os.path.join(HERE, "keiba", "oshi_past.json")
 SUF = ("_dhi", "_dlo", "_dmean", "_rank")       # レースの中でそろえ直した値(元の値だけ使う)
 CATS = ("style", "sex")                          # 種類ごとの 0/1 にするもの
 # レースの中で同じ値のもの(場・馬場など)と、コース傾向の2つ(表が 2021〜2025年の集計で、その年までの成績には先の結果が混ざる)は使わない
-SKIP = ("venue", "surface", "center", "course_kata", "course_waku_idx", "course_style_idx")
+SKIP = ("venue", "surface", "center", "course_kata", "course_waku_idx", "course_style_idx",
+        # 自前のコース傾向(2026-11-18 から確率モデルの材料)は後押しには入れない: 入れると後押しの買い目が 5年で 102% → 98.5% に下がる
+        # (差はぶれの中だが、後押しの買い目は入れる前の式で確かめて決めたので、そのままにする)
+        "cown_style", "cown_waku", "cown_gate", "cown_n")
 CLIP = 3.0
 
 
