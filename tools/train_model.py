@@ -95,6 +95,7 @@ def jt_add(acc, rc):
                 v = acc.setdefault(k, {}).setdefault(name + "|" + ctx, [0, 0])
                 v[0] += 1
                 v[1] += h["umaban"] in top3
+    M.course_add(acc, rc)                               # 自前のコース傾向(全コース。脚質・枠・馬番の位置)
 
 
 def speed_table(races, until=None):
@@ -520,7 +521,8 @@ def main():
         if sp:
             SP.save(sp)
         # 騎手・厩舎は全期間の成績を持たせる(当日の予想ではこれを使う)。乗った数が少ない人は省く
-        jt_save = {k: {"base": v["base"], "by": {n: c for n, c in v["by"].items() if c[0] >= 5}}
+        jt_save = {k: {"base": v["base"], "by": {n: (c if k != "course" else [c[0], round(c[1], 2)])
+                                                 for n, c in v["by"].items() if k == "course" or c[0] >= 5}}
                    for k, v in jt_all.items()}
         meta = {"features": feats, "l3f_norm": norm, "jt": jt_save, "trained": datetime.now().strftime("%Y-%m-%d"),
                 "data_end": span[1],

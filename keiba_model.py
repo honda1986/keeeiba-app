@@ -50,6 +50,12 @@ JT_CTX_K = 20      # 騎手の競馬場・コース・距離帯ごとの3着内�
 # 騎手の得意な競馬場・コース・距離帯を材料にするか。2026-10-29 に試したが良くならなかったので、既定では使わない(1 で使う)。
 # 成績はいつも数えて保存し(keiba_model_meta.json の jt)、アプリの「騎手得意/苦手」の札に使う
 USE_JOCKEY_CTX = os.environ.get("KEIBA_JOCKEY_CTX", "0") == "1"
+# 自前のコース傾向(2026-11-18): 中央の全部の競馬場・芝ダ・距離(101コース)で、脚質・枠・馬番の位置ごとの
+# 「実際の3着内 ÷ 頭数から見た見込み」を、そのレースより前の日までの結果だけで数える(train_model.build が日ごとに足す。
+# 予想では keiba_model_meta.json の jt["course"])。記事の表(keiba_course.json)は 78コースだけで、2021〜2025年の集計なので
+# 2025年までのレースには先の結果が混ざる。こちらは全コースで、先の結果を使わない。
+# 少ないうちは 場×芝ダ → 芝ダ全体 の順に寄せる(期待される3着内の数で CS_K)
+CS_K = 30.0
 
 
 def dist_band(d):
@@ -90,6 +96,71 @@ def jt_rate_ctx(stats, key, prior):
         return None, 0
     n, t = stats["by"].get(key, (0, 0))
     return (t + JT_CTX_K * prior) / (n + JT_CTX_K), n
+
+
+def usual_style(past):
+    """ふだんの脚質(過去5走の位置取りでいちばん多いもの。同じ数なら新しい走りの方)"""
+    styles = [s for s in (L.run_style(r) for r in past) if s]
+    if not styles:
+        return None
+    top = max(styles.count(s) for s in styles)
+    return next(s for s in styles if styles.count(s) == top)
+
+
+def gate_of(umaban, n):
+    """馬番の位置: 内(頭数の1/3まで)・中・外"""
+    if not umaban or not n:
+        return None
+    r = umaban / n
+    return "内" if r <= 1 / 3 else "外" if r > 2 / 3 else "中"
+
+
+def course_keys(race, kind, val):
+    """自前のコース傾向の数えるところ: 芝ダ全体 / 場×芝ダ / コース(場×芝ダ×距離)"""
+    v, s, d = race.get("venue") or "?", race.get("surface") or "?", race.get("dist") or 0
+    return ("S|{}|{}|{}".format(s, kind, val), "V|{}{}|{}|{}".format(v, s, kind, val),
+            "C|{}{}{}|{}|{}".format(v, s, d, kind, val))
+
+
+def course_add(acc, rc):
+    """結果の出たレースを自前のコース傾向に足す(acc["course"][key] = [3着内の数, 頭数から見た見込みの数])"""
+    if rc.get("center") != "jra" or rc.get("surface") not in ("芝", "ダ"):
+        return
+    top3 = set((rc.get("result") or {}).get("order", [])[:3])
+    hs = [h for h in rc.get("horses") or [] if not h.get("scratched")]
+    n = len(hs)
+    if n < 5 or len(top3) < 3:
+        return
+    e = min(3, n) / n
+    by = acc.setdefault("course", {})
+    for h in hs:
+        past = [r for r in (h.get("past") or []) if r.get("surface") != "障"][:5]
+        y = int(h["umaban"] in top3)
+        for kind, val in (("style", usual_style(past)), ("waku", h.get("waku")), ("gate", gate_of(h.get("umaban"), n)), ("all", "all")):
+            if val is None:
+                continue
+            for k in course_keys(rc, kind, val):
+                v = by.setdefault(k, [0, 0.0])
+                v[0] += y
+                v[1] += e
+
+
+def course_own(jt, race, kind, val):
+    """自前のコース傾向: そのコースでの 実際÷見込み を、同じ芝ダ全体の 実際÷見込み で割った比(1 = 平均。大きいほど得)。
+    数が少ないうちは 場×芝ダ、芝ダ全体 の順に寄せる。数えていなければ None"""
+    st = (jt or {}).get("course")
+    if not st or val is None:
+        return None
+    by = st["by"]
+    ks = course_keys(race, kind, val)
+    a0, e0 = by.get(ks[0], (0, 0.0))
+    if e0 < 30:
+        return None
+    base = a0 / e0
+    a1, e1 = by.get(ks[1], (0, 0.0))
+    r1 = (a1 + CS_K * base) / (e1 + CS_K)
+    a2, e2 = by.get(ks[2], (0, 0.0))
+    return round((a2 + CS_K * r1) / (e2 + CS_K) / base, 4) if base else None
 
 
 def center_of(venue):
@@ -202,16 +273,18 @@ def horse_feats(h, race, today, cs, n, l3f_norm, jt=None, sp=None):
     f["venue"] = VENUE_ID.get(race.get("venue"))
     f["final_race"] = 1 if "ファイナル" in (race.get("name") or "") else 0     # 高知ファイナルなど(荒れやすい)
     # コース傾向(中央)
-    st = None
-    if past:
-        styles = [L.run_style(r) for r in past]
-        styles = [s for s in styles if s]
-        st = max(set(styles), key=styles.count) if styles else None
+    st = usual_style(past) if past else None
     f["style"] = STYLE_ID.get(st)
     key = L.STYLE_MAP.get(st)
     f["course_style_idx"] = cs["style_idx"].get(key) if cs and key else None
     f["course_waku_idx"] = cs["waku_idx"].get(h.get("waku")) if cs and cs.get("waku_idx") else None
     f["course_kata"] = cs["kata"] if cs and cs.get("exact") else None
+    # 自前のコース傾向(中央の全コース。そのレースより前の日までの結果)
+    if center == "jra" and jt and jt.get("course"):
+        f["cown_style"] = course_own(jt, race, "style", st)
+        f["cown_waku"] = course_own(jt, race, "waku", h.get("waku"))
+        f["cown_gate"] = course_own(jt, race, "gate", gate_of(h.get("umaban"), n))
+        f["cown_n"] = round(jt["course"]["by"].get(course_keys(race, "all", "all")[2], (0, 0.0))[1], 1)
     # 騎手・厩舎(そのレースより前の日までの3着内率)
     jt = jt or {}
     f["jockey_top3"], f["jockey_n"] = jt_rate(jt.get("jockey"), jt_name(h, "jockey"))
