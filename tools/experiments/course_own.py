@@ -18,6 +18,7 @@ import train_model as T
 import keiba_model as M
 import keiba_logic as L
 import lightgbm as lgb
+SEEDS = [int(x) for x in os.environ.get("SEEDS", "1").split(",")]      # 種を変えた何本かの平均(アプリと同じ。SEEDS=1,2,3,4)
 t0 = time.time()
 races = T.load_races()
 norm, rows, jt_all, sp = pickle.load(open(T.CACHE, "rb"))
@@ -55,11 +56,14 @@ for Y in ("2024", "2025", "2026"):
     for name, fs in SETS.items():
         ix = [feats.index(k) for k in fs]
         cat = [fs.index(k) for k in ("venue", "style") if k in fs]
-        dtr = lgb.Dataset(X[tr][:, ix], y[tr], categorical_feature=cat, free_raw_data=False)
-        dva = lgb.Dataset(X[va][:, ix], y[va], categorical_feature=cat, reference=dtr)
-        b = lgb.train(params, dtr, 3000, valid_sets=[dva], callbacks=[lgb.early_stopping(150, verbose=False)])
-        b2 = lgb.train(params, lgb.Dataset(X[tr | va][:, ix], y[tr | va], categorical_feature=cat), int(b.best_iteration * 1.1))
-        p = b2.predict(X[te][:, ix])
+        ps, imps = [], []
+        for sd in SEEDS:
+            dtr = lgb.Dataset(X[tr][:, ix], y[tr], categorical_feature=cat, free_raw_data=False)
+            dva = lgb.Dataset(X[va][:, ix], y[va], categorical_feature=cat, reference=dtr)
+            b = lgb.train(dict(params, seed=sd), dtr, 3000, valid_sets=[dva], callbacks=[lgb.early_stopping(150, verbose=False)])
+            b2 = lgb.train(dict(params, seed=sd), lgb.Dataset(X[tr | va][:, ix], y[tr | va], categorical_feature=cat), int(b.best_iteration * 1.1))
+            ps.append(b2.predict(X[te][:, ix])); imps.append(b2.feature_importance("gain"))
+        p = np.mean(ps, axis=0)
         # レースで合計3にそろえる(アプリと同じ)
         P3 = {}
         by = defaultdict(list)
@@ -71,7 +75,7 @@ for Y in ("2024", "2025", "2026"):
                 P3[(rid, u)] = min(0.99, v * want / tot)
         q = np.array([P3[(rid, rows[j]["u"])] for j, rid in zip(np.where(te)[0], rids[te])])
         r = RES[Y][name] = {"ll": ll(q, y[te]), "auc": T.auc(y[te], q), "ll_noex": ll(q[~exact[te]], y[te][~exact[te]]), "auc_noex": T.auc(y[te][~exact[te]], q[~exact[te]]),
-                            "imp": dict(zip(fs, b2.feature_importance("gain")))}
+                            "imp": dict(zip(fs, np.mean(imps, axis=0)))}
         # 印と買い方
         jg = T.group([rows[j] for j in np.where(te)[0]])
         anyr = T.pick_model(0.0, -1.0, P3, True); buy = T.pick_model(0.0, -1.0, P3, True, t1=0.80, g12=0.15)
