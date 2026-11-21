@@ -213,6 +213,12 @@ public class MainActivity extends Activity {
         tabIpat.setTypeface(showIpat ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
         tabWeb.setAlpha(showIpat ? 0.6f : 1f);
         tabIpat.setAlpha(showIpat ? 1f : 0.6f);
+        tellShown(!showIpat);
+    }
+
+    /** 予想の画面が見えているかを予想アプリに知らせる(見えている間だけオッズを取り直す。戻ったら取り直す) */
+    void tellShown(boolean visible) {
+        if (web != null) web.evaluateJavascript("window.kbShow&&kbShow(" + visible + ")", null);
     }
 
     // ---------------------------------------------------------------- 自動入力
@@ -461,6 +467,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        tellShown(false);
         pausedAt = System.currentTimeMillis();
         CookieManager.getInstance().flush();
     }
@@ -469,6 +476,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (pausedAt > 0 && System.currentTimeMillis() - pausedAt > RELOAD_AFTER_MS) loadFresh();
+        else if (web.getVisibility() == View.VISIBLE) tellShown(true);     // 短い間だけ裏に回っていたなら、そのままオッズを取り直す
         pausedAt = 0;
     }
 }
