@@ -25,6 +25,8 @@
   // 押す所(競馬場・レース・式別など)が見つからないとき、止める前に待つ時間(ミリ秒)。画面の見出しが出ても、
   // 一覧はあとから出ることがある(2026-11-21: 競馬場名の画面で「京都(土) がまだ発売されていません」と止まり、やり直すと進んだ)
   var NOTFOUND_WAIT_MS = 5000;
+  // 競馬場名の画面は 10秒まで待ち、それでも一覧が出なければトップメニューからやり直す(2回まで。手でやり直すと進むので同じことをする)
+  var VENUE_NOTFOUND_MS = 10000, VENUE_RETRY = 2;
   // 押したタッチが画面に届いたか(届いた所の形)を残す。うまく進まないときの手がかり
   if (!window.__kbHook) {
     window.__kbHook = 1;
@@ -214,6 +216,19 @@
       if (/(^|\s)(ui-)?(state-)?disabled(\s|$)/.test(typeof x.className === "string" ? x.className : "")) return true;
     }
     return !!(e.querySelector && e.querySelector("a.disabled, a.ui-disabled"));
+  }
+  // 競馬場の一覧が出ずにやり直した回数(この買い目で。2分たったら数え直す)。n を渡すと書く
+  function venueRetry(n) {
+    var key = "kbVenueRetry";
+    try {
+      if (n === undefined) {
+        var v = JSON.parse(sessionStorage.getItem(key) || "null");
+        return v && v.label === label && Date.now() - v.at < 120000 ? v.n : 0;
+      }
+      if (n) sessionStorage.setItem(key, JSON.stringify({label: label, n: n, at: Date.now()}));
+      else sessionStorage.removeItem(key);
+    } catch (x) { /* 使えなければ、やり直さない */ }
+    return 0;
   }
   // 見つからないとき: 同じ画面で最初に見つからなかった時から NOTFOUND_WAIT_MS までは待ち、それでも無ければ止める
   function notFound(key, what, msg, info) {
@@ -479,10 +494,24 @@
   if (/競馬場名/.test(body)) {
     var vre = new RegExp("^" + esc(B.venue) + "\\s*[(（]" + esc(B.dow) + "[)）]$");
     // 競馬場を選ぶのは、画面が出てから 0.25 秒 + 0.2 秒たってから(2026-11-15。出てすぐ押すと早すぎるため)。
-    // 一覧があとから出ることがあるので、見つからなくても 5秒までは待つ(2026-11-21。前は見つからないとすぐ止めていた)
-    if (!settled()) return waitMove();
-    if (!findAll(vre).length) return notFound("venue", B.venue + "(" + B.dow + ")", B.venue + "(" + B.dow + ") がまだ発売されていません(または見つかりません)",
-      "似た所 " + near(new RegExp(esc(B.venue) + "|[(（][土日月][)）]")));
+    // 一覧があとから出ることがあるので、画面を読み終えてから探し、見つからなくても 10秒までは待つ。
+    // それでも出なければトップメニューに戻ってやり直す(2回まで。数は画面を読み直しても消えないよう sessionStorage に。2026-11-22)
+    if (!settled() || document.readyState !== "complete") return waitMove();
+    if (!findAll(vre).length) {
+      var vk = "venue|" + (pageEl().id || location.pathname);
+      if (window.__kbNfKey !== vk) { window.__kbNfKey = vk; window.__kbNfAt = Date.now(); }
+      if (Date.now() - window.__kbNfAt < VENUE_NOTFOUND_MS) return out("wait", B.venue + "(" + B.dow + ") が出るのを待っています");
+      var rt = venueRetry();
+      if (rt < VENUE_RETRY && findAll(/^トップメニュー$/).length) {
+        venueRetry(rt + 1);
+        window.__kbNfKey = null;
+        return clickText("venue-retry", /^トップメニュー$/, "競馬場の一覧が出ないので、トップメニューからやり直します(" + (rt + 1) + "回目)");
+      }
+      venueRetry(0);
+      return out("error", B.venue + "(" + B.dow + ") がまだ発売されていません(または見つかりません)",
+        {info: "似た所 " + near(new RegExp(esc(B.venue) + "|[(（][土日月][)）]")) + " | やり直し " + rt + "回 | 読み込み " + document.readyState});
+    }
+    venueRetry(0);
     if (Date.now() - window.__kbPkAt < 250 + VENUE_WAIT_MS) return out("wait", B.venue + "(" + B.dow + ") を選ぶ前に少し待っています");
     return clickText("venue", vre, B.venue + "(" + B.dow + ")");
   }
