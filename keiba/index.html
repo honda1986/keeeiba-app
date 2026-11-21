@@ -707,8 +707,10 @@ function drawList() {
   const buys = shown.filter(isBuy), rest = shown.filter(r => !isBuy(r));
   let html = buys.length ? `<div class="sec">買い目のあるレース ${buys.length}</div>` + buys.map(card).join("") : "";
   if (rest.length) {
-    html += `<div class="sec">${KOCHI ? "レース" : "買い目のないレース"} ${rest.length}<span class="muted" style="font-weight:400"> · 押すと予想が開きます</span></div>`
-      + `<div class="card">${rest.map(r => raceKind(r) === "wait" ? waitRow(r) : skipRow(r)).join("")}</div>`;
+    // 買い目のないレースも、買い目のあるレースと同じカードで出す(2026-11-22。前はたたんだ1行)。予想前のレースだけ1行
+    const wait = rest.filter(r => raceKind(r) === "wait"), cards = rest.filter(r => raceKind(r) !== "wait");
+    html += `<div class="sec">${KOCHI ? "レース" : "買い目のないレース"} ${rest.length}</div>` + cards.map(card).join("")
+      + (wait.length ? `<div class="card">${wait.map(waitRow).join("")}</div>` : "");
   }
   box.innerHTML = html;
   box.querySelectorAll("[data-mk]").forEach(b => b.onclick = () => openBuilder({rid: b.dataset.mk}));
