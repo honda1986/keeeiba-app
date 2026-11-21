@@ -626,7 +626,7 @@ function daySumInner() {
   return `<div class="hd">この日の買い目(1点100円)</div>
     ${line("後押しの買い目", "回収重視(馬連)", sp, "点")}
     ${line("モデルの買い目", "3連複 ◎-○-▲", mp)}
-    <div class="ft">後押しの買い目は、評価値の後押しが上5%の馬と1番人気の馬連。的中は少ない(7%)が、過去5年の回収率は 103%(年に約1,000点)。
+    <div class="ft">後押しの買い目は、評価値の後押しが上5%の馬と1番人気の馬連。的中は少ない(7%)が、過去5年の回収率は ${((((state.push || {}).stats || {}).oshi || {}).roi || 102).toFixed(0)}%(年に約1,000点)。
       ${rs.some(r => r.center === "jra" && !r.result) ? `これからのレースは<b>いまのオッズの人気</b>で出します(1番人気が替わると相手も替わる)。` : ""}</div>`;
 }
 function drawDaySum() {
@@ -799,7 +799,7 @@ function trioPairSums(to) {
 // ---------------------------------------------------------------- 後押しの買い目(回収重視。2026-11-15)
 // 後押し(push)が上5%の馬 x と、1番人気の馬連(keiba_logic.OSHI・oshi_picks と同じ)。
 //  x … 1番人気でない・単勝 20倍以下・push が境目(push_model.json の cuts.win_top["0.95"])以上
-// 過去5年(その年を除いて作った式)で年に約1,000点・的中 7%・回収率 103%(99・107・100・109・100%)。当たりは少ないが、いちばん回収率が高い形。
+// 過去5年(その年を除いて作った式)で年に約1,000点・的中 7%・回収率 102%(2026-11-18 の学び直しで 97・102・97・113・101%)。当たりは少ないが、いちばん回収率が高い形。
 // 人気と20倍以下はオッズで決まる: 終わったレースは確定オッズ、これからのレースはいまのオッズ。
 // 予想に後押しが入る前の日(2026-11-14 まで)のレースは、oshi_past.json に残してある後押しの馬で出す
 // (その年を除いて作った式で選んだもの。tools/train_push.py。「収支・分析」の数字と同じ買い目)
@@ -2059,7 +2059,7 @@ function autoOdds() {
   if (oddsState.day === state.day.date && Date.now() - oddsState.at < 3 * 60e3) return;
   refreshOdds(false);
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden) autoOdds(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { autoOdds(); pullResults(false); } });
 // 開いたままでもオッズを取り直す(2026-11-21。前は開いたとき・戻ったとき・「オッズ更新」を押したときだけで、
 // 開いたままだと古いオッズのままだった)。締切まで40分以内のレースがある間は3分おき、ほかは10分おき。
 // 予想の画面が見えていないとき(Android アプリで IPAT を見ている・裏に回っている)は取らない。予想に戻ったら3分たっていれば取り直す
@@ -2067,7 +2067,7 @@ const ODDS_EVERY = {near: 3, far: 10, near_min: 40};
 let appHidden = false;
 window.kbShow = function (visible) {          // Android アプリが「予想」と「IPAT」を切り替えたときに呼ぶ
   appHidden = !visible;
-  if (visible) { autoOdds(); loadPcOdds(false); }
+  if (visible) { autoOdds(); loadPcOdds(false); pullResults(false); }
 };
 function oddsDue(now) {
   if (document.hidden || appHidden || !canLive() || !state.day || oddsState.busy || state.day.date !== jstDate()) return false;
@@ -2077,6 +2077,35 @@ function oddsDue(now) {
   return !(oddsState.day === d && now - oddsState.at < (near ? ODDS_EVERY.near : ODDS_EVERY.far) * 60e3);
 }
 setInterval(() => { if (oddsDue(Date.now())) refreshOdds(false); }, 30e3);
+// 開いたままでも結果を入れる(2026-11-21)。結果は GitHub の更新(開催日は10分ごと。発走の8分後から取りに行く)で入るので、
+// 結果待ちのレース(発走から8分より後で結果が無い)がある間は、2分おきに今日の data.json を見に行き、新しい結果だけを入れて描き直す。
+// 予想の画面が見えていないときは見に行かない
+const RESULT_EVERY = 2 * 60e3;
+let resultAt = 0;
+async function pullResults(force) {
+  if (document.hidden || appHidden || !state.day || state.day.date !== jstDate()) return 0;
+  const d = state.day;
+  const waiting = allRaces().some(r => r.horses && r.horses.length && !r.result && (untilClose(d.date, r) ?? 99) <= -10);
+  if (!waiting || (!force && Date.now() - resultAt < RESULT_EVERY)) return 0;
+  resultAt = Date.now();
+  let j;
+  try { j = await getJSON(DATA + "data.json"); } catch (e) { return 0; }
+  if (!j || j.date !== d.date || state.day !== d) return 0;
+  let n = 0;
+  for (const [id, sr] of Object.entries(j.races || {})) {
+    const r = (d.races || {})[id];
+    if (!r || r.result || !sr.result || (sr.result.order || []).length < 3) continue;
+    for (const k of ["result", "settle", "wide_final", "trio_pair_final", "pred", "pred_at"]) if (sr[k] !== undefined) r[k] = sr[k];
+    n++;
+  }
+  if (j.updated && j.updated > (state.latest || "")) state.latest = j.updated;
+  if (n) {                                    // 結果が入ったレースがあれば描き直す(見ていた位置はそのまま)
+    const y = scrollY;
+    renderRace(); renderVote(); scrollTo(0, y);
+  }
+  return n;
+}
+setInterval(() => pullResults(false), 30e3);
 
 // ---------------------------------------------------------------- 追切評価(AI競馬ナビ。アプリでその場で取る)
 // 中央の馬の追切評価(S〜D)・追い切り偏差値・最終追い切りの場所とコースを、AI競馬ナビのページ
