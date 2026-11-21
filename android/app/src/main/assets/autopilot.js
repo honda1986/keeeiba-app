@@ -216,16 +216,16 @@
     return !!(e.querySelector && e.querySelector("a.disabled, a.ui-disabled"));
   }
   // 見つからないとき: 同じ画面で最初に見つからなかった時から NOTFOUND_WAIT_MS までは待ち、それでも無ければ止める
-  function notFound(key, msg, info) {
+  function notFound(key, what, msg, info) {
     var k = key + "|" + (pageEl().id || location.pathname);
     if (window.__kbNfKey !== k) { window.__kbNfKey = k; window.__kbNfAt = Date.now(); }
-    if (Date.now() - window.__kbNfAt < NOTFOUND_WAIT_MS) return out("wait", msg + " が出るのを待っています");
+    if (Date.now() - window.__kbNfAt < NOTFOUND_WAIT_MS) return out("wait", what + " が出るのを待っています");
     window.__kbNfKey = null;
     return out("error", msg, {info: info});
   }
   function clickText(key, re, msg, loose) {
     var es = findAll(re);
-    if (!es.length) return notFound(key, msg + " が見つかりません。手で続けてください", loose ? "似た所 " + near(loose) : "ボタン " + buttons());
+    if (!es.length) return notFound(key, msg, msg + " が見つかりません。手で続けてください", loose ? "似た所 " + near(loose) : "ボタン " + buttons());
     if (window.__kbNfKey && window.__kbNfKey.indexOf(key + "|") === 0) window.__kbNfKey = null;
     var live = es.filter(function (e) { return !disabledEl(e); });
     if (!live.length) return missWait(key, msg + "(灰色で押せない状態です)", es[0]);
@@ -481,7 +481,7 @@
     // 競馬場を選ぶのは、画面が出てから 0.25 秒 + 0.2 秒たってから(2026-11-15。出てすぐ押すと早すぎるため)。
     // 一覧があとから出ることがあるので、見つからなくても 5秒までは待つ(2026-11-21。前は見つからないとすぐ止めていた)
     if (!settled()) return waitMove();
-    if (!findAll(vre).length) return notFound("venue", B.venue + "(" + B.dow + ") がまだ発売されていません(または見つかりません)",
+    if (!findAll(vre).length) return notFound("venue", B.venue + "(" + B.dow + ")", B.venue + "(" + B.dow + ") がまだ発売されていません(または見つかりません)",
       "似た所 " + near(new RegExp(esc(B.venue) + "|[(（][土日月][)）]")));
     if (Date.now() - window.__kbPkAt < 250 + VENUE_WAIT_MS) return out("wait", B.venue + "(" + B.dow + ") を選ぶ前に少し待っています");
     return clickText("venue", vre, B.venue + "(" + B.dow + ")");
