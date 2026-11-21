@@ -22,6 +22,9 @@
   var CLICKABLE = "a,button,input,label,[onclick],[ng-click],[role=button],[data-role=button]";
   // 競馬場名の画面だけ、押すまでをほかの画面より長く待つ(ミリ秒。ほかの画面は、出てから 0.25 秒で押す)
   var VENUE_WAIT_MS = 200;
+  // 押す所(競馬場・レース・式別など)が見つからないとき、止める前に待つ時間(ミリ秒)。画面の見出しが出ても、
+  // 一覧はあとから出ることがある(2026-11-21: 競馬場名の画面で「京都(土) がまだ発売されていません」と止まり、やり直すと進んだ)
+  var NOTFOUND_WAIT_MS = 5000;
   // 押したタッチが画面に届いたか(届いた所の形)を残す。うまく進まないときの手がかり
   if (!window.__kbHook) {
     window.__kbHook = 1;
@@ -212,10 +215,18 @@
     }
     return !!(e.querySelector && e.querySelector("a.disabled, a.ui-disabled"));
   }
+  // 見つからないとき: 同じ画面で最初に見つからなかった時から NOTFOUND_WAIT_MS までは待ち、それでも無ければ止める
+  function notFound(key, msg, info) {
+    var k = key + "|" + (pageEl().id || location.pathname);
+    if (window.__kbNfKey !== k) { window.__kbNfKey = k; window.__kbNfAt = Date.now(); }
+    if (Date.now() - window.__kbNfAt < NOTFOUND_WAIT_MS) return out("wait", msg + " が出るのを待っています");
+    window.__kbNfKey = null;
+    return out("error", msg, {info: info});
+  }
   function clickText(key, re, msg, loose) {
     var es = findAll(re);
-    if (!es.length) return out("error", msg + " が見つかりません。手で続けてください",
-      {info: loose ? "似た所 " + near(loose) : "ボタン " + buttons()});
+    if (!es.length) return notFound(key, msg + " が見つかりません。手で続けてください", loose ? "似た所 " + near(loose) : "ボタン " + buttons());
+    if (window.__kbNfKey && window.__kbNfKey.indexOf(key + "|") === 0) window.__kbNfKey = null;
     var live = es.filter(function (e) { return !disabledEl(e); });
     if (!live.length) return missWait(key, msg + "(灰色で押せない状態です)", es[0]);
     es = live;
@@ -467,10 +478,11 @@
   // 競馬場
   if (/競馬場名/.test(body)) {
     var vre = new RegExp("^" + esc(B.venue) + "\\s*[(（]" + esc(B.dow) + "[)）]$");
-    if (!findAll(vre).length) return out("error", B.venue + "(" + B.dow + ") がまだ発売されていません(または見つかりません)",
-      {info: "似た所 " + near(new RegExp(esc(B.venue) + "|[(（][土日月][)）]"))});
-    // 競馬場を選ぶのは、画面が出てから 0.25 秒 + 0.2 秒たってから(2026-11-15。出てすぐ押すと早すぎるため)
+    // 競馬場を選ぶのは、画面が出てから 0.25 秒 + 0.2 秒たってから(2026-11-15。出てすぐ押すと早すぎるため)。
+    // 一覧があとから出ることがあるので、見つからなくても 5秒までは待つ(2026-11-21。前は見つからないとすぐ止めていた)
     if (!settled()) return waitMove();
+    if (!findAll(vre).length) return notFound("venue", B.venue + "(" + B.dow + ") がまだ発売されていません(または見つかりません)",
+      "似た所 " + near(new RegExp(esc(B.venue) + "|[(（][土日月][)）]")));
     if (Date.now() - window.__kbPkAt < 250 + VENUE_WAIT_MS) return out("wait", B.venue + "(" + B.dow + ") を選ぶ前に少し待っています");
     return clickText("venue", vre, B.venue + "(" + B.dow + ")");
   }
