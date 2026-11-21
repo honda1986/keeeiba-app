@@ -508,6 +508,29 @@ class Parse(unittest.TestCase):
         self.assertEqual([M.gate_of(u, 12) for u in (1, 4, 5, 8, 9, 12)], ["内", "内", "中", "中", "外", "外"])
         self.assertIsNone(M.gate_of(None, 12))
 
+    def test_ev_wide(self):
+        # 期待値ワイド: 確率の高い順に6組と ◎-○ の中で、期待値(0.75×強さ×(下限+0.35×幅))が 1.0以上の組
+        tp = {"1-2": 0.8, "1-3": 0.5, "2-3": 0.45, "1-4": 0.3, "2-4": 0.25, "3-4": 0.2, "1-5": 0.15, "5-6": 0.1}
+        wide = {"1-2": [1.2, 1.4], "1-3": [2.6, 3.0], "2-3": [3.0, 3.4], "1-4": [3.8, 4.6], "2-4": [6.0, 7.0], "3-4": [5.0, 6.0],
+                "1-5": [9.0, 10.0], "5-6": [20.0, 25.0]}
+        pk = L.ev_wide_picks(tp, wide)
+        self.assertEqual([x["key"] for x in pk], ["1-3", "2-3", "2-4"])                 # 1-2 は 0.73、1-4 は 0.94、3-4 は 0.80
+        self.assertAlmostEqual(pk[0]["ev"], 0.75 * 0.5 * (2.6 + 0.35 * 0.4), places=6)
+        self.assertEqual(pk[0]["pair"], [1, 3])
+        self.assertEqual([x["key"] for x in L.ev_wide_picks(tp, wide, "5-6")], ["1-3", "2-3", "2-4", "5-6"])   # ◎-○ は7番目でも表に出る
+        self.assertNotIn("1-5", [x["key"] for x in L.ev_wide_picks(tp, wide)])            # 7番目(表に出ない)
+        self.assertEqual(L.ev_wide_picks({"1-2": 0.5}, {"1-2": [1.0, 1.0]}), [])           # 取消の返還(1.0倍)は数えない
+        self.assertEqual(L.ev_wide_picks(None, wide), [])
+        # アプリの数字(index.html の EV_WIDE)と同じ
+        html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "index.html"), encoding="utf-8").read()
+        m = re.search(r"const EV_WIDE = \{min_ev: ([\d.]+), top: (\d+)\};", html)
+        self.assertEqual((float(m.group(1)), int(m.group(2))), (L.EV_WIDE["min_ev"], L.EV_WIDE["top"]))
+        # 発走前のオッズは発走の30分前より後に取ったものだけ
+        rc = {"start": "10:05", "trio_pair_at": "2026-11-21T09:50:00+09:00"}
+        self.assertTrue(K.pre_fresh("20261121", rc))
+        self.assertFalse(K.pre_fresh("20261121", dict(rc, trio_pair_at="2026-11-21T09:30:00+09:00")))
+        self.assertFalse(K.pre_fresh("20261121", dict(rc, trio_pair_at="2026-11-21T10:06:00+09:00")))
+
     def test_apply_pc_odds(self):
         # PC が取った発走前のオッズは、手元の分より新しく、発走より前に取ったものだけ入れる
         day = {"races": {

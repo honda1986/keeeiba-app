@@ -999,6 +999,47 @@ def merge_pc_odds(d, day):
     return n
 
 
+def pre_fresh(d, rc):
+    """発走前の組の強さ(trio_pair)が、発走の L.PRE["fresh"] 分前より後に取ったものか(アプリの preFresh と同じ)"""
+    st = start_dt(d, rc.get("start"))
+    try:
+        at = datetime.fromisoformat(rc.get("trio_pair_at") or "")
+    except ValueError:
+        return False
+    return st is not None and 0 <= (st - at).total_seconds() / 60 <= L.PRE["fresh"]
+
+
+EVW_FROM = "20261114"         # 発走前のオッズ(3連複の組の強さ)を残し始めた日
+
+
+def ev_wide_history():
+    """期待値ワイド(L.ev_wide_picks)の日ごとの成績 [日付, 点数, 的中, 払戻]。発走前のオッズが残っているレースだけ(アプリの evWideOf と同じ)"""
+    out = []
+    if "jra" not in CENTERS:
+        return out
+    for f in sorted(glob.glob(OUT + "/days/*.json")):
+        if os.path.basename(f)[:8] < EVW_FROM:
+            continue
+        day = load(f, None)
+        row = [(day or {}).get("date"), 0, 0, 0]
+        for rid, rc in ((day or {}).get("races") or {}).items():
+            res = rc.get("result") or {}
+            pr = rc.get("pred") or {}
+            if center_of(rid) != "jra" or not target(rid) or len(res.get("order") or []) < 3 or not rc.get("trio_pair") or not pre_fresh(day["date"], rc):
+                continue
+            hk = "-".join(str(x) for x in sorted((pr["honmei"], pr["taikou"]))) if pr.get("honmei") and pr.get("taikou") else None
+            gone = {h["umaban"] for h in rc.get("horses") or [] if h.get("scratched")}
+            pay = (res.get("payout") or {}).get("ワイド") or {}
+            for x in L.ev_wide_picks(rc["trio_pair"], rc.get("wide_odds"), hk):
+                if gone & set(x["pair"]):
+                    continue
+                v = pay.get(x["key"], 0)
+                row[1] += 1; row[2] += v > 0; row[3] += v
+        if row[1]:
+            out.append(row)
+    return out
+
+
 PUSH_FROM = "20261115"        # 予想に後押し(push・push2)が入り始めた日
 
 
@@ -1139,7 +1180,7 @@ def build_history():
                 "alt": alt_bets(p, rc.get("result") or {})})
         days.append(row)
     hist = {"updated": datetime.now(JST).isoformat(timespec="seconds"), "unit": L.UNIT,
-            "days": days, "races": races, "oshi": oshi_history(), "push": push_history()}
+            "days": days, "races": races, "oshi": oshi_history(), "evw": ev_wide_history(), "push": push_history()}
     save(OUT + "/history.json", hist)
     return hist
 

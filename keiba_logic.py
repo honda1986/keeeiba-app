@@ -263,6 +263,31 @@ UNIT = 100                   # 1点あたりの金額(円)
 PRE = {"pt": 0.75, "alpha": 0.35, "fresh": 30}
 
 
+# 期待値ワイド(2026-11-21): アプリの期待値の表(evInner)のワイドで、期待値が min_ev 以上の組。アプリの EV_WIDE・evWideOf と同じ。
+#  確率 = PRE.pt × 3連複から見た組の強さ、期待値 = 確率 × (下限 + PRE.alpha × 幅)。表に出る組 = 確率の高い順に top 組と ◎-○。
+#  発走の PRE.fresh 分前より後に取ったオッズだけで出す(確定オッズで選ぶと甘く出る。割安ワイドで確かめた)。
+#  2026-11-14・15・21 の発走前のオッズで 59点・的中 11・回収率 106%(58・92・250%)。数が少なく、続けて儲かるかはまだ分からない
+EV_WIDE = {"min_ev": 1.0, "top": 6}
+
+
+def ev_wide_picks(tp, wide, hk=None):
+    """期待値ワイドの組。tp = 組ごとの強さ、wide = ワイドのオッズ、hk = ◎-○ の組("a-b")。
+    -> [{"key", "pair", "p", "ev", "odds"}](確率の高い順)"""
+    rows = []
+    for k, v in (wide or {}).items():
+        s = (tp or {}).get(k)
+        lo, hi = (v[0], v[1]) if isinstance(v, (list, tuple)) else (v, v)
+        if not s or not lo or lo <= 1:
+            continue
+        p = min(PRE["pt"] * s, 0.98)
+        rows.append({"key": k, "pair": [int(x) for x in k.split("-")], "p": p, "odds": [lo, hi], "ev": p * (lo + PRE["alpha"] * (hi - lo))})
+    rows.sort(key=lambda x: -x["p"])                     # 同じ確率なら元の並び(アプリと同じ)
+    show = rows[:EV_WIDE["top"]]
+    if hk and not any(x["key"] == hk for x in show):
+        show += [x for x in rows if x["key"] == hk]
+    return [x for x in show if x["ev"] >= EV_WIDE["min_ev"]]
+
+
 # 後押しの買い目(回収重視。2026-11-15): 後押し(keiba_push.py の push)が上5%の馬 x と、1番人気の馬連。
 #  x … 1番人気でない・単勝 max_odds 倍以下・push が境目(keiba/push_model.json の cuts.win_top[q])以上。
 # 2022〜2026年(その年を除いて作った式)で 4,864点・的中 7.0%・回収率 103%(99・107・100・109・100%)。年に 950〜1,050点、1開催日に 9〜10点。
