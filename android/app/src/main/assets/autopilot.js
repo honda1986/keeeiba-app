@@ -449,8 +449,10 @@
   }
   // 方式: 2頭以上の券種はフォーメーション
   if (/フォーメーション/.test(body) && /ボックス/.test(body)) return clickText("houshiki", new RegExp("^" + HOUSHIKI + "$"), "方式: " + HOUSHIKI);
-  // 式別(3連複・3連単は全角の数字のこともある)
-  if (/枠連/.test(body) && /(3|３)連単/.test(body)) {
+  // 式別(3連複・3連単は全角の数字のこともある)。少頭数(8頭以下)は枠連を売らず式別の画面に枠連が無いので、
+  // 見出しの「式別」か、単勝・複勝・3連単が並んでいることで見分ける(2026-11-21。前は枠連があるかで見ていて、ここで止まった)
+  if (/^式別$/.test(heading()) || (/枠連/.test(body) && /(3|３)連単/.test(body)) ||
+      (/単勝/.test(body) && /複勝/.test(body) && /(3|３)連単/.test(body))) {
     var t = B.type.replace(/^3/, "[3３]");
     return clickText("shiki", new RegExp("^" + t + "$"), "式別: " + B.type, new RegExp(t));
   }
