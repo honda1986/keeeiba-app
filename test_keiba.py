@@ -520,6 +520,8 @@ class Parse(unittest.TestCase):
         self.assertEqual([x["key"] for x in L.ev_wide_picks(tp, wide, "5-6")], ["1-3", "2-3", "2-4", "5-6"])   # ◎-○ は7番目でも表に出る
         self.assertNotIn("1-5", [x["key"] for x in L.ev_wide_picks(tp, wide)])            # 7番目(表に出ない)
         self.assertEqual(L.ev_wide_picks({"1-2": 0.5}, {"1-2": [1.0, 1.0]}), [])           # 取消の返還(1.0倍)は数えない
+        self.assertEqual(len(L.ev_wide_picks({"1-2": 0.4}, {"1-2": [3.1, 3.4]})), 1)        # 期待値 0.96: 境目(0.95)以上
+        self.assertEqual(L.ev_wide_picks({"1-2": 0.4}, {"1-2": [3.0, 3.4]}), [])            # 期待値 0.94: 境目より下
         self.assertEqual(L.ev_wide_picks(None, wide), [])
         # アプリの数字(index.html の EV_WIDE)と同じ
         html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "index.html"), encoding="utf-8").read()

@@ -628,10 +628,10 @@ function daySumInner() {
   };
   return `<div class="hd">この日の買い目(1点100円)</div>
     ${line("後押しの買い目", "回収重視(馬連)", sp, "点")}
-    ${line("期待値ワイド", "期待値 " + EV_WIDE.min_ev.toFixed(1) + "以上", ep, "点")}
+    ${line("期待値ワイド", "期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上", ep, "点")}
     ${line("モデルの買い目", "3連複 ◎-○-▲", mp)}
     <div class="ft">後押しの買い目は、評価値の後押しが上5%の馬と1番人気の馬連。的中は少ない(7%)が、過去5年の回収率は ${((((state.push || {}).stats || {}).oshi || {}).roi || 102).toFixed(0)}%(年に約1,000点)。
-      期待値ワイドは、期待値の表のワイドで ${EV_WIDE.min_ev.toFixed(1)}以上の組(<b>発走の${PRE.fresh}分前から</b>のオッズで出す)。
+      期待値ワイドは、期待値の表のワイドで ${EV_WIDE.min_ev.toFixed(2)}以上の組(<b>発走の${PRE.fresh}分前から</b>のオッズで出す)。
       ${rs.some(r => r.center === "jra" && !r.result) ? `これからのレースは<b>いまのオッズ</b>で出します(オッズが動くと買い目も替わる)。` : ""}</div>`;
 }
 function drawDaySum() {
@@ -862,8 +862,9 @@ function oshiInner(r) {
 // 期待値の表(evInner)のワイドで、期待値が EV_WIDE.min_ev 以上の組を買い目にする(keiba_logic.EV_WIDE・ev_wide_picks と同じ)。
 //  確率 = PRE.pt × 3連複から見た組の強さ、期待値 = 確率 × (下限 + PRE.alpha × 幅)。表に出る組 = 確率の高い順に top 組 + ◎-○。
 //  使うのは発走の PRE.fresh 分前より後に取ったオッズだけ(それより前・確定オッズでは出さない。確定オッズで選ぶと甘く出るため)。
-//  オッズが動くと買い目も替わる。2026-11-14・15・21 の発走前のオッズで数えると 59点・的中 11・回収率 106%(58・92・250%)。まだ数が少ない
-const EV_WIDE = {min_ev: 1.0, top: 6};
+//  オッズが動くと買い目も替わる。2026-11-21 に境目を 1.0 → 0.95 にした。
+//  境目以上の組が無いレースは、表に出る組で期待値がいちばん高い組を「参考」として箱に出す(買い目には数えない。記録にも入れない)
+const EV_WIDE = {min_ev: 0.95, top: 6};
 function evWideOf(r) {
   if (KOCHI || r.center !== "jra" || !r.horses || !r.pred || !r.trio_pair || !preFresh(r)) return null;
   const tp = r.trio_pair, wo = r.gw || r.wide_odds;
@@ -878,23 +879,29 @@ function evWideOf(r) {
   const done = !!(r.result && (r.result.order || []).length >= 3);
   const gone = r.horses.filter(h => h.scratched).map(h => h.umaban);
   const pay = ((r.result || {}).payout || {})["ワイド"] || {};
-  const picks = show.filter(x => x.ev >= EV_WIDE.min_ev).map(x => ({type: "ワイド", c: x.k.split("-").map(Number), key: x.k, p: x.p, ev: x.ev, odds: x.o,
-    ret: done ? (pay[x.k] || 0) : null})).filter(x => !x.c.some(u => gone.includes(u)));
-  return {done, picks};
+  const mk = x => ({type: "ワイド", c: x.k.split("-").map(Number), key: x.k, p: x.p, ev: x.ev, odds: x.o, ret: done ? (pay[x.k] || 0) : null});
+  const ok = show.map(mk).filter(x => !x.c.some(u => gone.includes(u)));
+  const picks = ok.filter(x => x.ev >= EV_WIDE.min_ev);
+  // 境目以上が無いときの参考: 期待値がいちばん高い組(同じなら確率の高い方)
+  const ref = picks.length ? null : ok.reduce((a, x) => (!a || x.ev > a.ev) ? x : a, null);
+  return {done, picks, ref};
 }
 function evWideInner(r) {
   const so = evWideOf(r);
-  if (!so || !so.picks.length) return "";
-  const rows = so.picks.map(x => {
+  if (!so || (!so.picks.length && !so.ref)) return "";
+  const rows = (so.picks.length ? so.picks : [so.ref]).map(x => {
     const st = so.done ? (x.ret ? `<span class="pk-r good">的中 ${yen(x.ret)}</span>` : `<span class="pk-r neg">外れ</span>`) : `<span class="pk-r muted">発走前</span>`;
     return `<div class="pk-b"><span class="ty">${x.type}</span><span class="cb num">${x.c.join("-")}</span>
       <span class="od num">${x.odds[0] === x.odds[1] ? x.odds[0] : x.odds[0] + "〜" + x.odds[1]}倍 · 期待値 ${x.ev.toFixed(2)} · 見込み ${Math.round(x.p * 100)}%</span>${st}</div>
       <div class="pk-n">${x.c.map(u => `${u} ${esc(hname(r, u))}`).join(" ・ ")}</div>
       ${!so.done && buyBtn(r, x.type, x.c) ? `<div class="pk-a">${buyBtn(r, x.type, x.c)}</div>` : ""}`;
   }).join("");
+  if (!so.picks.length)                   // 境目以上が無い: いちばん高い組を参考に(買い目には数えない)
+    return `<div class="pk none">
+    <div class="pk-h"><span>期待値ワイド<em>参考</em></span><span>${EV_WIDE.min_ev.toFixed(2)}以上の組なし · ${so.done ? "発走前のオッズ" : "いまのオッズ"}でいちばん高い組</span></div>${rows}</div>`;
   const hitAll = so.done && so.picks.some(x => x.ret), loseAll = so.done && !so.picks.some(x => x.ret);
   return `<div class="pk evw ${hitAll ? "hit" : loseAll ? "lose" : ""}">
-    <div class="pk-h"><span>期待値ワイド<em class="vS">期待値 ${EV_WIDE.min_ev.toFixed(1)}以上</em></span><span>${so.done ? "発走前のオッズで選んだ" : "いまのオッズで"}</span></div>${rows}</div>`;
+    <div class="pk-h"><span>期待値ワイド<em class="vS">期待値 ${EV_WIDE.min_ev.toFixed(2)}以上</em></span><span>${so.done ? "発走前のオッズで選んだ" : "いまのオッズで"}</span></div>${rows}</div>`;
 }
 
 // ---------------------------------------------------------------- 後押し(オッズに足す評価値の式。2026-11-15)
@@ -1114,7 +1121,7 @@ function skipRow(r) {
     <b>${esc(r.venue)} ${r.rno}R</b><span class="tm num">${esc(r.start || "")}</span>
     <span class="r">${esc(shortReason(r.pred.reason))}</span><span class="czs">${chaosTag(r, true)}</span>
     ${done ? `<span class="rs num">${res.order.slice(0, 3).join("-")}</span>` : ""}</summary>
-    <div class="rc-m" style="padding-top:2px">${meta(r)}</div>${marks(r)}${detailInner(r)}</details>`;
+    <div class="rc-m" style="padding-top:2px">${meta(r)}</div>${marks(r)}<div class="evww">${evWideInner(r)}</div>${detailInner(r)}</details>`;
 }
 
 const evCls = v => v >= 1 ? "ev up" : "ev";
@@ -1428,7 +1435,7 @@ function renderMoney() {
     <div class="daysum">
       <div class="hd">${fmtD(gFrom)} 〜 ${fmtD(to)} の成績(1点${h.unit}円)</div>
       ${sumRow("後押しの買い目", "馬連 後押し上5% × 1番人気", gs[0], gs[1], gs[0] * 100, gs[2], "点")}
-      ${sumRow("期待値ワイド", "ワイド 期待値 " + EV_WIDE.min_ev.toFixed(1) + "以上", ew[0], ew[1], ew[0] * 100, ew[2], "点")}
+      ${sumRow("期待値ワイド", "ワイド 期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上", ew[0], ew[1], ew[0] * 100, ew[2], "点")}
       ${sumRow("モデルの買い目", "3連複 ◎-○-▲", rs.length, hit, S, R)}
       <div class="ft"><b>期待値ワイド</b>: 発走前のオッズが残っている日(2026-11-14 から)だけ数える。グラフ・表には入れていない。
         <b>後押しの買い目(回収重視)</b>: 2026-11-14 までは、その年を除いて作った式で再現した成績(人気は確定オッズ)。
@@ -2582,7 +2589,7 @@ function evWideRule() {
   const rows = e.map(r => `<tr><td>${fmtD(r[0]).slice(5)}</td><td>${r[1]}</td><td>${r[2]}</td><td class="${r[3] >= r[1] * 100 ? "good" : "neg"}">${pct(r[3], r[1] * 100)}</td></tr>`).join("");
   return `<div class="sec">期待値ワイド</div>
     <ul class="rules">
-      <li><b>何か</b>レースの「期待値」の表のワイドで、期待値が <b>${EV_WIDE.min_ev.toFixed(1)}以上</b>の組を1点100円で買う。表に出る組(確率の高い ${EV_WIDE.top}組と ◎-○)だけ</li>
+      <li><b>何か</b>レースの「期待値」の表のワイドで、期待値が <b>${EV_WIDE.min_ev.toFixed(2)}以上</b>の組を1点100円で買う。表に出る組(確率の高い ${EV_WIDE.top}組と ◎-○)だけ</li>
       <li><b>期待値</b>確率 = ${PRE.pt} × その2頭を含む3連複の組の 1/オッズ の合計(3着内の当たり方は3連複の市場がいちばん正確)。
         払戻の見込み = ワイドのオッズの下限 + ${PRE.alpha} × 幅(当たったときの払戻は下限寄りになる)。期待値 = 確率 × 払戻の見込み</li>
       <li><b>いつ出るか</b>発走の${PRE.fresh}分前より後に取ったオッズだけで出す(それより前のオッズは売れ始めで当てにならない)。
