@@ -277,11 +277,14 @@ public class MainActivity extends Activity {
             if ("run".equals(phase)) handler.postDelayed(tick, TICK_MS);
             return;
         }
+        long next = TICK_MS;
         try {
             // evaluateJavascript は JSON の文字列を、さらに文字列として返す
             String s = new JSONArray("[" + raw + "]").getString(0);
             JSONObject o = new JSONObject(s);
             String st = o.optString("st"), msg = o.optString("msg"), info = o.optString("info");
+            // 待っている間は、次に画面を見るまでの間をあける(autopilot.js が next で指示。IPAT の画面作りをじゃましない)
+            next = Math.max(TICK_MS, Math.min(2000, o.optLong("next", TICK_MS)));
             if (!"wait".equals(st) || !msg.isEmpty()) lastMsg = msg;
             if ("tap".equals(st)) tapInfo = info;
             String h = st + " " + msg;
@@ -312,7 +315,7 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             lastMsg = "画面を読めませんでした";      // 読み込み中などで読めないことがある。続けて見る
         }
-        if ("run".equals(phase)) handler.postDelayed(tick, TICK_MS);
+        if ("run".equals(phase)) handler.postDelayed(tick, next);
     }
 
     /** 止まった所の手がかり(画面の名前・押そうとした所の形。お金や個人の情報は入れない)をコピーする */

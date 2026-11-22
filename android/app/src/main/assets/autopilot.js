@@ -7,6 +7,7 @@
 // 戻り値(JSON の文字列): {st: tap|wait|login|final|error|unknown, msg, x, y, info}
 //   x, y … 押す場所(画面の幅・高さに対する割合)。info … うまく押せないときの、押そうとした所の形
 (function (B, STARTED) {
+  var T0 = Date.now();
   var txt = function (e) { return ((e.innerText || e.textContent || "") + "").replace(/\s+/g, " ").trim(); };
   var body = txt(document.body || document.documentElement);
   // page … 今の画面の名前(IPAT の画面の id)。止まったときに、どの画面だったか分かるように毎回付ける
@@ -25,8 +26,15 @@
   // 押す所(競馬場・レース・式別など)が見つからないとき、止める前に待つ時間(ミリ秒)。画面の見出しが出ても、
   // 一覧はあとから出ることがある(2026-11-21: 競馬場名の画面で「京都(土) がまだ発売されていません」と止まり、やり直すと進んだ)
   var NOTFOUND_WAIT_MS = 5000;
-  // 競馬場名の画面は 10秒まで待ち、それでも一覧が出なければトップメニューからやり直す(2回まで。手でやり直すと進むので同じことをする)
-  var VENUE_NOTFOUND_MS = 10000, VENUE_RETRY = 2;
+  // 競馬場名の画面は 15秒まで待ち、それでも一覧が出なければトップメニューからやり直す(2回まで。手でやり直すと進むので同じことをする)
+  var VENUE_NOTFOUND_MS = 15000, VENUE_RETRY = 2;
+  // 競馬場の一覧が出てから、位置が動かなくなって この時間たってから押す(出たばかりの一覧は押しても効かないことがある)
+  var VENUE_STABLE_MS = 400;
+  // トップメニューは、出てから この時間たち、読み終えてから(最大 TOP_LOAD_MS)通常投票を押す。
+  // 購入限度額などをあとから読み込むので、その途中で通常投票へ進むと競馬場の一覧が出ないことがある(2026-11-22)
+  var TOP_WAIT_MS = 1000, TOP_LOAD_MS = 3000;
+  // 待っている間は、画面を見る間をあける(ミリ秒。IPAT が一覧を作るのを、こちらの読み取りでじゃましない)
+  var SLOW_MS = 400;
   // 押したタッチが画面に届いたか(届いた所の形)を残す。うまく進まないときの手がかり
   if (!window.__kbHook) {
     window.__kbHook = 1;
@@ -42,6 +50,8 @@
     var els = document.querySelectorAll("a,button,input[type=button],input[type=submit],li,td,th,span,div,p,label,img");
     for (var i = 0; i < els.length; i++) {
       var e = els[i];
+      // 文字の多い入れ物(画面全体の div など)は innerText を取らずに飛ばす(毎回取ると重く、IPAT の画面作りを遅らせる)
+      if (e.tagName !== "INPUT" && e.tagName !== "IMG" && (e.textContent || "").length > 1500) continue;
       if (!visible(e)) continue;
       var t = e.tagName === "INPUT" ? (e.value || "").trim() : e.tagName === "IMG" ? (e.alt || "").trim() : txt(e);
       if (!t || t.length > 80) continue;
@@ -208,6 +218,29 @@
       if (visible(e) && t) xs.push(t.slice(0, 20));
     }
     return xs.join(" / ") || "なし";
+  }
+  // 読み込み中の印(jQuery Mobile のくるくる)
+  function loading() { return /(^|\s)ui-loading(\s|$)/.test(document.documentElement.className); }
+  // 競馬場の画面で止まったときの手がかり(画面の作り・数だけ。お金や個人の情報は入れない)
+  function venueDiag(waited) {
+    var de = document.documentElement, shown = 0, hid = 0, xs = [];
+    var els = document.querySelectorAll("a,li,span,div,p,td,button,label,h1,h2,h3");
+    for (var i = 0; i < els.length; i++) {
+      var e = els[i];
+      if (e.children.length) continue;
+      var t = (e.textContent || "").replace(/\s+/g, " ").trim();
+      if (t.length > 30 || !/[(（][土日月火水木金][)）]/.test(t)) continue;
+      if (visible(e)) shown++; else hid++;
+      if (xs.length < 6) xs.push(t + (visible(e) ? "" : "(隠れ)"));
+    }
+    var pages = Array.prototype.map.call(document.querySelectorAll("[data-role=page], .ui-page"), function (p) {
+      return (p.id || "?") + (/ui-page-active/.test(p.className) ? "*" : "");
+    }).slice(0, 8).join(",");
+    return "読み込み " + document.readyState + (loading() ? " くるくる" : "") + " | html " + ((de.className.match(/ui-[\w-]+/g) || []).join(" ") || "なし") +
+      " | ページ " + (pages || "なし") + " | 曜日の付いた所 見える" + shown + "・隠れた" + hid + (xs.length ? "「" + xs.join(" / ") + "」" : "") +
+      " | iframe " + document.querySelectorAll("iframe").length + " | ボタン " + buttons() +
+      (waited !== undefined ? " | 待った " + Math.round(waited / 100) / 10 + "秒" : "") + " | " + (window.__kbSettle || "") +
+      " | 調べる時間 " + (Date.now() - T0) + "ms";
   }
   // 灰色で押せないボタン(IPAT は a に disabled の class が付く)
   function disabledEl(e) {
@@ -493,14 +526,18 @@
   // 競馬場
   if (/競馬場名/.test(body)) {
     var vre = new RegExp("^" + esc(B.venue) + "\\s*[(（]" + esc(B.dow) + "[)）]$");
-    // 競馬場を選ぶのは、画面が出てから 0.25 秒 + 0.2 秒たってから(2026-11-15。出てすぐ押すと早すぎるため)。
-    // 一覧があとから出ることがあるので、画面を読み終えてから探し、見つからなくても 10秒までは待つ。
-    // それでも出なければトップメニューに戻ってやり直す(2回まで。数は画面を読み直しても消えないよう sessionStorage に。2026-11-22)
-    if (!settled() || document.readyState !== "complete") return waitMove();
-    if (!findAll(vre).length) {
+    // 競馬場を選ぶのは、画面が出てから 0.25 秒 + 0.2 秒たち、一覧の位置が 0.4 秒動かなくなってから(2026-11-15・11-22。出てすぐ押すと効かない)。
+    // 一覧があとから出ることがあるので、見つからなくても 15秒までは待ち(その間は画面を見る間をあける)、
+    // それでも出なければトップメニューに戻ってやり直す(2回まで。数は画面を読み直しても消えないよう sessionStorage に)。
+    // 画面を読み終えた(readyState)かは見ない(読み終わらない物があると、一覧が出ていても待ち続けてしまうため。2026-11-22)
+    if (!settled()) return waitMove();
+    var ves = findAll(vre);
+    if (!ves.length) {
       var vk = "venue|" + (pageEl().id || location.pathname);
       if (window.__kbNfKey !== vk) { window.__kbNfKey = vk; window.__kbNfAt = Date.now(); }
-      if (Date.now() - window.__kbNfAt < VENUE_NOTFOUND_MS) return out("wait", B.venue + "(" + B.dow + ") が出るのを待っています");
+      var waited = Date.now() - window.__kbNfAt;
+      if (waited < VENUE_NOTFOUND_MS)
+        return out("wait", B.venue + "(" + B.dow + ") が出るのを待っています", {next: SLOW_MS, info: "競馬場の画面 " + venueDiag(waited)});
       var rt = venueRetry();
       if (rt < VENUE_RETRY && findAll(/^トップメニュー$/).length) {
         venueRetry(rt + 1);
@@ -509,17 +546,28 @@
       }
       venueRetry(0);
       return out("error", B.venue + "(" + B.dow + ") がまだ発売されていません(または見つかりません)",
-        {info: "似た所 " + near(new RegExp(esc(B.venue) + "|[(（][土日月][)）]")) + " | やり直し " + rt + "回 | 読み込み " + document.readyState});
+        {info: "やり直し " + rt + "回 | 似た所 " + near(new RegExp(esc(B.venue) + "|[(（][土日月][)）]")) + " | " + venueDiag(waited)});
     }
     venueRetry(0);
-    if (Date.now() - window.__kbPkAt < 250 + VENUE_WAIT_MS) return out("wait", B.venue + "(" + B.dow + ") を選ぶ前に少し待っています");
+    var vr = ves[0].getBoundingClientRect();
+    var sig = Math.round(vr.left) + "," + Math.round(vr.top) + "," + Math.round(vr.width) + "x" + Math.round(vr.height);
+    if (window.__kbVSig !== sig) { window.__kbVSig = sig; window.__kbVAt = Date.now(); }
+    if (Date.now() - window.__kbPkAt < 250 + VENUE_WAIT_MS || Date.now() - window.__kbVAt < VENUE_STABLE_MS || loading())
+      return out("wait", B.venue + "(" + B.dow + ") を選ぶ前に少し待っています", {info: "競馬場の画面 " + venueDiag()});
     return clickText("venue", vre, B.venue + "(" + B.dow + ")");
   }
   // 購入限度額が 0 のときの注意: このまま進む(入金は自分で)
   if (/ご注意/.test(body) && /このまま進む/.test(body))
     return clickText("caution", /^このまま進む$/, "購入限度額が0円です(投票の前に入金が必要)。入力は進めます");
   // トップメニュー
-  if (/通常投票/.test(body) && /照会メニュー/.test(body)) return clickText("top", /^通常投票$/, "通常投票");
+  if (/通常投票/.test(body) && /照会メニュー/.test(body)) {
+    if (!settled()) return waitMove();
+    var since = Date.now() - window.__kbPkAt;
+    if (since < TOP_LOAD_MS && (document.readyState !== "complete" || loading()))
+      return out("wait", "トップメニューを読み終えるのを待っています", {info: "読み込み " + document.readyState + (loading() ? " くるくる" : "")});
+    if (since < TOP_WAIT_MS) return out("wait", "通常投票を押す前に少し待っています");
+    return clickText("top", /^通常投票$/, "通常投票");
+  }
   if (!STARTED && findAll(/^トップメニュー$/).length) return clickText("tomenu", /^トップメニュー$/, "トップメニューに戻ります");
   return out("unknown", "この画面は分かりません。トップメニューに戻ると続きを進めます(" + label + ")", {info: "ボタン " + buttons()});
 })
