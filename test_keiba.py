@@ -727,5 +727,49 @@ class CourseNar(unittest.TestCase):
         self.assertTrue(v["waku_idx"])                                   # 場全体の枠も使う
 
 
+class ArmLive(unittest.TestCase):
+    """開催日の更新を、次にいつ起動するか(tools/arm_live.py)"""
+
+    def setUp(self):
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools"))
+        import arm_live as A
+        self.A = A
+
+    def at(self, s):
+        from datetime import datetime
+        return datetime.strptime(s, "%Y%m%d%H%M").replace(tzinfo=self.A.JST)
+
+    def test_decide(self):
+        d = self.A.decide
+        days = [("20261121", "16:25"), ("20261122", "16:20"), ("20261123", "15:30"), ("20261128", "16:25")]
+        self.assertEqual(d(self.at("202611220800"), days), "wait 202611220831")     # 朝: 8:31 まで待つ
+        self.assertEqual(d(self.at("202611220816"), days), "now")                   # 15分前から すぐ
+        self.assertEqual(d(self.at("202611221300"), days), "now")                   # 開催中
+        self.assertEqual(d(self.at("202611221700"), days), "now")                   # 最後の発走 +40分まで
+        self.assertEqual(d(self.at("202611221701"), days), "wait 202611230831")     # 終わったら 明日の 8:31
+        self.assertEqual(d(self.at("202611231615"), days), "none")                  # 次の開催(土曜)は20時間より先
+        self.assertEqual(d(self.at("202611272040"), days), "wait 202611280831")     # 金曜の夜に 土曜の分を予約
+        self.assertEqual(d(self.at("202611290900"), days), "none")                  # 開催が無い
+
+    def test_guard(self):
+        g, now = self.A.guard, self.at("202611221000")
+        t = now.timestamp()
+        self.assertEqual(g("now", now, t - 5 * 60), "wait 202611221030")           # すぐ終わった回は 30分後に
+        self.assertEqual(g("now", now, t - 3 * 3600), "now")
+        self.assertEqual(g("now", now, 0), "now")                                   # 「競馬の予想」からは そのまま
+        self.assertEqual(g("wait 202611230831", now, t - 60), "wait 202611230831")
+
+    def test_race_days(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            os.makedirs(os.path.join(td, "days"))
+            races = {"a": {"center": "jra", "venue": "東京", "start": "15:30"}, "b": {"center": "jra", "venue": "東京", "start": "16:10"},
+                     "c": {"center": "nar", "venue": "高知", "start": "20:30"}}
+            for name, rs in (("20261121", races), ("20261122", races), ("20261124", {"c": races["c"]}), ("20261125", {})):
+                json.dump({"races": rs}, open(os.path.join(td, "days", name + ".json"), "w"))
+            self.assertEqual(self.A.race_days(td, "20261122"), [("20261122", "16:10")])     # 中央だけ・今日から
+
+
 if __name__ == "__main__":
     unittest.main()

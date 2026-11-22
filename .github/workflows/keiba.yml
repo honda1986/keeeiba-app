@@ -28,6 +28,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write            # 開催日の更新(keiba_live.yml)が止まっていたら起動する
 
 jobs:
   build:
@@ -67,3 +68,8 @@ jobs:
             sleep 5
           done
           exit 1
+      - name: 開催日の更新が止まっていたら起動する
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/arm_live.py --dispatch

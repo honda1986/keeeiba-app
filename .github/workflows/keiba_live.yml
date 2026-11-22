@@ -4,6 +4,9 @@ name: 競馬の予想(開催日は10分ごと)
 # GitHub の時刻指定は1〜3時間遅れたり飛ばされたりするので、30分ごとに起こすのをやめ、始まったら自分で回る。
 # 1回の実行は6時間までなので、午前(8:31〜12:40)と午後(12:31〜最後のレースの結果まで)に分ける。
 # 開催の無い日は1回更新して終わる(平日などの更新は「競馬の予想」が受け持つ)。
+# 時刻指定が5時間以上遅れることもある(2026-11-22)ので、終わるときに次の回を自分で起動する(tools/arm_live.py):
+#   開催中なら午後の回をすぐ、開催が終わったら次の開催日の 8:31 に始まる回を「待つ回」(wait_until)で予約する。
+#   待つ回は1回5時間まで眠り、足りなければ自分をもう一度起動して待ち続ける。時刻指定はそのまま予備として残す。
 
 on:
   workflow_dispatch:
@@ -12,22 +15,54 @@ on:
         description: '何時まで繰り返すか HH:MM(日本時間。空なら午前は 12:40、午後は最後のレースの結果まで)'
         required: false
         default: ''
+      wait_until:
+        description: '(自動で使う)この時刻 YYYYMMDDHHMM(日本時間)まで待ってから、開催日の更新を起動する'
+        required: false
+        default: ''
   schedule:
     - cron: '31 23 * * *'   # JST 8:31 から 12:40 まで
     - cron: '31 3 * * *'    # JST 12:31 から 最後のレースの結果まで
 
-# 午前と午後が重ならないように、前のが終わるまで待つ(「競馬の予想」とは別の組。同じ組だと、待っている方が消されることがある)
-concurrency:
-  group: keiba-live
-  cancel-in-progress: false
-
 permissions:
   contents: write
+  actions: write            # 次の回を自分で起動する(gh workflow run)
 
 jobs:
-  live:
+  # 次の開催日の始まりまで待って、更新の回を起動する(更新の回とは別の組なので、待っている間も更新の回は動ける)
+  wait:
+    if: inputs.wait_until != ''
     runs-on: ubuntu-latest
     timeout-minutes: 330
+    concurrency:
+      group: keiba-live-wait
+      cancel-in-progress: false
+    steps:
+      - name: 始まりの時刻まで待って起動する
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          W: ${{ inputs.wait_until }}
+        run: |
+          TARGET=$(TZ=Asia/Tokyo date -d "${W:0:8} ${W:8:2}:${W:10:2}" +%s)
+          LEFT=$(( TARGET - $(date +%s) ))
+          echo "$(TZ=Asia/Tokyo date -d @$TARGET '+%m/%d %H:%M') まで あと $(( LEFT / 60 )) 分"
+          if [ "$LEFT" -gt 18000 ]; then
+            # 1回の実行は6時間までなので、5時間眠ったら自分をもう一度起動して待ち続ける
+            sleep 18000
+            gh workflow run keiba_live.yml --ref main -f wait_until="$W"
+          else
+            if [ "$LEFT" -gt 0 ]; then sleep "$LEFT"; fi
+            gh workflow run keiba_live.yml --ref main
+          fi
+
+  live:
+    if: inputs.wait_until == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    # 午前と午後が重ならないように、前のが終わるまで待つ(「競馬の予想」とは別の組。同じ組だと、待っている方が消される)
+    concurrency:
+      group: keiba-live
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -48,6 +83,10 @@ jobs:
           if [ -n "$UNTIL" ]; then END=$(TZ=Asia/Tokyo date -d "$UNTIL" +%s)
           elif [ "$HOUR" -lt 12 ]; then END=$(TZ=Asia/Tokyo date -d "12:40" +%s)
           else END=$(TZ=Asia/Tokyo date -d "23:59" +%s); fi
+          # 6時間で打ち切られる前に終わって、次の回を起動できるように(5時間まで)
+          STARTED=$(date +%s)
+          echo "LIVE_STARTED=$STARTED" >> "$GITHUB_ENV"
+          if [ "$END" -gt $(( STARTED + 18000 )) ]; then END=$(( STARTED + 18000 )); fi
           save() {
             git add keiba/data.json keiba/days keiba/past keiba/history.json
             if git diff --cached --quiet; then echo "変更なし"; return 0; fi
@@ -74,3 +113,7 @@ jobs:
             # 次の10分の区切りまで待つ(:x0)
             sleep $(( 600 - NOW % 600 ))
           done
+      - name: 次の回を起動する(時刻指定が遅れても止まらないように)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/arm_live.py --dispatch
