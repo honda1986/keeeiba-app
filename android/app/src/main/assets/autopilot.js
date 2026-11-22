@@ -17,6 +17,9 @@
     for (var k in extra || {}) o[k] = extra[k];
     return JSON.stringify(o);
   };
+  // 画面の読み込みの途中(IPAT は通常投票のあとなどに画面ごと読み直す)は body がまだ無い。そのときは待つ
+  // (2026-11-22。body が無いまま見出しを読みに行ってエラーになり、通常投票のあとで止まっていた)
+  if (!document.body) return out("wait", "画面を読み込んでいます", {next: 200});
   var visible = function (e) { return !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length); };
   var esc = function (s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); };
   var z2 = function (u) { return (u < 10 ? "0" : "") + u; };
@@ -166,7 +169,7 @@
     return d.join(" ; ").slice(0, 300) || "?";
   }
   // 画面(ページ)の名前と見出し。切り替わったばかり(1秒以内・切り替えの動きの途中)なら押さずに待つ
-  function pageEl() { return document.querySelector(".ui-page-active") || document.body; }
+  function pageEl() { return document.querySelector(".ui-page-active") || document.body || document.documentElement; }
   function heading() {
     var hd = pageEl().querySelector("[data-role=header], .ui-header");
     if (!hd) return "";
@@ -179,7 +182,7 @@
     var h1 = pageEl().querySelector("[data-role=header] h1, .ui-header h1, .ui-title");
     var key = (pageEl().id || location.pathname) + "|" + (h1 ? txt(h1) : "");
     if (window.__kbPk !== key) { window.__kbPk = key; window.__kbPkAt = Date.now(); }
-    var moving = /ui-mobile-viewport-transitioning/.test(document.documentElement.className + " " + document.body.className);
+    var moving = /ui-mobile-viewport-transitioning/.test(document.documentElement.className + " " + (document.body ? document.body.className : ""));
     var t = Date.now() - window.__kbPkAt;
     window.__kbSettle = "画面 " + key + " " + Math.round(t / 100) / 10 + "秒" + (moving ? " 切り替え中" : "");
     return t > 250 && (!moving || t > 1500);

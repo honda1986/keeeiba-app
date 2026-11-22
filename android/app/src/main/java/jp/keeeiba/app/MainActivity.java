@@ -53,6 +53,8 @@ public class MainActivity extends Activity {
     static final String IPAT_SP = "https://www.ipat.jra.go.jp/sp/";
     static final String IPAT_PC = "https://www.ipat.jra.go.jp/";
     static final long TICK_MS = 150, LIMIT_MS = 3 * 60 * 1000;   // 0.15秒ごとに画面を見る。3分進まなければ止める
+    static final long JSERR_MS = 5000;                              // 自動入力の中のエラーが、この時間続いたら止める
+    long jsErrAt = 0;
     /** 裏に回っていたのがこれより長ければ、戻ったときに予想の画面を読み直す(予想アプリの更新を出すため) */
     static final long RELOAD_AFTER_MS = 10 * 60 * 1000;
 
@@ -230,6 +232,7 @@ public class MainActivity extends Activity {
         lastInfo = "";
         tapInfo = "";
         history.clear();
+        jsErrAt = 0;
         phase = "run";
         lastAt = System.currentTimeMillis();
         betBar.setVisibility(View.GONE);
@@ -266,7 +269,7 @@ public class MainActivity extends Activity {
             }
             // 中でエラーが出たら、読み込み中(null)と区別できるように error として返す
             String js = "(function(){try{return (" + autopilot + "\n)(" + task.toString() + "," + (steps > 0) + ");}"
-                    + "catch(e){return JSON.stringify({st:'error',msg:'自動入力の中でエラーが出ました: '+e.message,"
+                    + "catch(e){return JSON.stringify({st:'jserr',msg:'自動入力の中でエラーが出ました: '+e.message,"
                     + "info:String(e.stack||'').slice(0,400)});}})()";
             ipat.evaluateJavascript(js, MainActivity.this::onStep);
         }
@@ -293,6 +296,15 @@ public class MainActivity extends Activity {
                 if (history.size() > 10) history.removeFirst();
             }
             lastInfo = "画面 " + o.optString("page") + " | " + (info.isEmpty() ? "最後に押した所 " + tapInfo : info);
+            // 自動入力の中のエラーは、画面の読み込みの途中で一瞬だけ出ることがあるので、5秒続いたときだけ止める
+            if ("jserr".equals(st)) {
+                long now = System.currentTimeMillis();
+                if (jsErrAt == 0) jsErrAt = now;
+                if (now - jsErrAt < JSERR_MS) st = "wait";
+                else st = "error";
+            } else {
+                jsErrAt = 0;
+            }
             if ("tap".equals(st) || "login".equals(st)) {       // 進んだ(ログイン中も)ら、止めるまでの時間を延ばす
                 lastAt = System.currentTimeMillis();
             }
