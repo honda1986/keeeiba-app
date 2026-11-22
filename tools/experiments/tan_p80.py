@@ -90,4 +90,13 @@ hon = [x for x in H if x["top"]]
 gap_table("単勝 ◎(確率80%以上)を、○との確率の差で分ける", [x for x in hon if x["p"] >= 0.80])
 gap_table("単勝 ◎(確率70〜80%)を、○との確率の差で分ける", [x for x in hon if 0.70 <= x["p"] < 0.80])
 gap_table("単勝 ◎(全部)を、○との確率の差で分ける", hon)
+
+# 「80%以上・差30%以上で、オッズが2倍以上なら 56% × 2倍 でプラス?」: オッズの帯ごとに、実際の1着の割合を見る
+print("\n■ 単勝 ◎80%以上・○との差30%以上を、確定オッズで分ける(1着の割合 × オッズ が 1 を超えるか)")
+g30 = [x for x in hon if x["p"] >= 0.80 and x["gap"] >= 0.30]
+for lo, hi in ((1, 1.5), (1.5, 2.0), (2.0, 2.5), (2.5, 1e9), (2.0, 1e9)):
+    show("オッズ {:.1f}〜{}倍".format(lo, "{:.1f}".format(hi) if hi < 1e9 else ""), [x for x in g30 if lo <= x["odds"] < hi])
+print("\n■ くらべる: ◎80%以上(差は問わない)をオッズで分ける")
+for lo, hi in ((2.0, 2.5), (2.5, 1e9), (2.0, 1e9)):
+    show("オッズ {:.1f}〜{}倍".format(lo, "{:.1f}".format(hi) if hi < 1e9 else ""), [x for x in hon if x["p"] >= 0.80 and lo <= x["odds"] < hi])
 print("\nかかった時間 {:.0f}分".format((time.time() - t0) / 60))
