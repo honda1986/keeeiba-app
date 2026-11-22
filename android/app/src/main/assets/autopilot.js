@@ -19,7 +19,17 @@
   };
   // 画面の読み込みの途中(IPAT は通常投票のあとなどに画面ごと読み直す)は body がまだ無い。そのときは待つ
   // (2026-11-22。body が無いまま見出しを読みに行ってエラーになり、通常投票のあとで止まっていた)
-  if (!document.body) return out("wait", "画面を読み込んでいます", {next: 200, info: "読み込み " + document.readyState + " | " + location.pathname});
+  // 読み込みの途中(HTML を読み終える前)は、IPAT のほかの画面(式別・金額入力・合計金額入力など)の文字まで見えていることがあり、
+  // 金額入力まで来たと見まちがえて黙って止まっていた(1.0.36〜1.0.37。2026-11-22)。読み終えるまでは何も決めない
+  if (!document.body || document.readyState === "loading")
+    return out("wait", "画面を読み込んでいます", {next: 200, info: "読み込み " + document.readyState + " | " + location.pathname});
+  // 画面(jQuery Mobile のページ)が2つ以上あるのに、どれも出ていない = まだ準備中。5秒までは待つ(準備が済むと、ほかの画面の文字は隠れる)
+  var jqPages = document.querySelectorAll("[data-role=page]");
+  if (jqPages.length >= 2 && !document.querySelector(".ui-page-active")) {
+    if (window.__kbPrepKey !== location.href) { window.__kbPrepKey = location.href; window.__kbPrepAt = Date.now(); }
+    if (Date.now() - window.__kbPrepAt < 5000)
+      return out("wait", "画面を準備しています", {next: 200, info: "ページ " + jqPages.length + "つ・出ているページなし | 読み込み " + document.readyState});
+  }
   var visible = function (e) { return !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length); };
   var esc = function (s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); };
   var z2 = function (u) { return (u < 10 ? "0" : "") + u; };

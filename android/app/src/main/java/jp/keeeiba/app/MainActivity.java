@@ -54,7 +54,9 @@ public class MainActivity extends Activity {
     static final String IPAT_PC = "https://www.ipat.jra.go.jp/";
     static final long TICK_MS = 150, LIMIT_MS = 3 * 60 * 1000;   // 0.15秒ごとに画面を見る。3分進まなければ止める
     static final long JSERR_MS = 5000;                              // 自動入力の中のエラーが、この時間続いたら止める
-    static final long STATUS_MS = 3000, STUCK_MS = 25000;           // 同じ所で待って3秒で帯に出し、25秒進まなければ止める
+    static final long STATUS_MS = 1500, STUCK_MS = 25000;           // 同じ所で待って1.5秒で帯に出し、25秒進まなければ止める
+    static final long EVAL_LOST_MS = 3000;    // 画面を見に行って、この時間返事が無ければ見に行き直す(読み込みの途中で返事が消えることがある)
+    int evalSeq = 0, answered = 0;
     long jsErrAt = 0, waitAt = 0;
     String waitMsg = "";
     boolean statusShown = false;
@@ -270,9 +272,9 @@ public class MainActivity extends Activity {
     }
 
     /** 自動入力が同じ所で待っているあいだ、何を待っているかを灰色の帯で出す(止まったように見えないように) */
-    void showStatus(String msg) {
+    void showStatus(String text) {
         statusShown = true;
-        statusBar.setText("自動入力中: " + msg + "(画面に触ると止まります)");
+        statusBar.setText(text);
         statusBar.setVisibility(View.VISIBLE);
     }
 
@@ -299,13 +301,47 @@ public class MainActivity extends Activity {
             String js = "(function(){try{return (" + autopilot + "\n)(" + task.toString() + "," + (steps > 0) + ");}"
                     + "catch(e){return JSON.stringify({st:'jserr',msg:'自動入力の中でエラーが出ました: '+e.message,"
                     + "info:String(e.stack||'').slice(0,400)});}})()";
-            ipat.evaluateJavascript(js, MainActivity.this::onStep);
+            // 返事(onStep)が来ないと、次に見に行く予約が無くなって黙って止まる。EVAL_LOST_MS で返事が無ければ見に行き直す
+            final int seq = ++evalSeq;
+            final Runnable self = this;
+            ipat.evaluateJavascript(js, v -> {
+                if (seq != evalSeq) return;                  // 見に行き直したあとに届いた古い返事
+                answered = seq;
+                onStep(v);
+            });
+            handler.postDelayed(() -> {
+                if (!"run".equals(phase) || seq != evalSeq || answered == seq) return;
+                evalSeq++;
+                if (noteWait("画面の返事を待っています")) return;
+                handler.removeCallbacks(self);
+                handler.post(self);
+            }, EVAL_LOST_MS);
         }
     };
 
+    /** 同じ所で待ち続けているときは、1.5秒で灰色の帯に出し、25秒進まなければ止めて情報をコピーする。止めたら true */
+    boolean noteWait(String msg) {
+        long now = System.currentTimeMillis();
+        if (!msg.equals(waitMsg)) {
+            waitMsg = msg;
+            waitAt = now;
+        }
+        long w = now - waitAt;
+        if (w >= STUCK_MS) {
+            stopTask();
+            report("進まなかった所: " + msg);
+            showError(msg + "(" + (w / 1000) + "秒進まないので止めました。手で続けてください)\n(止めた所の情報をコピーしました。貼り付けて送ってください)");
+            return true;
+        }
+        if (w >= STATUS_MS) showStatus("自動入力中: " + msg + "(" + (w / 1000) + "秒。画面に触ると止まります)");
+        return false;
+    }
+
     void onStep(String raw) {
+        if (!"run".equals(phase)) return;            // 止めたあと(画面に触った・終わった)に届いた返事では押さない
         if (raw == null || "null".equals(raw)) {                       // 画面の読み込み中
-            if ("run".equals(phase)) handler.postDelayed(tick, TICK_MS);
+            if (!"run".equals(phase) || noteWait("画面の読み込みを待っています")) return;
+            handler.postDelayed(tick, TICK_MS);
             return;
         }
         long next = TICK_MS;
@@ -333,21 +369,8 @@ public class MainActivity extends Activity {
             } else {
                 jsErrAt = 0;
             }
-            // 同じ所で待ち続けているときは、3秒で灰色の帯に出し、25秒進まなければ止めて情報をコピーする
             if ("wait".equals(st)) {
-                long now = System.currentTimeMillis();
-                if (!msg.equals(waitMsg)) {
-                    waitMsg = msg;
-                    waitAt = now;
-                }
-                long w = now - waitAt;
-                if (w >= STUCK_MS) {
-                    stopTask();
-                    report("進まなかった所: " + msg);
-                    showError(msg + "(" + (w / 1000) + "秒進まないので止めました。手で続けてください)\n(止めた所の情報をコピーしました。貼り付けて送ってください)");
-                    return;
-                }
-                if (w >= STATUS_MS) showStatus(msg + "(" + (w / 1000) + "秒)");
+                if (noteWait(msg)) return;
             } else {
                 waitMsg = "";
                 hideStatus();
@@ -360,10 +383,15 @@ public class MainActivity extends Activity {
                     steps++;
                     tapAt((float) o.getDouble("x"), (float) o.getDouble("y"));
                 }
-            } else if ("final".equals(st)) {          // 金額入力の画面に着いた: ここで止まる(帯は、買い目と違うときだけ)
+            } else if ("final".equals(st)) {          // 金額入力の画面に着いた: ここで止まる(赤い帯は、買い目と違うときだけ)
                 handler.removeCallbacks(tick);
                 phase = "final";
                 if (o.optBoolean("warn")) showError(msg);
+                else {
+                    // 終わったことを下の灰色の帯で6秒出す(黙って止まったように見えないように)
+                    showStatus("自動入力: " + msg + "(違う画面で止まったら、この文を教えてください)");
+                    handler.postDelayed(() -> { if (!"run".equals(phase)) hideStatus(); }, 6000);
+                }
                 return;
             } else if ("error".equals(st)) {
                 stopTask();
