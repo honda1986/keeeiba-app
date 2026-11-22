@@ -30,15 +30,18 @@ for rid, ix in by.items():
         continue
     tot = p3[ix].sum(); want = min(3, len(ix))
     favs = sorted(od, key=lambda u: (od[u], u))
+    ps = sorted((min(0.99, p3[i] * want / tot) for i in ix), reverse=True)
     for i in ix:
         u = rows[i]["u"]
         if u not in od:
             continue
         p = min(0.99, p3[i] * want / tot)
+        top = p >= ps[0] and len(ps) > 1
         tan = (pay.get("単勝") or {}).get(str(u)); fuku = (pay.get("複勝") or {}).get(str(u))
         H.append(dict(y=rows[i]["date"][:4], p=p, odds=od[u], nk=favs.index(u) + 1, n=len(od),
                       tan=(tan if tan is not None else (od[u] * 100 if order[0] == u else 0)) if order[0] == u else 0,
-                      fuku=(fuku or 0) if u in order[:3] else 0, in3=u in order[:3]))
+                      fuku=(fuku or 0) if u in order[:3] else 0, in3=u in order[:3],
+                      top=top, gap=(p - ps[1]) if top else None))
 print("中央 {}頭 ({:.0f}分)".format(len(H), (time.time() - t0) / 60), flush=True)
 
 
@@ -69,4 +72,22 @@ show("2番人気以下", [x for x in s80 if x["nk"] >= 2])
 show("12頭以下", [x for x in s80 if x["n"] <= 12])
 show("13頭以上", [x for x in s80 if x["n"] >= 13])
 # 複勝は、記録に払戻が残っているレースが少ない(2026年の一部だけ)ので出さない
+
+# 2番目に確率の高い馬(○)との差で分ける(◎ = レースで確率がいちばん高い馬)
+GAPS = ((0, 0.05), (0.05, 0.10), (0.10, 0.15), (0.15, 0.20), (0.20, 0.30), (0.30, 1.0))
+
+
+def gap_table(title, sel):
+    print("\n■ " + title)
+    for lo, hi in GAPS:
+        g = [x for x in sel if lo <= x["gap"] < hi]
+        if len(g) < 30:
+            print("  差 {:2.0f}〜{:3.0f}%  {:5d}頭(少ない)".format(100 * lo, 100 * hi, len(g))); continue
+        show("差 {:2.0f}〜{:3.0f}%(3着内 {:4.1%})".format(100 * lo, 100 * hi, np.mean([x["in3"] for x in g])), g)
+
+
+hon = [x for x in H if x["top"]]
+gap_table("単勝 ◎(確率80%以上)を、○との確率の差で分ける", [x for x in hon if x["p"] >= 0.80])
+gap_table("単勝 ◎(確率70〜80%)を、○との確率の差で分ける", [x for x in hon if 0.70 <= x["p"] < 0.80])
+gap_table("単勝 ◎(全部)を、○との確率の差で分ける", hon)
 print("\nかかった時間 {:.0f}分".format((time.time() - t0) / 60))
