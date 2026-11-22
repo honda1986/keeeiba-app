@@ -19,7 +19,7 @@
   };
   // 画面の読み込みの途中(IPAT は通常投票のあとなどに画面ごと読み直す)は body がまだ無い。そのときは待つ
   // (2026-11-22。body が無いまま見出しを読みに行ってエラーになり、通常投票のあとで止まっていた)
-  if (!document.body) return out("wait", "画面を読み込んでいます", {next: 200});
+  if (!document.body) return out("wait", "画面を読み込んでいます", {next: 200, info: "読み込み " + document.readyState + " | " + location.pathname});
   var visible = function (e) { return !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length); };
   var esc = function (s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); };
   var z2 = function (u) { return (u < 10 ? "0" : "") + u; };
@@ -32,7 +32,7 @@
   // 競馬場名の画面は 15秒まで待ち、それでも一覧が出なければトップメニューからやり直す(2回まで。手でやり直すと進むので同じことをする)
   var VENUE_NOTFOUND_MS = 15000, VENUE_RETRY = 2;
   // 競馬場の一覧が出てから、位置が動かなくなって この時間たってから押す(出たばかりの一覧は押しても効かないことがある)
-  var VENUE_STABLE_MS = 400;
+  var VENUE_STABLE_MS = 400, VENUE_STABLE_MAX = 1500;     // 動き続けていても・くるくるが出たままでも、見つけてから 1.5 秒で押す
   // トップメニューは、出てから この時間たち、読み終えてから(最大 TOP_LOAD_MS)通常投票を押す。
   // 購入限度額などをあとから読み込むので、その途中で通常投票へ進むと競馬場の一覧が出ないことがある(2026-11-22)
   var TOP_WAIT_MS = 1000, TOP_LOAD_MS = 3000;
@@ -53,8 +53,6 @@
     var els = document.querySelectorAll("a,button,input[type=button],input[type=submit],li,td,th,span,div,p,label,img");
     for (var i = 0; i < els.length; i++) {
       var e = els[i];
-      // 文字の多い入れ物(画面全体の div など)は innerText を取らずに飛ばす(毎回取ると重く、IPAT の画面作りを遅らせる)
-      if (e.tagName !== "INPUT" && e.tagName !== "IMG" && (e.textContent || "").length > 1500) continue;
       if (!visible(e)) continue;
       var t = e.tagName === "INPUT" ? (e.value || "").trim() : e.tagName === "IMG" ? (e.alt || "").trim() : txt(e);
       if (!t || t.length > 80) continue;
@@ -552,10 +550,12 @@
         {info: "やり直し " + rt + "回 | 似た所 " + near(new RegExp(esc(B.venue) + "|[(（][土日月][)）]")) + " | " + venueDiag(waited)});
     }
     venueRetry(0);
-    var vr = ves[0].getBoundingClientRect();
+    var vr = ves[0].getBoundingClientRect(), vfk = "venue|" + (pageEl().id || location.pathname) + "|" + window.__kbPkAt;
     var sig = Math.round(vr.left) + "," + Math.round(vr.top) + "," + Math.round(vr.width) + "x" + Math.round(vr.height);
     if (window.__kbVSig !== sig) { window.__kbVSig = sig; window.__kbVAt = Date.now(); }
-    if (Date.now() - window.__kbPkAt < 250 + VENUE_WAIT_MS || Date.now() - window.__kbVAt < VENUE_STABLE_MS || loading())
+    if (window.__kbVFound !== vfk) { window.__kbVFound = vfk; window.__kbVFoundAt = Date.now(); }
+    var calm = Date.now() - window.__kbVAt >= VENUE_STABLE_MS && !loading();
+    if (Date.now() - window.__kbPkAt < 250 + VENUE_WAIT_MS || (!calm && Date.now() - window.__kbVFoundAt < VENUE_STABLE_MAX))
       return out("wait", B.venue + "(" + B.dow + ") を選ぶ前に少し待っています", {info: "競馬場の画面 " + venueDiag()});
     return clickText("venue", vre, B.venue + "(" + B.dow + ")");
   }

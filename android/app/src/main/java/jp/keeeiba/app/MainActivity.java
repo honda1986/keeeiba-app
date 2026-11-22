@@ -54,13 +54,16 @@ public class MainActivity extends Activity {
     static final String IPAT_PC = "https://www.ipat.jra.go.jp/";
     static final long TICK_MS = 150, LIMIT_MS = 3 * 60 * 1000;   // 0.15秒ごとに画面を見る。3分進まなければ止める
     static final long JSERR_MS = 5000;                              // 自動入力の中のエラーが、この時間続いたら止める
-    long jsErrAt = 0;
+    static final long STATUS_MS = 3000, STUCK_MS = 25000;           // 同じ所で待って3秒で帯に出し、25秒進まなければ止める
+    long jsErrAt = 0, waitAt = 0;
+    String waitMsg = "";
+    boolean statusShown = false;
     /** 裏に回っていたのがこれより長ければ、戻ったときに予想の画面を読み直す(予想アプリの更新を出すため) */
     static final long RELOAD_AFTER_MS = 10 * 60 * 1000;
 
     WebView web, ipat;
     FrameLayout ipatBox;
-    TextView betBar;
+    TextView betBar, statusBar;
     Button tabWeb, tabIpat;
     SharedPreferences prefs;
     boolean ipatLoaded = false;
@@ -123,6 +126,15 @@ public class MainActivity extends Activity {
         ipatCol.addView(ipat, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         ipatBox = new FrameLayout(this);
         ipatBox.addView(ipatCol);
+        // 自動入力が待っているあいだの灰色の帯(下に重ねる。IPAT の画面の大きさを変えないように。押せない帯なので、触ると下の IPAT に届く)
+        statusBar = new TextView(this);
+        statusBar.setTextSize(13);
+        statusBar.setTextColor(Color.WHITE);
+        statusBar.setBackgroundColor(0xE0455A64);
+        statusBar.setPadding(dp(12), dp(8), dp(12), dp(8));
+        statusBar.setVisibility(View.GONE);
+        ipatBox.addView(statusBar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
 
         FrameLayout pages = new FrameLayout(this);
         pages.addView(web);
@@ -233,6 +245,8 @@ public class MainActivity extends Activity {
         tapInfo = "";
         history.clear();
         jsErrAt = 0;
+        waitMsg = "";
+        statusShown = false;
         phase = "run";
         lastAt = System.currentTimeMillis();
         betBar.setVisibility(View.GONE);
@@ -245,12 +259,26 @@ public class MainActivity extends Activity {
     void stopTask() {
         phase = "off";
         handler.removeCallbacks(tick);
+        hideStatus();
     }
 
     /** うまくいかなかったときだけ、IPAT の上に赤い帯で知らせる */
     void showError(String msg) {
+        hideStatus();
         betBar.setText("買い目  " + taskText + "\n" + msg + "\n(押すと消える・長押しで買い目をコピー)");
         betBar.setVisibility(View.VISIBLE);
+    }
+
+    /** 自動入力が同じ所で待っているあいだ、何を待っているかを灰色の帯で出す(止まったように見えないように) */
+    void showStatus(String msg) {
+        statusShown = true;
+        statusBar.setText("自動入力中: " + msg + "(画面に触ると止まります)");
+        statusBar.setVisibility(View.VISIBLE);
+    }
+
+    void hideStatus() {
+        if (statusShown) statusBar.setVisibility(View.GONE);
+        statusShown = false;
     }
 
     final Runnable tick = new Runnable() {
@@ -304,6 +332,25 @@ public class MainActivity extends Activity {
                 else st = "error";
             } else {
                 jsErrAt = 0;
+            }
+            // 同じ所で待ち続けているときは、3秒で灰色の帯に出し、25秒進まなければ止めて情報をコピーする
+            if ("wait".equals(st)) {
+                long now = System.currentTimeMillis();
+                if (!msg.equals(waitMsg)) {
+                    waitMsg = msg;
+                    waitAt = now;
+                }
+                long w = now - waitAt;
+                if (w >= STUCK_MS) {
+                    stopTask();
+                    report("進まなかった所: " + msg);
+                    showError(msg + "(" + (w / 1000) + "秒進まないので止めました。手で続けてください)\n(止めた所の情報をコピーしました。貼り付けて送ってください)");
+                    return;
+                }
+                if (w >= STATUS_MS) showStatus(msg + "(" + (w / 1000) + "秒)");
+            } else {
+                waitMsg = "";
+                hideStatus();
             }
             if ("tap".equals(st) || "login".equals(st)) {       // 進んだ(ログイン中も)ら、止めるまでの時間を延ばす
                 lastAt = System.currentTimeMillis();
