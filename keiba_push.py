@@ -10,6 +10,7 @@
 式(重み・境目・過去の成績)は keiba/push_model.json。毎週の学び直しで tools/train_push.py が作り直す。
 ここは keiba.py の予想(numpy 無しでも動く)と tools/train_push.py の両方から使う。そろえ方を1か所にするため"""
 import json
+import math
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -101,6 +102,51 @@ def score(rows, model=None):
                 w[i] += bw * z
                 p[i] += bp * z
     return {u: (round(w[i], 4), round(p[i], 4)) for i, (u, _) in enumerate(rows)}
+
+
+def _lg(p):
+    p = min(max(p, 1e-4), 1 - 1e-4)
+    return math.log(p / (1 - p))
+
+
+def pair_probs(horses, tp, wide, push2, model=None):
+    """後押しの式の組の確率(2頭とも3着内。2026-11-27)= オッズの土台(push_model.json の pair_base)+ 2頭の後押し(push2)。
+    horses = [(馬番, 単勝オッズ)](取消を除く)、tp = 3連複から見た組の強さ、wide = ワイドのオッズ {"a-b": [下限, 上限]}、
+    push2 = 馬番 -> 後押し(2頭とも3着内の式)。土台は tools/train_push.py の build の BP と同じ:
+    [1, logit(pt), logit(pt)^2, logit(0.775/中), その2乗, 2頭の zq の和, 2頭の log q の和](pt = keiba_logic.PRE の pt × 組の強さ、
+    中 = (下限 + 上限)/2、q = 単勝オッズから出した売れ方、zq = q の log をレースの中でそろえたもの)。アプリの pushPairProbs と同じ。
+    -> {"a-b": 確率}。式・オッズが無ければ {}"""
+    import keiba_logic as L
+    m = model if model is not None else load()
+    pb = (m or {}).get("pair_base")
+    od = {int(u): float(o) for u, o in horses if o and float(o) > 1}
+    if not pb or len(od) < 5 or not tp or not wide:
+        return {}
+    us = sorted(od)
+    inv = {u: 1 / od[u] for u in us}; tot = sum(inv.values())
+    lq = {u: math.log(inv[u] / tot) for u in us}
+    zq = dict(zip(us, zs([lq[u] for u in us])))
+    out = {}
+    for k, v in wide.items():
+        s = tp.get(k)
+        lo, hi = (v[0], v[1]) if isinstance(v, (list, tuple)) else (v, v)
+        if not s or not lo or lo <= 1:
+            continue
+        a, b = (int(t) for t in k.split("-"))
+        if a not in od or b not in od or push2.get(a) is None or push2.get(b) is None:
+            continue
+        x0 = _lg(min(L.PRE["pt"] * s, 0.98)); xw = _lg(min(0.775 / ((lo + hi) / 2), 0.98))
+        f = [1.0, x0, x0 * x0, xw, xw * xw, zq[a] + zq[b], lq[a] + lq[b]]
+        z = sum(w * x for w, x in zip(pb, f)) + push2[a] + push2[b]
+        out[k] = 1 / (1 + math.exp(-z))
+    return out
+
+
+def race_pair_probs(rc, wide=None, model=None):
+    """日別ファイルのレースから pair_probs(単勝オッズ・3連複の組の強さ・ワイドのオッズは発走前に取ったもの、後押しは予想のもの)"""
+    hs = [(h["umaban"], h.get("odds")) for h in rc.get("horses") or [] if not h.get("scratched")]
+    p2 = {h["umaban"]: h.get("push2") for h in ((rc.get("pred") or {}).get("horses") or [])}
+    return pair_probs(hs, rc.get("trio_pair") or {}, wide if wide is not None else (rc.get("wide_odds") or {}), p2, model)
 
 
 def level(v, cut):

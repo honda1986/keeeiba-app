@@ -666,7 +666,7 @@ function daySumInner() {
     ${line("期待値ワイド", "期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上", ep, "点")}
     ${line("モデルの買い目", "3連複 ◎-○-▲", mp)}
     <div class="ft">後押しの買い目は、評価値の後押しが上5%の馬と1番人気の馬連。的中は少ない(7%)が、過去5年の回収率は ${((((state.push || {}).stats || {}).oshi || {}).roi || 102).toFixed(0)}%(年に約1,000点)。
-      期待値ワイドは、期待値の表のワイドで ${EV_WIDE.min_ev.toFixed(2)}以上の組(<b>発走の${PRE.fresh}分前から</b>のオッズで出す)。
+      期待値ワイドは、期待値の表のワイドで ${EV_WIDE.min_ev.toFixed(2)}以上、後押し込みでも ${EV_WIDE.push_ev.toFixed(1)}以上の組(<b>発走の${PRE.fresh}分前から</b>のオッズで出す)。
       ${rs.some(r => r.center === "jra" && !r.result) ? `これからのレースは<b>いまのオッズ</b>で出します(オッズが動くと買い目も替わる)。` : ""}</div>`;
 }
 function drawDaySum() {
@@ -905,7 +905,37 @@ function oshiInner(r) {
 //  使うのは発走の PRE.fresh 分前より後に取ったオッズだけ(それより前・確定オッズでは出さない。確定オッズで選ぶと甘く出るため)。
 //  オッズが動くと買い目も替わる。2026-11-21 に境目を 1.0 → 0.95 にした。
 //  境目以上の組が無いレースは、表に出る組で期待値がいちばん高い組を「参考」として箱に出す(買い目には数えない。記録にも入れない)
-const EV_WIDE = {min_ev: 0.95, top: 6};
+//  2026-11-27 から、後押しの式の組の確率(pushPairProbs)でも期待値(後押し込み)を出し、push_ev 以上の組だけ買う(keiba_logic.ev_wide_push_ok)。
+//  5年(確定オッズで再現)で 108% → 112%。後押しの入っていないレース(11/14 まで)は絞らない。外した組は箱の下に参考で出す
+const EV_WIDE = {min_ev: 0.95, top: 6, push_ev: 1.0};
+// 後押しの式の組の確率(2頭とも3着内)= オッズの土台(push_model.json の pair_base)+ 2頭の後押し(push2)。keiba_push.pair_probs と同じ計算。
+// 後押しが予想に入っていなければ null(絞らない)
+function pushPairProbs(r, wo) {
+  const pb = (state.push || {}).pair_base;
+  if (!pb || KOCHI || !r.trio_pair || !wo) return null;
+  const p2 = {};
+  for (const h of (r.pred || {}).horses || []) if (h.push2 != null) p2[h.umaban] = h.push2;
+  if (!Object.keys(p2).length) return null;
+  const od = (r.horses || []).filter(h => !h.scratched && +h.odds > 1).map(h => [h.umaban, +h.odds]).sort((a, b) => a[0] - b[0]);
+  if (od.length < 5) return null;
+  const tot = od.reduce((a, [, o]) => a + 1 / o, 0), lq = {}, zq = {};
+  for (const [u, o] of od) lq[u] = Math.log(1 / o / tot);
+  const vs = od.map(([u]) => lq[u]), mean = vs.reduce((a, v) => a + v, 0) / vs.length;
+  const sd = Math.sqrt(vs.reduce((a, v) => a + (v - mean) ** 2, 0) / vs.length);
+  for (const [u] of od) zq[u] = sd <= 1e-9 ? 0 : Math.max(-3, Math.min(3, (lq[u] - mean) / sd));      // keiba_push.zs と同じ
+  const lg = p => { p = Math.min(Math.max(p, 1e-4), 1 - 1e-4); return Math.log(p / (1 - p)); };
+  const out = {};
+  for (const [k, v] of Object.entries(wo)) {
+    const s = r.trio_pair[k], lo = Array.isArray(v) ? v[0] : v, hi = Array.isArray(v) ? v[1] : v;
+    if (!s || !lo || lo <= 1) continue;
+    const [a, b] = k.split("-").map(Number);
+    if (!(a in lq) || !(b in lq) || p2[a] == null || p2[b] == null) continue;
+    const x0 = lg(Math.min(PRE.pt * s, 0.98)), xw = lg(Math.min(0.775 / ((lo + hi) / 2), 0.98));
+    const f = [1, x0, x0 * x0, xw, xw * xw, zq[a] + zq[b], lq[a] + lq[b]];
+    out[k] = 1 / (1 + Math.exp(-(f.reduce((acc, x, i) => acc + pb[i] * x, 0) + p2[a] + p2[b])));
+  }
+  return out;
+}
 function evWideOf(r) {
   if (KOCHI || r.center !== "jra" || !r.horses || !r.pred || !r.trio_pair || !preFresh(r)) return null;
   const tp = r.trio_pair, wo = r.gw || r.wide_odds;
@@ -920,12 +950,16 @@ function evWideOf(r) {
   const done = !!(r.result && (r.result.order || []).length >= 3);
   const gone = r.horses.filter(h => h.scratched).map(h => h.umaban);
   const pay = ((r.result || {}).payout || {})["ワイド"] || {};
-  const mk = x => ({type: "ワイド", c: x.k.split("-").map(Number), key: x.k, p: x.p, ev: x.ev, odds: x.o, ret: done ? (pay[x.k] || 0) : null});
+  const pp = pushPairProbs(r, wo), pushed = !!(pp && Object.keys(pp).length);
+  const mk = x => ({type: "ワイド", c: x.k.split("-").map(Number), key: x.k, p: x.p, ev: x.ev, odds: x.o, ret: done ? (pay[x.k] || 0) : null,
+                    pev: pushed && pp[x.k] != null ? pp[x.k] * (x.o[0] + PRE.alpha * (x.o[1] - x.o[0])) : null});
   const ok = show.map(mk).filter(x => !x.c.some(u => gone.includes(u)));
-  const picks = ok.filter(x => x.ev >= EV_WIDE.min_ev);
-  // 境目以上が無いときの参考: 期待値がいちばん高い組(同じなら確率の高い方)
+  const pushOk = x => !pushed || (x.pev != null && x.pev >= EV_WIDE.push_ev);        // keiba_logic.ev_wide_push_ok と同じ
+  const picks = ok.filter(x => x.ev >= EV_WIDE.min_ev && pushOk(x));
+  const cut = ok.filter(x => x.ev >= EV_WIDE.min_ev && !pushOk(x));                // 後押しの式で外した組(参考)
+  // 買い目が無いときの参考: 期待値がいちばん高い組(同じなら確率の高い方)
   const ref = picks.length ? null : ok.reduce((a, x) => (!a || x.ev > a.ev) ? x : a, null);
-  return {done, picks, ref};
+  return {done, picks, ref, cut, pushed};
 }
 function evWideInner(r) {
   const so = evWideOf(r);
@@ -933,16 +967,19 @@ function evWideInner(r) {
   const rows = (so.picks.length ? so.picks : [so.ref]).map(x => {
     const st = so.done ? (x.ret ? `<span class="pk-r good">的中 ${yen(x.ret)}</span>` : `<span class="pk-r neg">外れ</span>`) : `<span class="pk-r muted">発走前</span>`;
     return `<div class="pk-b"><span class="ty">${x.type}</span><span class="cb num">${x.c.join("-")}</span>
-      <span class="od num">${x.odds[0] === x.odds[1] ? x.odds[0] : x.odds[0] + "〜" + x.odds[1]}倍 · 期待値 ${x.ev.toFixed(2)} · 見込み ${Math.round(x.p * 100)}%</span>${st}</div>
+      <span class="od num">${x.odds[0] === x.odds[1] ? x.odds[0] : x.odds[0] + "〜" + x.odds[1]}倍 · 期待値 ${x.ev.toFixed(2)}${x.pev != null ? ` · 後押し込み ${x.pev.toFixed(2)}` : ""} · 見込み ${Math.round(x.p * 100)}%</span>${st}</div>
       <div class="pk-n">${x.c.map(u => `${u} ${esc(hname(r, u))}`).join(" ・ ")}</div>
       ${!so.done && buyBtn(r, x.type, x.c) ? `<div class="pk-a">${buyBtn(r, x.type, x.c)}</div>` : ""}`;
   }).join("");
-  if (!so.picks.length)                   // 境目以上が無い: いちばん高い組を参考に(買い目には数えない)
+  // 後押しの式で外した組(参考。買い目・記録には入れない。結果が出たら当たったかも出す)
+  const cutLine = so.cut && so.cut.length ? `<div class="pk-n muted">後押しで外した組: ${so.cut.map(x =>
+    `${x.c.join("-")}(期待値 ${x.ev.toFixed(2)} → 後押し込み ${x.pev != null ? x.pev.toFixed(2) : "-"}${so.done ? (x.ret ? ` · 的中 ${yen(x.ret)}` : " · 外れ") : ""})`).join(" / ")}</div>` : "";
+  if (!so.picks.length)                   // 買い目が無い: いちばん高い組を参考に(買い目には数えない)
     return `<div class="pk none">
-    <div class="pk-h"><span>期待値ワイド<em>参考</em></span><span>${EV_WIDE.min_ev.toFixed(2)}以上の組なし · ${so.done ? "発走前のオッズ" : "いまのオッズ"}でいちばん高い組</span></div>${rows}</div>`;
+    <div class="pk-h"><span>期待値ワイド<em>参考</em></span><span>${so.cut && so.cut.length ? "後押しで外れて買い目なし" : EV_WIDE.min_ev.toFixed(2) + "以上の組なし"} · ${so.done ? "発走前のオッズ" : "いまのオッズ"}でいちばん高い組</span></div>${rows}${cutLine}</div>`;
   const hitAll = so.done && so.picks.some(x => x.ret), loseAll = so.done && !so.picks.some(x => x.ret);
   return `<div class="pk evw ${hitAll ? "hit" : loseAll ? "lose" : ""}">
-    <div class="pk-h"><span>期待値ワイド<em class="vS">期待値 ${EV_WIDE.min_ev.toFixed(2)}以上</em></span><span>${so.done ? "発走前のオッズで選んだ" : "いまのオッズで"}</span></div>${rows}</div>`;
+    <div class="pk-h"><span>期待値ワイド<em class="vS">${so.pushed ? `期待値${EV_WIDE.min_ev.toFixed(2)}・後押し込み${EV_WIDE.push_ev.toFixed(1)}以上` : `期待値 ${EV_WIDE.min_ev.toFixed(2)}以上`}</em></span><span>${so.done ? "発走前のオッズで選んだ" : "いまのオッズで"}</span></div>${rows}${cutLine}</div>`;
 }
 
 // ---------------------------------------------------------------- 後押し(オッズに足す評価値の式。2026-11-15)
@@ -1436,6 +1473,7 @@ function renderMoney() {
   const gs = Object.values(gDay).reduce((a, x) => [a[0] + x.n, a[1] + x.hit, a[2] + x.ret], [0, 0, 0]);
   const gLive = SD.filter(r => r[0] >= PUSH_FROM).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);
   const ew = (h.evw || []).filter(r => r[0] >= from && r[0] <= to).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);   // 期待値ワイド
+  const ewx = (h.evw_out || []).filter(r => r[0] >= from && r[0] <= to).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);   // 後押しで外した組(参考)
   // 日ごと(2つの買い方を並べる。グラフ・表・カレンダー)
   const dates = [...new Set([...Object.keys(gDay), ...Object.keys(byDay)])].sort();
   let cg = 0, cm = 0;
@@ -1489,7 +1527,8 @@ function renderMoney() {
     <div class="daysum">
       <div class="hd">${fmtD(gFrom)} 〜 ${fmtD(to)} の成績(1点${h.unit}円)</div>
       ${sumRow("後押しの買い目", "馬連 後押し上5% × 1番人気", gs[0], gs[1], gs[0] * 100, gs[2], "点")}
-      ${sumRow("期待値ワイド", "ワイド 期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上", ew[0], ew[1], ew[0] * 100, ew[2], "点")}
+      ${sumRow("期待値ワイド", "ワイド 期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上・後押し込み " + EV_WIDE.push_ev.toFixed(1) + "以上", ew[0], ew[1], ew[0] * 100, ew[2], "点")}
+      ${ewx[0] ? sumRow("(参考)後押しで外した組", "期待値ワイドのうち後押し込み " + EV_WIDE.push_ev.toFixed(1) + "未満", ewx[0], ewx[1], ewx[0] * 100, ewx[2], "点") : ""}
       ${sumRow("モデルの買い目", "3連複 ◎-○-▲", rs.length, hit, S, R)}
       <div class="ft"><b>期待値ワイド</b>: 発走前のオッズが残っている日(2026-11-14 から)だけ数える。グラフ・表には入れていない。
         <b>後押しの買い目(回収重視)</b>: 2026-11-14 までは、その年を除いて作った式で再現した成績(人気は確定オッズ)。
@@ -2699,6 +2738,12 @@ function evWideRule() {
       <li><b>何か</b>レースの「期待値」の表のワイドで、期待値が <b>${EV_WIDE.min_ev.toFixed(2)}以上</b>の組を1点100円で買う。表に出る組(確率の高い ${EV_WIDE.top}組と ◎-○)だけ</li>
       <li><b>期待値</b>確率 = ${PRE.pt} × その2頭を含む3連複の組の 1/オッズ の合計(3着内の当たり方は3連複の市場がいちばん正確)。
         払戻の見込み = ワイドのオッズの下限 + ${PRE.alpha} × 幅(当たったときの払戻は下限寄りになる)。期待値 = 確率 × 払戻の見込み</li>
+      ${(() => { const ep = ((state.push || {}).stats || {}).evw_push; if (!ep) return "";
+        const yr = (x, ys) => (x.yr || []).map(v => v == null ? "-" : v + "%").join("・");
+        return `<li><b>後押しで絞る</b>(2026-11-27〜)後押しの式の組の確率(オッズの土台 + 2頭の後押し)でも期待値を出し(箱の「後押し込み」)、
+        <b>${EV_WIDE.push_ev.toFixed(1)}以上</b>の組だけ買う。5年(確定オッズで再現。その年を除いて作った式)で 絞る前 ${ep.all.n.toLocaleString()}点 ${ep.all.roi}% →
+        <b>残る ${ep.in.n.toLocaleString()}点 ${ep.in.roi}%</b>(${yr(ep.in)})、外れる ${ep.out.n.toLocaleString()}点 ${ep.out.roi}%。
+        後押しの入っていないレース(11/14 まで)は絞らない。外した組は箱の下と「収支・分析」に参考で出す</li>`; })()}
       <li><b>いつ出るか</b>発走の${PRE.fresh}分前より後に取ったオッズだけで出す(それより前のオッズは売れ始めで当てにならない)。
         オッズを取り直すと買い目が替わることがある。アプリ(Android)は締切が近いレースのオッズを3分おきに取り直す</li>
       <li><b>これまで</b>${t[0] ? `${t[0]}点・的中 ${t[1]}・回収率 <b>${pct(t[2], t[0] * 100)}</b>(発走前のオッズで選んだ分。下の表)` : "まだありません"}。

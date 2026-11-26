@@ -267,25 +267,40 @@ PRE = {"pt": 0.75, "alpha": 0.35, "fresh": 30}
 #  確率 = PRE.pt × 3連複から見た組の強さ、期待値 = 確率 × (下限 + PRE.alpha × 幅)。表に出る組 = 確率の高い順に top 組と ◎-○。
 #  発走の PRE.fresh 分前より後に取ったオッズだけで出す(確定オッズで選ぶと甘く出る。割安ワイドで確かめた)。
 #  2026-11-21 に境目を 1.0 → 0.95 にした(境目以上が無いレースは、アプリがいちばん高い組を参考に出す。買い目・記録には入れない)
-EV_WIDE = {"min_ev": 0.95, "top": 6}
+# 2026-11-27 から、後押しの式の組の確率(keiba_push.pair_probs = オッズの土台 + 2頭の後押し)でも期待値を出し、push_ev 以上の組だけ買う。
+#  2022〜2026年(確定オッズで再現。その年を除いて作った式)で 絞る前 2,383点 108% → 残る 1,833点 112%(104・112・113・114・120%)、
+#  外れる 550点 94%(tools/experiments/push_ev.py)。後押しが予想に入っていないレースは絞らない
+EV_WIDE = {"min_ev": 0.95, "top": 6, "push_ev": 1.0}
 
 
-def ev_wide_picks(tp, wide, hk=None):
-    """期待値ワイドの組。tp = 組ごとの強さ、wide = ワイドのオッズ、hk = ◎-○ の組("a-b")。
-    -> [{"key", "pair", "p", "ev", "odds"}](確率の高い順)"""
+def ev_wide_rows(tp, wide, hk=None, pp=None):
+    """期待値ワイドの表に出る組(確率の高い順に top 組と ◎-○)。tp = 組ごとの強さ、wide = ワイドのオッズ、hk = ◎-○ の組("a-b")、
+    pp = 後押しの式の組の確率(keiba_push.pair_probs。無ければ None)。
+    -> [{"key", "pair", "p", "ev", "odds", "pev"}](pev = 後押しの式の期待値。pp が無い・その組が無ければ None)"""
     rows = []
     for k, v in (wide or {}).items():
         s = (tp or {}).get(k)
         lo, hi = (v[0], v[1]) if isinstance(v, (list, tuple)) else (v, v)
         if not s or not lo or lo <= 1:
             continue
-        p = min(PRE["pt"] * s, 0.98)
-        rows.append({"key": k, "pair": [int(x) for x in k.split("-")], "p": p, "odds": [lo, hi], "ev": p * (lo + PRE["alpha"] * (hi - lo))})
+        p = min(PRE["pt"] * s, 0.98); eff = lo + PRE["alpha"] * (hi - lo)
+        rows.append({"key": k, "pair": [int(x) for x in k.split("-")], "p": p, "odds": [lo, hi], "ev": p * eff,
+                     "pev": pp[k] * eff if pp and k in pp else None})
     rows.sort(key=lambda x: -x["p"])                     # 同じ確率なら元の並び(アプリと同じ)
     show = rows[:EV_WIDE["top"]]
     if hk and not any(x["key"] == hk for x in show):
         show += [x for x in rows if x["key"] == hk]
-    return [x for x in show if x["ev"] >= EV_WIDE["min_ev"]]
+    return show
+
+
+def ev_wide_push_ok(x, pp):
+    """後押しの式でも期待値が push_ev 以上か。後押しが無いレース(pp が空)は絞らない"""
+    return not pp or (x["pev"] is not None and x["pev"] >= EV_WIDE["push_ev"])
+
+
+def ev_wide_picks(tp, wide, hk=None, pp=None):
+    """期待値ワイドの買い目: 表に出る組のうち、期待値が min_ev 以上で、後押しの式でも push_ev 以上の組"""
+    return [x for x in ev_wide_rows(tp, wide, hk, pp) if x["ev"] >= EV_WIDE["min_ev"] and ev_wide_push_ok(x, pp)]
 
 
 # 後押しの買い目(回収重視。2026-11-15): 後押し(keiba_push.py の push)が上5%の馬 x と、1番人気の馬連。

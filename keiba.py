@@ -1012,16 +1012,19 @@ def pre_fresh(d, rc):
 EVW_FROM = "20261114"         # 発走前のオッズ(3連複の組の強さ)を残し始めた日
 
 
-def ev_wide_history():
-    """期待値ワイド(L.ev_wide_picks)の日ごとの成績 [日付, 点数, 的中, 払戻]。発走前のオッズが残っているレースだけ(アプリの evWideOf と同じ)"""
-    out = []
+def ev_wide_history(split=False):
+    """期待値ワイド(L.ev_wide_picks)の日ごとの成績 [日付, 点数, 的中, 払戻]。発走前のオッズが残っているレースだけ(アプリの evWideOf と同じ)。
+    2026-11-27 から後押しの式でも絞る(L.EV_WIDE の push_ev)。split なら (買い目, 後押しの式で外れた組) の2つを返す"""
+    out, outx = [], []
     if "jra" not in CENTERS:
-        return out
+        return (out, outx) if split else out
+    import keiba_push as PU
+    pm = PU.load()
     for f in sorted(glob.glob(OUT + "/days/*.json")):
         if os.path.basename(f)[:8] < EVW_FROM:
             continue
         day = load(f, None)
-        row = [(day or {}).get("date"), 0, 0, 0]
+        row = [(day or {}).get("date"), 0, 0, 0]; rowx = [(day or {}).get("date"), 0, 0, 0]
         for rid, rc in ((day or {}).get("races") or {}).items():
             res = rc.get("result") or {}
             pr = rc.get("pred") or {}
@@ -1030,14 +1033,18 @@ def ev_wide_history():
             hk = "-".join(str(x) for x in sorted((pr["honmei"], pr["taikou"]))) if pr.get("honmei") and pr.get("taikou") else None
             gone = {h["umaban"] for h in rc.get("horses") or [] if h.get("scratched")}
             pay = (res.get("payout") or {}).get("ワイド") or {}
-            for x in L.ev_wide_picks(rc["trio_pair"], rc.get("wide_odds"), hk):
-                if gone & set(x["pair"]):
+            pp = PU.race_pair_probs(rc, model=pm)
+            for x in L.ev_wide_rows(rc["trio_pair"], rc.get("wide_odds"), hk, pp):
+                if gone & set(x["pair"]) or x["ev"] < L.EV_WIDE["min_ev"]:
                     continue
                 v = pay.get(x["key"], 0)
-                row[1] += 1; row[2] += v > 0; row[3] += v
+                r_ = row if L.ev_wide_push_ok(x, pp) else rowx
+                r_[1] += 1; r_[2] += v > 0; r_[3] += v
         if row[1]:
             out.append(row)
-    return out
+        if rowx[1]:
+            outx.append(rowx)
+    return (out, outx) if split else out
 
 
 PUSH_FROM = "20261115"        # 予想に後押し(push・push2)が入り始めた日
@@ -1179,8 +1186,9 @@ def build_history():
                 "hr": s.get("honmei_rank"), "tr": s.get("taikou_rank"), "bets": bt,
                 "alt": alt_bets(p, rc.get("result") or {})})
         days.append(row)
+    evw, evw_out = ev_wide_history(split=True)        # 期待値ワイド(買い目)と、後押しの式で外れた組(参考。2026-11-27〜)
     hist = {"updated": datetime.now(JST).isoformat(timespec="seconds"), "unit": L.UNIT,
-            "days": days, "races": races, "oshi": oshi_history(), "evw": ev_wide_history(), "push": push_history()}
+            "days": days, "races": races, "oshi": oshi_history(), "evw": evw, "evw_out": evw_out, "push": push_history()}
     save(OUT + "/history.json", hist)
     return hist
 

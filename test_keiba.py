@@ -541,8 +541,46 @@ class Parse(unittest.TestCase):
         self.assertEqual(L.ev_wide_picks(None, wide), [])
         # アプリの数字(index.html の EV_WIDE)と同じ
         html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "index.html"), encoding="utf-8").read()
-        m = re.search(r"const EV_WIDE = \{min_ev: ([\d.]+), top: (\d+)\};", html)
-        self.assertEqual((float(m.group(1)), int(m.group(2))), (L.EV_WIDE["min_ev"], L.EV_WIDE["top"]))
+        m = re.search(r"const EV_WIDE = \{min_ev: ([\d.]+), top: (\d+), push_ev: ([\d.]+)\};", html)
+        self.assertEqual((float(m.group(1)), int(m.group(2)), float(m.group(3))), (L.EV_WIDE["min_ev"], L.EV_WIDE["top"], L.EV_WIDE["push_ev"]))
+        # 後押しで絞る(2026-11-27): 後押しの式の期待値(pp × 払戻の見込み)が push_ev 未満の組は外す。pp が無い(後押しの無いレース)なら絞らない
+        eff = 2.6 + 0.35 * 0.4
+        pp = {"1-3": 1.0 / eff - 0.01, "2-3": 0.5, "2-4": 0.3}
+        self.assertEqual([x["key"] for x in L.ev_wide_picks(tp, wide, pp=pp)], ["2-3", "2-4"])          # 1-3 は後押し込み 0.99
+        self.assertEqual([x["key"] for x in L.ev_wide_picks(tp, wide, pp={"2-3": 0.5})], ["2-3"])       # pp に無い組は外す
+        self.assertEqual([x["key"] for x in L.ev_wide_picks(tp, wide, pp={})], ["1-3", "2-3", "2-4"])    # 後押しが無ければ絞らない
+        rows = L.ev_wide_rows(tp, wide, pp=pp)
+        self.assertAlmostEqual(next(x for x in rows if x["key"] == "2-3")["pev"], 0.5 * (3.0 + 0.35 * 0.4))
+        self.assertIsNone(next(x for x in rows if x["key"] == "1-2")["pev"])
+
+    def test_pair_probs(self):
+        # 後押しの式の組の確率(keiba_push.pair_probs): 土台(オッズ)+ 2頭の後押し。後押しが大きいほど高い。式が無ければ {}
+        import math
+        import keiba_push as PU
+        hs = [(1, 2.0), (2, 4.0), (3, 6.0), (4, 10.0), (5, 20.0), (6, 40.0)]
+        tp = {"1-2": 0.6, "1-3": 0.5, "2-3": 0.3}
+        wide = {"1-2": [1.5, 1.8], "1-3": [2.0, 2.5], "2-3": [4.0, 5.0]}
+        p2 = {u: 0.0 for u in range(1, 7)}
+        pb = [0.1, 1.0, 0.05, -0.5, -0.05, 0.02, 0.15]
+        m = {"pair_base": pb}
+        out = PU.pair_probs(hs, tp, wide, p2, m)
+        self.assertEqual(set(out), {"1-2", "1-3", "2-3"})
+        # 手で計算した値と同じ(土台の材料は train_push.build の BP と同じ並び)
+        inv = {u: 1 / o for u, o in hs}; tot = sum(inv.values()); lq = {u: math.log(inv[u] / tot) for u in inv}
+        mean = sum(lq.values()) / 6; sd = (sum((v - mean) ** 2 for v in lq.values()) / 6) ** 0.5
+        zq = {u: (lq[u] - mean) / sd for u in lq}
+        lg = lambda p: math.log(p / (1 - p))
+        x0 = lg(0.75 * 0.6); xw = lg(min(0.775 / 1.65, 0.98))
+        z = sum(w * x for w, x in zip(pb, [1, x0, x0 * x0, xw, xw * xw, zq[1] + zq[2], lq[1] + lq[2]]))
+        self.assertAlmostEqual(out["1-2"], 1 / (1 + math.exp(-z)))
+        up = PU.pair_probs(hs, tp, wide, {**p2, 1: 0.3}, m)
+        self.assertGreater(up["1-2"], out["1-2"])
+        self.assertEqual(PU.pair_probs(hs, tp, wide, {1: 0.1}, m), {})                     # 後押しの無い馬の組は出さない
+        self.assertEqual(PU.pair_probs(hs, tp, wide, p2, {}), {})                          # 式(pair_base)が無い
+        # 本番の式に pair_base がある(アプリの pushPairProbs が使う)
+        pm = PU.load()
+        if pm:
+            self.assertEqual(len(pm.get("pair_base") or []), 7)
         # 発走前のオッズは発走の30分前より後に取ったものだけ
         rc = {"start": "10:05", "trio_pair_at": "2026-11-21T09:50:00+09:00"}
         self.assertTrue(K.pre_fresh("20261121", rc))

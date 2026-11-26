@@ -78,7 +78,7 @@ def build(rows, races, log=print):
             if a not in pos or b not in pos:
                 continue
             P["ia"].append(pos[a]); P["ib"].append(pos[b]); P["pt"].append(min(PT * s, 0.98)); P["y"].append(int(a in top3 and b in top3))
-            P["pay"].append(pay.get(key, 0) / 100.0); P["mid"].append((v[0] + v[1]) / 2); n += 1
+            P["pay"].append(pay.get(key, 0) / 100.0); P["mid"].append((v[0] + v[1]) / 2); P["lo"].append(v[0]); P["hi"].append(v[1]); n += 1
         psz.append(n)
         D["rid"].append(rid); D["year"].append(rows[ix[0]]["date"][:4]); D["date"].append(rows[ix[0]]["date"]); D["sizes"].append(len(ix))
         k0 += len(ix)
@@ -115,8 +115,8 @@ def fit_win(B, Z, y, sizes, l2=L2):
     return b[kb:]
 
 
-def fit_pair(B, ZP, y, l2=L2):
-    """ロジスティック回帰(2頭とも3着内)。土台 B は縮めず、2頭の評価値の合計 ZP の重みだけ縮める。-> 評価値の重み"""
+def fit_pair(B, ZP, y, l2=L2, full=False):
+    """ロジスティック回帰(2頭とも3着内)。土台 B は縮めず、2頭の評価値の合計 ZP の重みだけ縮める。-> 評価値の重み(full なら土台の重みも先に)"""
     F = np.column_stack([B, ZP]); kb = B.shape[1]; k = F.shape[1]
     R = np.eye(k) * l2; R[:kb, :kb] = 0
     b = np.zeros(k)
@@ -126,25 +126,50 @@ def fit_pair(B, ZP, y, l2=L2):
         b += step
         if np.abs(step).max() < 1e-7:
             break
-    return b[kb:]
+    return b if full else b[kb:]
 
 
 def loyo(D, log=print):
-    """年ごとに、その年を除いて作った式の後押し(馬ごと: 1着の式 w、2頭とも3着内の式 p)"""
+    """年ごとに、その年を除いて作った式の後押し(馬ごと: 1着の式 w、2頭とも3着内の式 p)。
+    D["pp_loyo"] に組ごとの2頭とも3着内の確率(土台 + 後押し。その年を除いて作った式)、D["pair_base"] に全部の年で作った組の式の土台の重みを残す"""
     h, p = D["H"], D["P"]; Z = D["Z"]
     ZP = Z[p["ia"]] + Z[p["ib"]]
-    w = np.zeros(len(Z)); q = np.zeros(len(Z))
+    kb = D["BP"].shape[1]
+    w = np.zeros(len(Z)); q = np.zeros(len(Z)); pp = np.zeros(len(p["y"]))
     for yy in sorted(set(D["year"])):
         te = D["hyear"] == yy; tp_ = D["pyear"] == yy
         if (~te).sum() == 0:
             continue
         bw = fit_win(D["BW"][~te], Z[~te], h["win"][~te], D["sizes"][D["year"] != yy])
-        bp = fit_pair(D["BP"][~tp_], ZP[~tp_], p["y"][~tp_])
-        w[te] = Z[te] @ bw; q[te] = Z[te] @ bp
+        bpf = fit_pair(D["BP"][~tp_], ZP[~tp_], p["y"][~tp_], full=True)
+        w[te] = Z[te] @ bw; q[te] = Z[te] @ bpf[kb:]
+        pp[tp_] = 1 / (1 + np.exp(-(D["BP"][tp_] @ bpf[:kb] + ZP[tp_] @ bpf[kb:])))
         log("  {}年を除いて作った".format(yy))
-    bw = fit_win(D["BW"], Z, h["win"], D["sizes"]); bp = fit_pair(D["BP"], ZP, p["y"])
+    bw = fit_win(D["BW"], Z, h["win"], D["sizes"]); bpf = fit_pair(D["BP"], ZP, p["y"], full=True)
+    bp = bpf[kb:]; D["pair_base"] = bpf[:kb]; D["pp_loyo"] = pp
     del ZP; gc.collect()
     return w, q, bw, bp
+
+
+def evw_push_stats(D):
+    """期待値ワイド(keiba_logic.ev_wide_picks。◎-○ の足しは略)を、後押しの式の期待値で絞った成績。確定オッズで再現した分で、
+    組の確率はその年を除いて作った式(D["pp_loyo"])。in = 絞って残る組(買い目)/ out = 外れる組 / all = 絞る前"""
+    p = D["P"]; ys = sorted(set(D["year"])); py_ = D["pyear"]
+    eff = p["lo"] + L.PRE["alpha"] * (p["hi"] - p["lo"])
+    ev, pev = p["pt"] * eff, D["pp_loyo"] * eff
+    rk = np.zeros(len(ev), int); st = np.concatenate([[0], np.cumsum(D["psz"])[:-1]])
+    for s0, n in zip(st, D["psz"]):
+        if n:
+            o = np.argsort(-p["pt"][s0:s0 + n], kind="stable"); r = np.empty(n, int); r[o] = np.arange(n); rk[s0:s0 + n] = r
+    cur = (ev >= L.EV_WIDE["min_ev"]) & (rk < L.EV_WIDE["top"])
+    keep = cur & (pev >= L.EV_WIDE["push_ev"])
+
+    def tb(m):
+        pay = p["pay"][m]; yy = py_[m]
+        return {"n": int(m.sum()), "hit": round(float((pay > 0).mean()), 4) if m.any() else None,
+                "roi": round(float(100 * pay.mean()), 1) if m.any() else None,
+                "yr": [round(float(100 * pay[yy == y].mean()), 0) if (yy == y).any() else None for y in ys]}
+    return {"in": tb(keep), "out": tb(cur & ~keep), "all": tb(cur)}
 
 
 def tab(lv, hit, pay, years):
@@ -215,6 +240,12 @@ def stats(D, w, q, log=print):
         # 過去のレースの強さ(アプリの pushOf・keiba_push.level と同じ分け方)
         out["_past"]["m"] = {r_: PU.level(float(v), cuts["model"]) for r_, v in zip(trid, tv) if _date[r_] < T.K.PUSH_FROM}
         out["model_years"] = sorted(set(ty))
+    # 期待値ワイドを後押しの式で絞る(2026-11-27)
+    if "pp_loyo" in D:
+        out["evw_push"] = evw_push_stats(D)
+        e = out["evw_push"]
+        log("  期待値ワイド: 絞る前 {}点 {}% / 残る {}点 {}% {} / 外れる {}点 {}%".format(
+            e["all"]["n"], e["all"]["roi"], e["in"]["n"], e["in"]["roi"], e["in"]["yr"], e["out"]["n"], e["out"]["roi"]))
     for k in ("model",):
         if k in out:
             log("  {}: {}".format(k, " / ".join("{}点 的中{:.1%} 回収率{:.1f}% {}".format(x["n"], x["hit"] or 0, x["roi"] or 0, x["yr"]) for x in out[k])))
@@ -304,7 +335,10 @@ def main():
     cuts, st = stats(D, w, q)
     days = st.pop("_days"); past = st.pop("_past")
     out = {"updated": datetime.now(timezone(timedelta(hours=9))).isoformat(timespec="seconds"), "races": len(D["rid"]), "l2": L2,
-           "features": D["names"], "win": [round(float(v), 5) for v in bw], "pair": [round(float(v), 5) for v in bp], "cuts": cuts, "stats": st, "days": days}
+           "features": D["names"], "win": [round(float(v), 5) for v in bw], "pair": [round(float(v), 5) for v in bp], "cuts": cuts, "stats": st, "days": days,
+           # 組の式の土台の重み(keiba_push.pair_probs・アプリの pushPairProbs が使う。2026-11-27)
+           "pair_base": [round(float(v), 6) for v in D["pair_base"]],
+           "pair_base_x": ["1", "logit(pt)", "logit(pt)^2", "logit(0.775/中)", "logit(0.775/中)^2", "zq の和", "log q の和"]}
     json.dump(out, open(PU.FILE, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
     json.dump({"updated": out["updated"], "to": max(D["date"]), "x": past["x"], "m": past["m"]}, open(PU.PAST_FILE, "w", encoding="utf-8"), separators=(",", ":"))
     print("保存:", PU.FILE, PU.PAST_FILE, "過去のレース {} / モデルの買い目 {} ({:.0f}分)".format(len(past["x"]), len(past["m"]), (time.time() - t0) / 60))
