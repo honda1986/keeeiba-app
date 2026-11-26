@@ -6,7 +6,9 @@
    B. A + 2番人気のオッズ・頭数
    C. B + モデル(1番人気の3着内の確率・モデルで何番目か・◎か)
    D. C + 後押し(1番人気の1着の式・2頭とも3着内の式の値。過去の成績が良く見える馬は買われすぎ)
-  式はその年を除いた年で作る。飛ぶ確率の高いレースで、1番人気を外した買い目(モデルの確率の順に、1番人気でない馬)を買う"""
+  式はその年を除いた年で作る。飛ぶ確率の高いレースで、1番人気を外した買い目(モデルの確率の順に、1番人気でない馬)を買う
+  RANK=2 にすると、1番人気の代わりに 2番人気が飛ぶかを見る(材料の「2番人気のオッズ」は 1番人気のオッズになる。2026-11-27)
+  MAX_ODDS … 見る馬(RANK 番人気)のオッズの上限"""
 import os, pickle, sys, time
 from collections import defaultdict
 import numpy as np
@@ -17,6 +19,8 @@ import train_push as TP
 import keiba_final as F
 YS = ("2022", "2023", "2024", "2025", "2026")
 MAX_ODDS = float(os.environ.get("MAX_ODDS", "3.0"))     # 99 にすると全部のレース
+RANK = int(os.environ.get("RANK", "1"))                  # 何番人気が飛ぶかを見るか
+NM = "{}番人気".format(RANK)
 t0 = time.time()
 races = T.load_races()
 norm, rows, jt_all, sp = pickle.load(open(T.CACHE, "rb"))
@@ -51,7 +55,7 @@ for rid, rs in jg.items():
     od = {int(u): o for u, o in (res.get("odds") or {}).items() if o and o > 1}
     if len(order) < 3 or len(od) < 5:
         continue
-    favs = sorted(od, key=lambda u: (od[u], u)); fav = favs[0]
+    favs = sorted(od, key=lambda u: (od[u], u)); fav = favs[RANK - 1]; oth = favs[1] if RANK == 1 else favs[0]
     if od[fav] > MAX_ODDS or (rid, fav) not in P3:
         continue
     s = anyr(rid, rs, None)
@@ -60,13 +64,13 @@ for rid, rs in jg.items():
         continue
     cx = F.chaos_x(od)
     R.append(dict(rid=rid, y=rs[0]["date"][:4], fly=int(fav not in order[:3]), fav=fav, od=od, order=order, pay=res.get("payout") or {},
-                  x=[cx[0], cx[1], np.log(od[favs[1]]), len(od),
+                  x=[np.log(od[fav]), cx[1], np.log(od[oth]), len(od),
                      P3[(rid, fav)], mp.index(fav) + 1, int(s[0] == fav),
                      PW.get((rid, fav), 0.0), PQ.get((rid, fav), 0.0)],
-                  alt=[u for u in mp if u != fav], f2=favs[1]))
+                  alt=[u for u in mp if u != fav], f1=favs[0], f2=favs[1]))
 Y = np.array([r["fly"] for r in R], float); X = np.array([r["x"] for r in R], float); YR = np.array([r["y"] for r in R])
-print("中央 1番人気 {:.1f}倍以下 {}R。飛んだ(3着外) {:.1%}  年ごと {} ({:.0f}分)".format(
-    MAX_ODDS, len(R), Y.mean(), " ".join("{} {:.1%}".format(y, Y[YR == y].mean()) for y in YS), (time.time() - t0) / 60), flush=True)
+print("中央 {} {:.1f}倍以下 {}R。飛んだ(3着外) {:.1%}  年ごと {} ({:.0f}分)".format(
+    NM, MAX_ODDS, len(R), Y.mean(), " ".join("{} {:.1%}".format(y, Y[YR == y].mean()) for y in YS), (time.time() - t0) / 60), flush=True)
 
 
 def auc(p, y):
@@ -109,13 +113,13 @@ def pt(r, typ, us):
 
 
 BETS = [
-    ("単勝 1番人気でないモデル1位", lambda r: [("単勝", r["alt"][:1])]),
+    ("単勝 {}でないモデル1位".format(NM), lambda r: [("単勝", r["alt"][:1])]),
+    ("単勝 1番人気", lambda r: [("単勝", [r["f1"]])]),
     ("単勝 2番人気", lambda r: [("単勝", [r["f2"]])]),
-    ("単勝 1番人気(くらべる)", lambda r: [("単勝", [r["fav"]])]),
-    ("ワイド 1番人気を外したモデル上位2頭", lambda r: [("ワイド", r["alt"][:2])]),
-    ("馬連 1番人気を外したモデル上位2頭", lambda r: [("馬連", r["alt"][:2])]),
-    ("3連複 1番人気を外したモデル上位3頭", lambda r: [("3連複", r["alt"][:3])]),
-    ("3連複 1番人気を外したモデル上位4頭のBOX(4点)", lambda r: [("3連複", list(c)) for c in
+    ("ワイド {}を外したモデル上位2頭".format(NM), lambda r: [("ワイド", r["alt"][:2])]),
+    ("馬連 {}を外したモデル上位2頭".format(NM), lambda r: [("馬連", r["alt"][:2])]),
+    ("3連複 {}を外したモデル上位3頭".format(NM), lambda r: [("3連複", r["alt"][:3])]),
+    ("3連複 {}を外したモデル上位4頭のBOX(4点)".format(NM), lambda r: [("3連複", list(c)) for c in
         [(a, b, c) for i, a in enumerate(r["alt"][:4]) for j, b in enumerate(r["alt"][:4]) if j > i for k, c in enumerate(r["alt"][:4]) if k > j]]),
 ]
 
@@ -133,11 +137,11 @@ def bet_table(title, sel):
                 " ".join("{:3.0f}".format(yp[y] / ys[y]) if ys[y] else "  -" for y in YS)))
 
 
-bet_table("全部(1番人気 3.0倍以下)", R)
+bet_table("全部({} {:.1f}倍以下)".format(NM, MAX_ODDS), R)
 for th in (0.35, 0.40, 0.45):
     bet_table("飛ぶ確率(D) {:.0%}以上".format(th), [r for r, p in zip(R, best) if p >= th])
 bet_table("飛ぶ確率(A オッズだけ) 40%以上", [r for r, p in zip(R, a) if p >= 0.40])
 # 反対に、飛びにくいレースで1番人気の単勝を買ったら
 for th in (0.20, 0.15):
-    bet_table("飛ぶ確率(D) {:.0%}未満(1番人気が来そう)".format(th), [r for r, p in zip(R, best) if p < th])
+    bet_table("飛ぶ確率(D) {:.0%}未満({}が来そう)".format(th, NM), [r for r, p in zip(R, best) if p < th])
 print("\nかかった時間 {:.0f}分".format((time.time() - t0) / 60))
