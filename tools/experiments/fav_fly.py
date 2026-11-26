@@ -63,7 +63,7 @@ for rid, rs in jg.items():
                   x=[cx[0], cx[1], np.log(od[favs[1]]), len(od),
                      P3[(rid, fav)], mp.index(fav) + 1, int(s[0] == fav),
                      PW.get((rid, fav), 0.0), PQ.get((rid, fav), 0.0)],
-                  alt=[u for u in mp if u != fav]))
+                  alt=[u for u in mp if u != fav], f2=favs[1]))
 Y = np.array([r["fly"] for r in R], float); X = np.array([r["x"] for r in R], float); YR = np.array([r["y"] for r in R])
 print("中央 1番人気 {:.1f}倍以下 {}R。飛んだ(3着外) {:.1%}  年ごと {} ({:.0f}分)".format(
     MAX_ODDS, len(R), Y.mean(), " ".join("{} {:.1%}".format(y, Y[YR == y].mean()) for y in YS), (time.time() - t0) / 60), flush=True)
@@ -110,6 +110,8 @@ def pt(r, typ, us):
 
 BETS = [
     ("単勝 1番人気でないモデル1位", lambda r: [("単勝", r["alt"][:1])]),
+    ("単勝 2番人気", lambda r: [("単勝", [r["f2"]])]),
+    ("単勝 1番人気(くらべる)", lambda r: [("単勝", [r["fav"]])]),
     ("ワイド 1番人気を外したモデル上位2頭", lambda r: [("ワイド", r["alt"][:2])]),
     ("馬連 1番人気を外したモデル上位2頭", lambda r: [("馬連", r["alt"][:2])]),
     ("3連複 1番人気を外したモデル上位3頭", lambda r: [("3連複", r["alt"][:3])]),
@@ -135,4 +137,7 @@ bet_table("全部(1番人気 3.0倍以下)", R)
 for th in (0.35, 0.40, 0.45):
     bet_table("飛ぶ確率(D) {:.0%}以上".format(th), [r for r, p in zip(R, best) if p >= th])
 bet_table("飛ぶ確率(A オッズだけ) 40%以上", [r for r, p in zip(R, a) if p >= 0.40])
+# 反対に、飛びにくいレースで1番人気の単勝を買ったら
+for th in (0.20, 0.15):
+    bet_table("飛ぶ確率(D) {:.0%}未満(1番人気が来そう)".format(th), [r for r, p in zip(R, best) if p < th])
 print("\nかかった時間 {:.0f}分".format((time.time() - t0) / 60))
