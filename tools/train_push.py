@@ -11,7 +11,8 @@
                成績(その年を除いて作った式で、その年を確かめたもの。アプリに出す)/
                後押しの買い目(馬連: 後押しが上5%の馬 × 1番人気。keiba_logic.oshi_picks)の日ごとの成績(days)
   keiba/oshi_past.json にも保存: 予想に後押しが入る前の日(keiba.PUSH_FROM より前)のレースごとの、後押しの買い目の馬(x)と
-               モデルの買い目の後押しの強さ(m)。その年を除いて作った式のもの(days と同じ)。アプリが過去の日を開いたときに出す
+               モデルの買い目の後押しの強さ(m)。その年を除いて作った式のもの(days と同じ)。アプリが過去の日を開いたときに出す。
+               w = 期待値ワイドの過去のレースの再現(発走前のオッズを残す前の日。確定オッズと、その年を除いて作った後押しの式)
   keiba/chaos_model.json の chaos_push も作る(2026-11-26): 後押しも使う荒れ度(1番人気が3着に来ない確率)の式。
                オッズだけの式(chaos。tools/chaos_fit.py)より当たる(tools/experiments/fav_fly.py)。後押しは、その年を除いて作った式のもの
   python tools/train_push.py --chaos-only   # 荒れ度の式だけ作る(push_model.json・oshi_past.json は書かない)"""
@@ -151,6 +152,31 @@ def loyo(D, log=print):
     return w, q, bw, bp
 
 
+def past_evw(D):
+    """期待値ワイドの過去のレースの再現(2026-11-27): 発走前のオッズを残す前の日(keiba.HISTORY_FROM〜EVW_FROM の前)は
+    確定オッズ(3連複の組の強さ・ワイド)と、その年を除いて作った後押しの式の組の確率(D["pp_loyo"])で、今と同じ選び方をする。
+    -> {rid: [[組, 確率, 期待値, 後押し込み, 買うか 1/0], ...]}(期待値が min_ev 以上の組だけ。確率の高い順)。アプリが過去の日に出す"""
+    p, h = D["P"], D["H"]; out = {}
+    st = np.concatenate([[0], np.cumsum(D["psz"])[:-1]])
+    for g, rid in enumerate(D["rid"]):
+        if not (T.K.HISTORY_FROM <= D["date"][g] < T.K.EVW_FROM):
+            continue
+        rc = D["info"][rid]; s0, n = st[g], D["psz"][g]
+        pp = {}
+        for j in range(s0, s0 + n):
+            a, b = int(h["u"][p["ia"][j]]), int(h["u"][p["ib"][j]])
+            pp["{}-{}".format(min(a, b), max(a, b))] = float(D["pp_loyo"][j])
+        pr = rc.get("pred") or {}
+        hk = "-".join(str(x) for x in sorted((pr["honmei"], pr["taikou"]))) if pr.get("honmei") and pr.get("taikou") else None
+        gone = {x["umaban"] for x in rc.get("horses") or [] if x.get("scratched")}
+        rows = [x for x in L.ev_wide_rows(rc.get("trio_pair_final") or {}, rc.get("wide_final") or {}, hk, pp)
+                if x["ev"] >= L.EV_WIDE["min_ev"] and not gone & set(x["pair"])]
+        if rows:
+            out[rid] = [[x["key"], round(x["p"], 4), round(x["ev"], 3), None if x["pev"] is None else round(x["pev"], 3),
+                         int(L.ev_wide_push_ok(x, pp))] for x in rows]
+    return out
+
+
 def evw_push_stats(D):
     """期待値ワイド(keiba_logic.ev_wide_picks。◎-○ の足しは略)を、後押しの式の期待値で絞った成績。確定オッズで再現した分で、
     組の確率はその年を除いて作った式(D["pp_loyo"])。in = 絞って残る組(買い目)/ out = 外れる組 / all = 絞る前"""
@@ -243,6 +269,7 @@ def stats(D, w, q, log=print):
     # 期待値ワイドを後押しの式で絞る(2026-11-27)
     if "pp_loyo" in D:
         out["evw_push"] = evw_push_stats(D)
+        out["_past"]["w"] = past_evw(D)
         e = out["evw_push"]
         log("  期待値ワイド: 絞る前 {}点 {}% / 残る {}点 {}% {} / 外れる {}点 {}%".format(
             e["all"]["n"], e["all"]["roi"], e["in"]["n"], e["in"]["roi"], e["in"]["yr"], e["out"]["n"], e["out"]["roi"]))
@@ -340,7 +367,8 @@ def main():
            "pair_base": [round(float(v), 6) for v in D["pair_base"]],
            "pair_base_x": ["1", "logit(pt)", "logit(pt)^2", "logit(0.775/中)", "logit(0.775/中)^2", "zq の和", "log q の和"]}
     json.dump(out, open(PU.FILE, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
-    json.dump({"updated": out["updated"], "to": max(D["date"]), "x": past["x"], "m": past["m"]}, open(PU.PAST_FILE, "w", encoding="utf-8"), separators=(",", ":"))
+    json.dump({"updated": out["updated"], "to": max(D["date"]), "x": past["x"], "m": past["m"], "w": past.get("w", {})},
+              open(PU.PAST_FILE, "w", encoding="utf-8"), separators=(",", ":"))
     print("保存:", PU.FILE, PU.PAST_FILE, "過去のレース {} / モデルの買い目 {} ({:.0f}分)".format(len(past["x"]), len(past["m"]), (time.time() - t0) / 60))
 
 

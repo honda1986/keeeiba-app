@@ -575,7 +575,7 @@ function picksOf(r) {
   const out = [], p = r.pred, so = oshiOf(r);
   if (so) for (const x of so.picks) out.push({k: "oshi", stake: 100, done: so.done, ret: x.ret || 0, hit: so.done && x.ret > 0});
   const ew = evWideOf(r);
-  if (ew) for (const x of ew.picks) out.push({k: "evw", stake: 100, done: ew.done, ret: x.ret || 0, hit: ew.done && x.ret > 0});
+  if (ew) for (const x of ew.picks) out.push({k: "evw", stake: 100, done: ew.done, ret: x.ret || 0, hit: ew.done && x.ret > 0, past: !!ew.past});
   if (p && r.horses && p.verdict !== "見送り") {
     const s = r.settle, done = !!(s && r.result);
     out.push({k: "model", stake: s ? s.stake : p.stake, done, ret: s ? s.ret : 0, hit: !!(s && s.hit)});
@@ -663,7 +663,7 @@ function daySumInner() {
   };
   return `<div class="hd">この日の買い目(1点100円)</div>
     ${line("後押しの買い目", "回収重視(馬連)", sp, "点")}
-    ${line("期待値ワイド", "期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上", ep, "点")}
+    ${line("期待値ワイド", ep.some(x => x.past) ? "確定オッズで再現" : "期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上", ep, "点")}
     ${line("モデルの買い目", "3連複 ◎-○-▲", mp)}
     <div class="ft">後押しの買い目は、評価値の後押しが上5%の馬と1番人気の馬連。的中は少ない(7%)が、過去5年の回収率は ${((((state.push || {}).stats || {}).oshi || {}).roi || 102).toFixed(0)}%(年に約1,000点)。
       期待値ワイドは、期待値の表のワイドで ${EV_WIDE.min_ev.toFixed(2)}以上、後押し込みでも ${EV_WIDE.push_ev.toFixed(1)}以上の組(<b>発走の${PRE.fresh}分前から</b>のオッズで出す)。
@@ -936,8 +936,19 @@ function pushPairProbs(r, wo) {
   }
   return out;
 }
+// 過去のレース(発走前のオッズを残す前の日)は、確定オッズと、その年を除いて作った後押しの式で再現した組(oshi_past.json の w。
+// tools/train_push.py の past_evw)を出す(2026-11-27)。箱に「確定オッズで再現」と出す。記録(収支・分析・カレンダー)には入れない
+function evWidePast(r) {
+  const pw = ((state.oshiPast || {}).w || {})[r.id];
+  if (!pw || !r.result || (r.result.order || []).length < 3) return null;
+  const pay = ((r.result || {}).payout || {})["ワイド"] || {}, wf = r.wide_final || {};
+  const all = pw.map(([k, p, ev, pev, keep]) => ({type: "ワイド", c: k.split("-").map(Number), key: k, p, ev, pev,
+    odds: wf[k] || [0, 0], ret: pay[k] || 0, keep: !!keep}));
+  return {done: true, past: true, pushed: all.some(x => x.pev != null), picks: all.filter(x => x.keep), cut: all.filter(x => !x.keep), ref: null};
+}
 function evWideOf(r) {
-  if (KOCHI || r.center !== "jra" || !r.horses || !r.pred || !r.trio_pair || !preFresh(r)) return null;
+  if (KOCHI || r.center !== "jra" || !r.horses || !r.pred) return null;
+  if (!r.trio_pair || !preFresh(r)) return evWidePast(r);
   const tp = r.trio_pair, wo = r.gw || r.wide_odds;
   if (!wo) return null;
   const rows = Object.keys(wo).filter(k => tp[k] && wo[k][0] > 1).map(k => {
@@ -974,12 +985,14 @@ function evWideInner(r) {
   // 後押しの式で外した組(参考。買い目・記録には入れない。結果が出たら当たったかも出す)
   const cutLine = so.cut && so.cut.length ? `<div class="pk-n muted">後押しで外した組: ${so.cut.map(x =>
     `${x.c.join("-")}(期待値 ${x.ev.toFixed(2)} → 後押し込み ${x.pev != null ? x.pev.toFixed(2) : "-"}${so.done ? (x.ret ? ` · 的中 ${yen(x.ret)}` : " · 外れ") : ""})`).join(" / ")}</div>` : "";
+  if (so.past && !so.picks.length)        // 過去のレースの再現で、買い目が後押しで全部外れた
+    return `<div class="pk none"><div class="pk-h"><span>期待値ワイド<em>確定オッズで再現</em></span><span>後押しで外れて買い目なし</span></div>${cutLine}</div>`;
   if (!so.picks.length)                   // 買い目が無い: いちばん高い組を参考に(買い目には数えない)
     return `<div class="pk none">
     <div class="pk-h"><span>期待値ワイド<em>参考</em></span><span>${so.cut && so.cut.length ? "後押しで外れて買い目なし" : EV_WIDE.min_ev.toFixed(2) + "以上の組なし"} · ${so.done ? "発走前のオッズ" : "いまのオッズ"}でいちばん高い組</span></div>${rows}${cutLine}</div>`;
   const hitAll = so.done && so.picks.some(x => x.ret), loseAll = so.done && !so.picks.some(x => x.ret);
   return `<div class="pk evw ${hitAll ? "hit" : loseAll ? "lose" : ""}">
-    <div class="pk-h"><span>期待値ワイド<em class="vS">${so.pushed ? `期待値${EV_WIDE.min_ev.toFixed(2)}・後押し込み${EV_WIDE.push_ev.toFixed(1)}以上` : `期待値 ${EV_WIDE.min_ev.toFixed(2)}以上`}</em></span><span>${so.done ? "発走前のオッズで選んだ" : "いまのオッズで"}</span></div>${rows}${cutLine}</div>`;
+    <div class="pk-h"><span>期待値ワイド<em class="vS">${so.pushed ? `期待値${EV_WIDE.min_ev.toFixed(2)}・後押し込み${EV_WIDE.push_ev.toFixed(1)}以上` : `期待値 ${EV_WIDE.min_ev.toFixed(2)}以上`}</em></span><span>${so.past ? "確定オッズで再現" : so.done ? "発走前のオッズで選んだ" : "いまのオッズで"}</span></div>${rows}${cutLine}</div>`;
 }
 
 // ---------------------------------------------------------------- 後押し(オッズに足す評価値の式。2026-11-15)
