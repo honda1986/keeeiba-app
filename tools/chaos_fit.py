@@ -42,7 +42,14 @@ for lo, hi in BANDS:
 model = {"x": ["log(1番人気のオッズ)", "オッズのばらけ方"], "mu": mu.round(5).tolist(), "sd": sd.round(5).tolist(),
          "w": w.round(5).tolist(), "fitted": datetime.now(K.JST).strftime("%Y-%m-%d"), "races": int(len(Y)),
          "years": [min(YR.tolist()), max(YR.tolist())], "fav_out": round(float(Y.mean()), 3), "bands": bands}
-json.dump({"chaos": model}, open(os.path.join(K.OUT, "chaos_model.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+# ほかの式(後押しも使う荒れ度 chaos_push。tools/train_push.py が作る)は残す
+path = os.path.join(K.OUT, "chaos_model.json")
+try:
+    allm = json.load(open(path, encoding="utf-8"))
+except (OSError, ValueError):
+    allm = {}
+allm["chaos"] = model
+json.dump(allm, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 print("保存", os.path.join(K.OUT, "chaos_model.json"), "{}R 係数 {}".format(len(Y), w.round(2)))
 for b in bands:
     print("  荒れ度 {:3.0%}〜{:3.0%} {:5d}R 実際 {:.0%} / 見込み {:.0%} {}".format(b["lo"], b["hi"], b["races"], b["actual"], b["expect"], b["by_year"]))

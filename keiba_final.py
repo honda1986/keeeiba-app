@@ -64,6 +64,30 @@ def chaos_x(odds):
     return [math.log(min(od)), float(-(q * np.log(q)).sum() / math.log(len(q)))]
 
 
+def chaos_push_x(odds, push, push2):
+    """後押しも使う荒れ度(中央。2026-11-26)の材料:
+    [log(1番人気のオッズ), オッズのばらけ方, log(2番人気のオッズ), 頭数, 1番人気の後押し(1着の式), 1番人気の後押し(2頭とも3着内の式)]。
+    人気は (オッズ, 馬番) の小さい順(アプリの chaosOf と同じ)。1番人気に後押しが無ければ None"""
+    od = {int(u): v for u, v in (odds or {}).items() if v and v > 1}
+    base = chaos_x(od)
+    if not base:
+        return None
+    favs = sorted(od, key=lambda u: (od[u], u))
+    f = favs[0]
+    if (push or {}).get(f) is None or (push2 or {}).get(f) is None:
+        return None
+    return base + [math.log(od[favs[1]]), float(len(od)), float(push[f]), float(push2[f])]
+
+
+def chaos_push(model, odds, push, push2):
+    """後押しも使う荒れ度(1番人気が3着に来ない確率)。式は model["chaos_push"](tools/train_push.py が作る)。作れなければ None"""
+    c, x = (model or {}).get("chaos_push"), chaos_push_x(odds, push, push2)
+    if not c or not x:
+        return None
+    z = c["w"][0] + sum(w * (v - m) / s for w, v, m, s in zip(c["w"][1:], x, c["mu"], c["sd"]))
+    return 1 / (1 + math.exp(-z))
+
+
 def chaos_level(p):
     """荒れ度の段階(高 55%以上・中 40%以上・低)。アプリ(index.html の chaosLevel)と同じ"""
     return "高" if p >= .55 else "中" if p >= .4 else "低"

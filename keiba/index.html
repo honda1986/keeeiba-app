@@ -492,7 +492,9 @@ async function boot() {
   }
   // まだ当日の更新(data.json)が無いときは、いちばん新しい日を開く(高知のアプリを始めたときなど)
   if (!state.day && state.days.length) { try { state.day = await loadDay(state.days[state.days.length - 1]); } catch (e) { /* 無いまま */ } }
-  chaosState.model = ((chaosP && await chaosP) || {}).chaos || null;
+  const cmj = (chaosP && await chaosP) || {};
+  chaosState.model = cmj.chaos || null;
+  chaosState.push = cmj.chaos_push || null;
   state.push = (pushP && await pushP) || null;
   state.oshiPast = (pastP && await pastP) || null;
   renderRace(); renderMoney(); renderRule(); renderVote();
@@ -1116,9 +1118,10 @@ function skipRes(r) {
 }
 
 // 荒れ度: 1番人気が3着に来ない確率。中央は chaos_model.json の式(tools/chaos_fit.py。keiba_final.chaos_x・chaos と同じ計算)。
-// 結果が出たレースは確定オッズ、それまでは今のオッズ(アプリで取り直せばその分)から。参考で、買い方には使わない。
-// 高知の最終レースは予想の理由(サーバーで計算)に出す
-const chaosState = {model: null};
+// 予想に後押しが入っているレース(2026-11-15〜)は、後押しも使う式 chaos_push(tools/train_push.py。keiba_final.chaos_push_x・chaos_push と同じ。
+// オッズだけより当たる。2026-11-26)。結果が出たレースは確定オッズ、それまでは今のオッズ(アプリで取り直せばその分)から。
+// 参考で、買い方には使わない。高知の最終レースは予想の理由(サーバーで計算)に出す
+const chaosState = {model: null, push: null};
 const chaosLevel = p => p >= .55 ? "高" : p >= .4 ? "中" : "低";       // keiba_final.chaos_level と同じ
 function chaosOf(r) {
   const c = chaosState.model;
@@ -1126,11 +1129,18 @@ function chaosOf(r) {
   const ro = (r.result || {}).odds, fin = !!(ro && Object.keys(ro).length);
   const od = (fin ? Object.entries(ro).map(([u, v]) => [+u, +v]) : (r.horses || []).map(h => [h.umaban, +h.odds])).filter(([, v]) => v > 1);
   if (od.length < 5) return null;
-  const fav = od.reduce((a, b) => b[1] < a[1] ? b : a);
+  const srt = [...od].sort((a, b) => a[1] - b[1] || a[0] - b[0]), fav = srt[0];       // 人気は (オッズ, 馬番) の順
   const q = od.map(([, v]) => 1 / v), sum = q.reduce((a, b) => a + b, 0);
   const x = [Math.log(fav[1]), -q.reduce((a, v) => a + v / sum * Math.log(v / sum), 0) / Math.log(od.length)];
-  const z = c.w[0] + x.reduce((a, v, i) => a + c.w[i + 1] * (v - c.mu[i]) / c.sd[i], 0), p = 1 / (1 + Math.exp(-z));
-  return {p, fav: fav[0], level: chaosLevel(p), fin};
+  const lgt = (m, xs) => 1 / (1 + Math.exp(-(m.w[0] + xs.reduce((a, v, i) => a + m.w[i + 1] * (v - m.mu[i]) / m.sd[i], 0))));
+  // 後押しも使う式(1番人気の後押しが予想に入っているとき)
+  const ph = (((r.pred || {}).horses) || []).find(h => h.umaban === fav[0]);
+  if (chaosState.push && ph && ph.push != null && ph.push2 != null) {
+    const p = lgt(chaosState.push, [...x, Math.log(srt[1][1]), od.length, ph.push, ph.push2]);
+    return {p, fav: fav[0], level: chaosLevel(p), fin, push: true};
+  }
+  const p = lgt(c, x);
+  return {p, fav: fav[0], level: chaosLevel(p), fin, push: false};
 }
 function chaosTag(r, short) {
   const c = chaosOf(r);
@@ -1139,7 +1149,7 @@ function chaosTag(r, short) {
 }
 function chaosLine(r) {
   const c = chaosOf(r);
-  return c ? `${chaosTag(r)} 1番人気(${c.fav}番)が3着に来ない確率(${c.fin ? "確定" : "今の"}オッズから。参考)` : "";
+  return c ? `${chaosTag(r)} 1番人気(${c.fav}番)が3着に来ない確率(${c.fin ? "確定" : "今の"}オッズ${c.push ? "と後押し" : ""}から。参考)` : "";
 }
 
 // 見送りの理由の短い形(一覧の1行用)。合わない形はそのまま
@@ -2617,22 +2627,25 @@ function renderRuleKochi() {
 
 // 考え方の「荒れ度」: 段ごとに、1番人気が実際に3着に来なかった率(年ごとに、ほかの年で学んだ式で読んだもの)
 function chaosRule() {
-  const c = chaosState.model;
+  const c = chaosState.push || chaosState.model, c0 = chaosState.model, cp = chaosState.push;
   if (!c) return "";
   const pc = v => v == null ? "-" : Math.round(v * 100) + "%";
   const rows = (c.bands || []).map(b => `<tr><td>${pc(b.lo)}〜${b.hi >= 1 ? "" : pc(b.hi)}</td><td>${chaosLevel(b.lo)}</td><td>${b.races.toLocaleString()}</td>
     <td><b>${pc(b.actual)}</b></td><td>${pc(b.expect)}</td></tr>`).join("");
   return `<div class="sec">荒れ度(参考)</div>
     <ul class="rules">
-      <li><b>何か</b>1番人気が3着に来ない確率。単勝オッズだけから出す(1番人気のオッズが高いほど、オッズが横並びなほど荒れる)。
+      <li><b>何か</b>1番人気が3着に来ない確率。1番人気のオッズが高いほど、オッズが横並びなほど荒れる。
         高 55%以上・中 40%以上・低 それ未満。結果が出たレースは確定オッズ、それまでは今のオッズで計算する</li>
+      ${cp ? `<li><b>後押しも使う</b>(2026-11-26〜)オッズに、2番人気のオッズ・頭数・1番人気の後押し(過去の成績が良く見えて買われすぎかの値)を足して読む。
+        当たり方(AUC)は オッズだけ ${cp.auc_odds} → ${cp.auc}(年ごとに、ほかの年で作った式で。どの年も良くなる)。
+        予想に後押しが入っていない日(11/14まで)は、オッズだけの式で出す</li>` : ""}
       <li><b>買い方には使わない</b>買うレースはほとんど◎が1番人気で、荒れ度は低い。買うレースを荒れ度の低い順に4つに分けても、
         今の買い方の回収率は 137%・131%・120%・127% で、年ごとの上下も入れ替わる。見送ったレースを荒れ度で選んで買っても
         100%を超えない(2024〜2026年)</li>
     </ul>
     <table class="tbl"><thead><tr><th>荒れ度</th><th></th><th>R</th><th>1番人気が3着外</th><th>見込み</th></tr></thead><tbody>${rows}</tbody></table>
-    <p class="muted" style="font-size:11px;margin:4px 0 0">中央 ${esc((c.years || []).join("〜"))}年の ${(c.races || 0).toLocaleString()}R(年ごとに、ほかの年で学んだ式で読んだ分)。
-      毎週の学び直しで作り直す(${esc(c.fitted || "")})</p>`;
+    <p class="muted" style="font-size:11px;margin:4px 0 0">中央 ${esc((c.years || []).join("〜"))}年の ${(c.races || 0).toLocaleString()}R(年ごとに、ほかの年で学んだ式で読んだ分${cp ? "。後押しも使う式" : ""})。
+      毎週の学び直しで作り直す(${esc(c.fitted || "")}${cp && c0 && c0.fitted ? "・オッズだけの式 " + esc(c0.fitted) : ""})</p>`;
 }
 // 後押しの強さごとの記録(history.json の push。予想に後押しが入った 2026-11-15 からの実際の成績)
 function pushRec(ph, det) {

@@ -187,6 +187,22 @@ class Logic(unittest.TestCase):
         self.assertGreater(high, 0.5)
         self.assertEqual([F.chaos_level(v) for v in (0.2, 0.4, 0.55)], ["低", "中", "高"])
         self.assertEqual(len(m["chaos"]["bands"]), 5)
+        # 後押しも使う荒れ度(chaos_push。2026-11-26): 1番人気の後押し(2頭とも3着内の式)が小さい
+        # (過去の成績が良く見えて買われすぎ)ほど荒れる。1番人気に後押しが無ければ出さない(アプリはオッズだけの式に戻す)。
+        # 人気は (オッズ, 馬番) の順
+        if m.get("chaos_push"):
+            od = {1: 2.0, 2: 4.0, 3: 6.0, 4: 9.0, 5: 15.0, 6: 30.0}
+            x = F.chaos_push_x(od, {1: 0.5, 2: 0.0}, {1: 0.2})
+            self.assertEqual(len(x), len(m["chaos_push"]["x"]))
+            self.assertAlmostEqual(x[2], __import__("math").log(4.0))
+            self.assertEqual(x[3], 6.0)
+            overbet = F.chaos_push(m, od, {1: 0.0}, {1: -0.5})
+            underbet = F.chaos_push(m, od, {1: 0.0}, {1: 0.5})
+            self.assertGreater(overbet, underbet)
+            self.assertIsNone(F.chaos_push(m, od, {2: 1.0}, {2: 0.5}))
+            self.assertEqual(F.chaos_push_x({1: 2.0, 2: 2.0, 3: 6.0, 4: 9.0, 5: 15.0}, {1: 9.0, 2: -9.0}, {1: 9.0, 2: -9.0})[4], 9.0)   # 同じオッズは馬番の小さい方
+            self.assertEqual(len(m["chaos_push"]["bands"]), 5)
+            self.assertGreaterEqual(m["chaos_push"]["auc"], m["chaos_push"]["auc_odds"])
         # 式の作り方: はっきり分かれる材料なら係数がプラス
         import numpy as np
         X = np.array([[x] for x in np.linspace(-2, 2, 200)]); y = (X[:, 0] > 0).astype(float)

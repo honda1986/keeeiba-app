@@ -11,7 +11,10 @@
                成績(その年を除いて作った式で、その年を確かめたもの。アプリに出す)/
                後押しの買い目(馬連: 後押しが上5%の馬 × 1番人気。keiba_logic.oshi_picks)の日ごとの成績(days)
   keiba/oshi_past.json にも保存: 予想に後押しが入る前の日(keiba.PUSH_FROM より前)のレースごとの、後押しの買い目の馬(x)と
-               モデルの買い目の後押しの強さ(m)。その年を除いて作った式のもの(days と同じ)。アプリが過去の日を開いたときに出す"""
+               モデルの買い目の後押しの強さ(m)。その年を除いて作った式のもの(days と同じ)。アプリが過去の日を開いたときに出す
+  keiba/chaos_model.json の chaos_push も作る(2026-11-26): 後押しも使う荒れ度(1番人気が3着に来ない確率)の式。
+               オッズだけの式(chaos。tools/chaos_fit.py)より当たる(tools/experiments/fav_fly.py)。後押しは、その年を除いて作った式のもの
+  python tools/train_push.py --chaos-only   # 荒れ度の式だけ作る(push_model.json・oshi_past.json は書かない)"""
 import gc, json, os, pickle, sys, time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -21,6 +24,7 @@ sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, ".."))
 import train_model as T
 import keiba_logic as L
 import keiba_push as PU
+import keiba_final as F
 
 L2 = 100.0
 PT = L.PRE["pt"]
@@ -219,6 +223,71 @@ def stats(D, w, q, log=print):
     return cuts, out
 
 
+CHAOS_BANDS = ((0, .2), (.2, .3), (.3, .4), (.4, .55), (.55, 1.01))
+
+
+def _auc(p, y):
+    o = np.argsort(p); rk = np.empty(len(p)); rk[o] = np.arange(1, len(p) + 1)
+    n1 = y.sum(); n0 = len(y) - n1
+    return float((rk[y == 1].sum() - n1 * (n1 + 1) / 2) / (n1 * n0)) if n1 and n0 else None
+
+
+def chaos_fit(D, w, q, log=print):
+    """後押しも使う荒れ度の式(keiba_final.chaos_push_x の材料のロジスティック回帰。L2=1)。
+    材料の後押しは、その年を除いて作った式のもの(loyo の w・q)。段ごとの成績は、年ごとにほかの年で作った荒れ度の式で読んだ分"""
+    h, sizes = D["H"], D["sizes"]; st = np.concatenate([[0], np.cumsum(sizes)[:-1]])
+    X, X0, Y, YR = [], [], [], []
+    for g, (s0, n) in enumerate(zip(st, sizes)):
+        rc = D["info"][D["rid"][g]]; res = rc["result"]
+        od = {int(u): o for u, o in (res.get("odds") or {}).items() if o and o > 1}
+        us = h["u"][s0:s0 + n].astype(int)
+        x = F.chaos_push_x(od, {int(u): float(v) for u, v in zip(us, w[s0:s0 + n])}, {int(u): float(v) for u, v in zip(us, q[s0:s0 + n])})
+        if not x:
+            continue
+        fav = sorted(od, key=lambda u: (od[u], u))[0]
+        X.append(x); X0.append(x[:2]); Y.append(int(fav not in res["order"][:3])); YR.append(D["year"][g])
+    X, X0, Y, YR = np.array(X), np.array(X0), np.array(Y, float), np.array(YR)
+    mu, sd = X.mean(0), X.std(0) + 1e-9
+    wt = F.fit_logit((X - mu) / sd, Y)
+    cv, cv0 = np.zeros(len(Y)), np.zeros(len(Y))
+    for yy in sorted(set(YR)):
+        tr, te = YR != yy, YR == yy
+        for M, out in ((X, cv), (X0, cv0)):
+            m_, s_ = M[tr].mean(0), M[tr].std(0) + 1e-9
+            w2 = F.fit_logit((M[tr] - m_) / s_, Y[tr])
+            out[te] = 1 / (1 + np.exp(-(w2[0] + ((M[te] - m_) / s_) @ w2[1:])))
+    bands = []
+    for lo, hi in CHAOS_BANDS:
+        m = (cv >= lo) & (cv < hi)
+        bands.append({"lo": lo, "hi": min(hi, 1.0), "races": int(m.sum()),
+                      "actual": round(float(Y[m].mean()), 3) if m.any() else None,
+                      "expect": round(float(cv[m].mean()), 3) if m.any() else None,
+                      "by_year": {str(yy): round(float(Y[m & (YR == yy)].mean()), 3) for yy in sorted(set(YR)) if (m & (YR == yy)).sum() >= 20}})
+    years = sorted(set(YR.tolist()))
+    model = {"x": ["log(1番人気のオッズ)", "オッズのばらけ方", "log(2番人気のオッズ)", "頭数", "1番人気の後押し(1着の式)", "1番人気の後押し(2頭とも3着内の式)"],
+             "mu": mu.round(5).tolist(), "sd": sd.round(5).tolist(), "w": wt.round(5).tolist(),
+             "fitted": datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d"), "races": int(len(Y)), "years": [years[0], years[-1]],
+             "fav_out": round(float(Y.mean()), 3), "auc": round(_auc(cv, Y), 3), "auc_odds": round(_auc(cv0, Y), 3),
+             "auc_by_year": {yy: [round(_auc(cv[YR == yy], Y[YR == yy]), 3), round(_auc(cv0[YR == yy], Y[YR == yy]), 3)] for yy in years},
+             "bands": bands}
+    log("  荒れ度(後押しも): {}R AUC {:.3f}(オッズだけ {:.3f}) 年ごと {}".format(len(Y), model["auc"], model["auc_odds"], model["auc_by_year"]))
+    for b in bands:
+        log("    {:3.0%}〜{:3.0%} {:5d}R 実際 {} / 見込み {}".format(b["lo"], b["hi"], b["races"], b["actual"], b["expect"]))
+    return model
+
+
+def save_chaos(model):
+    """keiba/chaos_model.json の chaos_push だけ書きかえる(オッズだけの式 chaos は tools/chaos_fit.py)"""
+    path = os.path.join(T.K.OUT, "chaos_model.json")
+    try:
+        allm = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError):
+        allm = {}
+    allm["chaos_push"] = model
+    json.dump(allm, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    print("保存:", path, "(chaos_push)")
+
+
 def main():
     t0 = time.time()
     races = T.load_races()
@@ -226,6 +295,12 @@ def main():
     D = build(rows, races)
     del rows, races; gc.collect()
     w, q, bw, bp = loyo(D)
+    try:
+        save_chaos(chaos_fit(D, w, q))
+    except Exception as e:                    # 荒れ度の式が作れなくても、後押しの式は作る(荒れ度は前のまま)
+        print("荒れ度(後押しも)の式を作れなかった(前のまま):", e)
+    if "--chaos-only" in sys.argv:
+        return
     cuts, st = stats(D, w, q)
     days = st.pop("_days"); past = st.pop("_past")
     out = {"updated": datetime.now(timezone(timedelta(hours=9))).isoformat(timespec="seconds"), "races": len(D["rid"]), "l2": L2,

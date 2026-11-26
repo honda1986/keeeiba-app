@@ -16,7 +16,7 @@ import train_model as T
 import train_push as TP
 import keiba_final as F
 YS = ("2022", "2023", "2024", "2025", "2026")
-MAX_ODDS = 3.0
+MAX_ODDS = float(os.environ.get("MAX_ODDS", "3.0"))     # 99 にすると全部のレース
 t0 = time.time()
 races = T.load_races()
 norm, rows, jt_all, sp = pickle.load(open(T.CACHE, "rb"))
@@ -76,7 +76,7 @@ def auc(p, y):
 
 
 SETS = {"A オッズだけ(今の荒れ度)": [0, 1], "B +2番人気のオッズ・頭数": [0, 1, 2, 3], "C +モデル": [0, 1, 2, 3, 4, 5, 6],
-        "D +後押し": [0, 1, 2, 3, 4, 5, 6, 7, 8]}
+        "D +後押し": [0, 1, 2, 3, 4, 5, 6, 7, 8], "E B+後押し(モデルなし)": [0, 1, 2, 3, 7, 8]}
 CV = {}
 print("\n■ 飛ぶかの当たり方(AUC。0.5 = 当てずっぽう、1 = 全部当たる。式はその年を除いて作る)")
 for name, cols in SETS.items():
