@@ -30,7 +30,7 @@ on:
         required: false
         default: 'jra'
       mode:
-        description: 'predict(予想と結果を再現) / past(馬柱だけを今の読み方で取り直す) / result(結果・払戻だけを取り直す) / odds(ワイドの確定オッズだけを取る) / trio(◎70%以上のレースの3連複◎-○-x の確定オッズだけを取る) / triopair(3連複の確定オッズから組ごとの強さだけを取る)'
+        description: 'predict(予想と結果を再現) / past(馬柱だけを今の読み方で取り直す) / result(結果・払戻だけを取り直す。馬単・複勝が無い・全頭そろっていない日) / odds(ワイドの確定オッズだけを取る) / trio(◎70%以上のレースの3連複◎-○-x の確定オッズだけを取る) / triopair(3連複の確定オッズから組ごとの強さだけを取る)'
         required: false
         default: 'predict'
 
@@ -75,8 +75,8 @@ jobs:
               try:
                   day = json.load(open(os.environ["KEIBA_OUT"] + "/days/%s.json" % s))
                   if os.environ.get("MODE") == "result":
-                      # 払戻表に馬単が無いレースが残っている日だけ(中央だけ。地方は2026-10-21にやめた)
-                      done = all("馬単" in (r.get("result") or {}).get("payout", {}) for r in day["races"].values()
+                      # 払戻表に馬単・複勝が無いレースが残っている日だけ(中央だけ。地方は2026-10-21にやめた。複勝は2026-11-27 から)
+                      done = all({"馬単", "複勝"} <= set((r.get("result") or {}).get("payout", {})) for r in day["races"].values()
                                  if (r.get("result") or {}).get("payout") and int(r["id"][4:6]) < 30)
                   elif os.environ.get("MODE") == "odds":
                       # ワイドの確定オッズが無い中央のレースが残っている日だけ

@@ -700,13 +700,14 @@ def repair_results(now, days=REPAIR_DAYS):
 
 
 def refetch_result(d, now):
-    """結果(払戻)を今の読み方で取り直す。馬単の払戻が無い・全頭そろっていない日に使う(予想はそのまま、照合はやり直す)"""
+    """結果(払戻)を今の読み方で取り直す。馬単・複勝の払戻が無い・全頭そろっていない日に使う(予想はそのまま、照合はやり直す)。
+    複勝は 2026 年の途中まで払戻を残していなかった(2026-11-27 に取り直す)"""
     day = load_day(d)
 
     def one(rid):
         rc = day["races"][rid]
         res = rc.get("result") or {}
-        if not res or ("馬単" in (res.get("payout") or {}) and not result_partial(rc)) or venue_of(rid) == "帯広" or not target(rid):
+        if not res or ({"馬単", "複勝"} <= set(res.get("payout") or {}) and not result_partial(rc)) or venue_of(rid) == "帯広" or not target(rid):
             return 0
         html = get(SITE[center_of(rid)] + "/race/result.html", {"race_id": rid})
         new = parse_result(html) if html else None
