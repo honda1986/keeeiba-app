@@ -63,4 +63,15 @@ for nm, v in (("1着の式(push)", w), ("2頭とも3着内の式(push2)", q)):
     c = np.quantile(v, 0.9)
     show("上10%(全部の馬の中で。20倍超えも)", v >= c)
     show("上10% × 単勝 20〜50倍", (v >= c) & (odds >= 20) & (odds < 50))
+# もっと絞る: 上2〜3%、上5% をオッズの帯で(2頭とも3着内の式)
+print("\n ◆ 2頭とも3着内の式(push2)をもっと絞る")
+for qq in (0.97, 0.98, 0.99):
+    c = np.quantile(q[m20], qq)
+    show("上{:.0f}%(単勝20倍以下)".format(100 * (1 - qq)), m20 & (q >= c))
+c = np.quantile(q[m20], 0.95)
+for lo, hi in ((1, 4), (4, 8), (8, 14), (14, 20.01)):
+    show("上5% × 単勝 {}〜{}倍".format(lo, int(hi)), (q >= c) & (odds >= lo) & (odds < hi))
+# 2つの式の両方が強い
+cw = np.quantile(w[m20], 0.9); cq = np.quantile(q[m20], 0.9)
+show("1着の式も2頭とも3着内の式も上10%", m20 & (w >= cw) & (q >= cq))
 print("\nかかった時間 {:.0f}分".format((time.time() - t0) / 60))
