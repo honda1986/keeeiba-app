@@ -56,6 +56,10 @@ CARD_REFRESH = 50          # 出馬表(馬場・取消)を取り直す間隔(分
 ODDS_REFRESH = 20          # オッズを取り直す間隔(分)
 ODDS_NEAR = (45, 5)        # 発走まで45分以内のレースは5分たっていれば取り直す(発走が近いオッズを残す。更新は10分ごと)
 RESULT_AFTER = 8           # 発走から何分後に結果を見に行くか
+# 発走 8分後の結果の画面は、上位の数頭(5頭)だけのことがある(2026-11-27 に気づいた。11/14〜 で多く、確定オッズも5頭分だけになっていた)。
+# 全頭そろうまで、更新のたびに取り直す(1レース RESULT_TRY 回まで)。過去の日も REPAIR_DAYS 日さかのぼって直す(repair_results)
+RESULT_TRY = 6
+REPAIR_DAYS = 21
 # 予想する中央・地方(2026-10-21: 中央だけに絞る。地方は取らない・予想しない・収支に出さない)
 CENTERS = tuple(c for c in os.environ.get("KEIBA_CENTERS", "jra").split(",") if c)
 # 地方のうち対象にする場(空なら全部)。高知の最終レースのアプリは KEIBA_NAR_VENUES=高知
@@ -649,14 +653,60 @@ def refetch_past(d, now):
     print("{} 馬柱を取り直した {} / 残り {}".format(d, n, left), flush=True)
 
 
+def result_partial(rc):
+    """結果が全頭そろっていない(上位の数頭だけ)か。単勝の確定オッズの数で見る(競走中止の馬もオッズはある)"""
+    res = rc.get("result") or {}
+    if len(res.get("order") or []) < 3:
+        return False
+    n = sum(1 for h in rc.get("horses") or [] if not h.get("scratched"))
+    return n >= 5 and sum(1 for v in (res.get("odds") or {}).values() if v) < n - 1
+
+
+def take_result(rc, new):
+    """取り直した結果を入れる(払戻が無ければ前のを残す)。照合もやり直す"""
+    if not new or len(new["order"]) < 3:
+        return False
+    if not new.get("payout") and (rc.get("result") or {}).get("payout"):
+        new["payout"] = rc["result"]["payout"]
+    rc["result"] = new
+    if rc.get("pred"):
+        rc["settle"] = L.settle(rc["pred"], new)
+    return True
+
+
+def repair_results(now, days=REPAIR_DAYS):
+    """この REPAIR_DAYS 日の、結果が全頭そろっていないレースを取り直す(1レース RESULT_TRY 回まで。ふつうの更新で毎回見る)"""
+    today_s = now.strftime("%Y%m%d"); fixed = 0
+    for f in sorted(glob.glob(OUT + "/days/*.json"))[-(days + 3):]:
+        d = os.path.basename(f)[:8]
+        if d >= today_s or d < (now - timedelta(days=days)).strftime("%Y%m%d"):
+            continue
+        day = load(f, None)
+        todo = [rid for rid, rc in ((day or {}).get("races") or {}).items()
+                if result_partial(rc) and rc.get("result_try", 0) < RESULT_TRY and venue_of(rid) != "帯広" and target(rid)]
+        if not todo:
+            continue
+
+        def one(rid):
+            rc = day["races"][rid]
+            rc["result_try"] = rc.get("result_try", 0) + 1
+            html = get(SITE[center_of(rid)] + "/race/result.html", {"race_id": rid})
+            return int(take_result(rc, parse_result(html) if html else None) and not result_partial(rc))
+        n = sum(pmap(one, todo))
+        save_day(d, day)
+        fixed += n
+        print("{} 全頭そろっていない結果を取り直した {} / {}".format(d, n, len(todo)), flush=True)
+    return fixed
+
+
 def refetch_result(d, now):
-    """結果(払戻)を今の読み方で取り直す。馬単の払戻が無い日に使う(予想はそのまま、照合はやり直す)"""
+    """結果(払戻)を今の読み方で取り直す。馬単の払戻が無い・全頭そろっていない日に使う(予想はそのまま、照合はやり直す)"""
     day = load_day(d)
 
     def one(rid):
         rc = day["races"][rid]
         res = rc.get("result") or {}
-        if not res or "馬単" in (res.get("payout") or {}) or venue_of(rid) == "帯広" or not target(rid):
+        if not res or ("馬単" in (res.get("payout") or {}) and not result_partial(rc)) or venue_of(rid) == "帯広" or not target(rid):
             return 0
         html = get(SITE[center_of(rid)] + "/race/result.html", {"race_id": rid})
         new = parse_result(html) if html else None
@@ -855,18 +905,25 @@ def run_day(d, now, backfill=False):
                     to = {k: v for k, v in ta.items() if pair <= {int(x) for x in k.split("-")}}
                     if to:
                         rc["trio_odds"] = to
-        # 結果
-        if st and now >= st + timedelta(minutes=RESULT_AFTER) and not rc.get("result"):
+        # 結果(全頭そろっていなければ、更新のたびに RESULT_TRY 回まで取り直す)
+        again = rc.get("result") and result_partial(rc) and rc.get("result_try", 0) < RESULT_TRY
+        if st and now >= st + timedelta(minutes=RESULT_AFTER) and (not rc.get("result") or again):
+            if again:
+                rc["result_try"] = rc.get("result_try", 0) + 1
             html = get(site + "/race/result.html", {"race_id": rid})
             res = parse_result(html) if html else None
-            if res and len(res["order"]) >= 3:
+            if res and len(res["order"]) >= 3 and (not again or len(res.get("odds") or {}) >= len((rc["result"].get("odds") or {}))):
+                if not res.get("payout") and (rc.get("result") or {}).get("payout"):
+                    res["payout"] = rc["result"]["payout"]
                 rc["result"] = res
-                wf = fetch_wide_odds(rid)            # ワイドの確定オッズ(期待値を後で確かめるため)
-                if wf:
-                    rc["wide_final"] = wf
-                tp = trio_pair_sums(fetch_trio_all(rid))      # 3連複の確定オッズから、組ごとの強さ
-                if tp:
-                    rc["trio_pair_final"] = tp
+                if not rc.get("wide_final"):
+                    wf = fetch_wide_odds(rid)            # ワイドの確定オッズ(期待値を後で確かめるため)
+                    if wf:
+                        rc["wide_final"] = wf
+                if not rc.get("trio_pair_final"):
+                    tp = trio_pair_sums(fetch_trio_all(rid))      # 3連複の確定オッズから、組ごとの強さ
+                    if tp:
+                        rc["trio_pair_final"] = tp
 
     def two(rid):
         """予想。当日は発走後に固定。過去の日は予想が無いときだけ作る(人気は確定人気)"""
@@ -1072,7 +1129,9 @@ def oshi_history():
             push = {h["umaban"]: h.get("push") for h in (rc.get("pred") or {}).get("horses") or []}
             gone = {h["umaban"] for h in rc.get("horses") or [] if h.get("scratched")}
             pay = (res.get("payout") or {}).get("馬連") or {}
-            for pk in L.oshi_picks(push, res.get("odds"), cut):
+            # 人気は確定オッズで決める。確定オッズが全頭そろっていない(取り直し待ち)ときは、発走前のオッズで
+            od = res.get("odds") if not result_partial(rc) else {h["umaban"]: h.get("odds") for h in rc.get("horses") or [] if not h.get("scratched")}
+            for pk in L.oshi_picks(push, od, cut):
                 if pk["u"] in gone or pk["fav"] in gone:
                     continue
                 v = pay.get("-".join(str(x) for x in sorted((pk["u"], pk["fav"]))), 0)
@@ -1407,6 +1466,11 @@ def main():
         day = run_day(d, now)
         save(OUT + "/data.json", day)
         show(day)
+        # この数週間の、結果が全頭そろっていないレースを取り直す(発走 8分後の速報で上位だけのことがある)
+        try:
+            repair_results(now)
+        except Exception as e:                 # 直せなくても、ふつうの更新は続ける
+            print("結果の取り直しに失敗(次の更新でまたやる):", e)
         # 中央の出馬表は木・金に出る(土曜は木曜、日曜は金曜)。明日・明後日の開催も先に予想しておく
         for k in range(1, AHEAD_DAYS + 1):
             nd = (datetime.strptime(d, "%Y%m%d") + timedelta(days=k)).strftime("%Y%m%d")

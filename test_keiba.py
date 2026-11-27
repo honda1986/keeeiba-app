@@ -553,6 +553,20 @@ class Parse(unittest.TestCase):
         self.assertAlmostEqual(next(x for x in rows if x["key"] == "2-3")["pev"], 0.5 * (3.0 + 0.35 * 0.4))
         self.assertIsNone(next(x for x in rows if x["key"] == "1-2")["pev"])
 
+    def test_result_partial(self):
+        # 結果が全頭そろっていない(発走 8分後の速報で上位5頭だけ)なら取り直す。そろっていれば取り直さない(2026-11-27)
+        hs = [{"umaban": u} for u in range(1, 11)] + [{"umaban": 11, "scratched": True}]
+        top5 = {"order": [3, 1, 4, 5, 9], "odds": {str(u): 2.0 + u for u in (3, 1, 4, 5, 9)}, "payout": {"単勝": {"3": 500}}}
+        full = {"order": list(range(1, 10)), "odds": {str(u): 2.0 + u for u in range(1, 11)}, "payout": {}}
+        self.assertTrue(K.result_partial({"horses": hs, "result": top5}))
+        self.assertFalse(K.result_partial({"horses": hs, "result": full}))
+        self.assertFalse(K.result_partial({"horses": hs, "result": dict(full, odds={str(u): 3.0 for u in range(1, 10)})}))   # 競走中止などで1頭欠け
+        self.assertFalse(K.result_partial({"horses": hs}))                                    # 結果がまだ無い
+        rc = {"horses": hs, "result": top5}
+        self.assertTrue(K.take_result(rc, full))
+        self.assertEqual(rc["result"]["payout"], {"単勝": {"3": 500}})                        # 払戻が無ければ前のを残す
+        self.assertFalse(K.take_result(rc, {"order": [1], "odds": {}, "payout": {}}))
+
     def test_pair_probs(self):
         # 後押しの式の組の確率(keiba_push.pair_probs): 土台(オッズ)+ 2頭の後押し。後押しが大きいほど高い。式が無ければ {}
         import math

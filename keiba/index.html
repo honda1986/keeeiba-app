@@ -867,8 +867,11 @@ function oshiOf(r) {
   const push = {};
   for (const h of r.pred.horses || []) if (h.push != null) push[h.umaban] = h.push;
   const gone = r.horses.filter(h => h.scratched).map(h => h.umaban);
+  // 人気は、結果が出たら確定オッズ。確定オッズが全頭そろっていない(結果の取り直し待ち。keiba.result_partial)ときは発走前のオッズ
+  const runners = r.horses.filter(h => !h.scratched).length, fo = (r.result || {}).odds || {};
+  const finOk = done && Object.values(fo).filter(v => v).length >= runners - 1;
   let odds = {};
-  if (done) odds = r.result.odds || {};
+  if (finOk) odds = fo;
   else for (const h of r.horses) if (!h.scratched && h.odds) odds[h.umaban] = h.odds;
   const pay = ((r.result || {}).payout || {})["馬連"] || {};
   let raw;
