@@ -653,6 +653,9 @@ function daySumInner() {
   if (KOCHI) return `<div class="hd">高知の最終レースは予想だけ(買う基準は付けていません)。全 ${rs.length} レース</div><div style="height:8px"></div>`;
   const mp = [], sp = [], ep = [];
   for (const r of rs) for (const x of picksOf(r)) (x.k === "oshi" ? sp : x.k === "evw" ? ep : mp).push(x);
+  // 後押しの買い目を、発走前に最後に取ったオッズの人気で選んだ分(終わったレースで、予想に後押しが入っている日だけ)
+  const spp = []; let hasPre = false;
+  for (const r of rs) { const so = oshiOf(r); if (so && so.pre) { hasPre = true; for (const x of so.pre) spp.push({stake: 100, done: true, ret: x.ret || 0, hit: x.ret > 0}); } }
   const line = (name, sub, ps, unit = "レース") => {
     const dn = ps.filter(x => x.done), st = dn.reduce((a, x) => a + x.stake, 0), rt = dn.reduce((a, x) => a + x.ret, 0);
     return `<div class="dsrow"><div class="nm">${name}<small>${sub}</small></div>
@@ -662,7 +665,8 @@ function daySumInner() {
         : `<span class="pl muted">-</span><small>${ps.length ? "結果待ち" : "なし"}</small>`}</div></div>`;
   };
   return `<div class="hd">この日の買い目(1点100円)</div>
-    ${line("後押しの買い目", "回収重視(馬連)", sp, "点")}
+    ${line("後押しの買い目", hasPre ? "回収重視(馬連)· 確定オッズの人気" : "回収重視(馬連)", sp, "点")}
+    ${hasPre ? line("後押しの買い目", "発走前のオッズの人気", spp, "点") : ""}
     ${line("期待値ワイド", ep.some(x => x.past) ? "確定オッズで再現" : "期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上", ep, "点")}
     ${line("モデルの買い目", "3連複 ◎-○-▲", mp)}
     <div class="ft">後押しの買い目は、評価値の後押しが上5%の馬と1番人気の馬連。的中は少ない(7%)が、過去5年の回収率は ${((((state.push || {}).stats || {}).oshi || {}).roi || 102).toFixed(0)}%(年に約1,000点)。
@@ -881,15 +885,29 @@ function oshiOf(r) {
     const fav = us.length ? us.reduce((a, b) => (+odds[b] < +odds[a] || (+odds[b] === +odds[a] && b < a)) ? b : a) : null;
     raw = fav == null ? [] : (past || []).filter(u => u !== fav && odds[u]).map(u => ({u, fav}));
   } else raw = oshiPicks(push, odds, cut);
-  const picks = raw.filter(x => !gone.includes(x.u) && !gone.includes(x.fav)).map(x => {
+  const mk = (xs, od) => xs.filter(x => !gone.includes(x.u) && !gone.includes(x.fav)).map(x => {
     const c = [x.u, x.fav].sort((a, b) => a - b);
-    return {type: "馬連", c, x: x.u, fav: x.fav, od: +odds[x.u], fod: +odds[x.fav], ret: done ? (pay[c.join("-")] || 0) : null};
+    return {type: "馬連", c, x: x.u, fav: x.fav, od: +od[x.u], fod: +od[x.fav], ret: done ? (pay[c.join("-")] || 0) : null};
   });
-  return {done, picks};
+  const picks = mk(raw, odds);
+  // 終わったレースは、発走前に最後に取ったオッズで選んだ買い目も(実際に買える買い目。keiba.oshi_history(pre=True) と同じ。2026-11-27)
+  let pre = null;
+  if (done && Object.keys(push).length) {
+    const po = {};
+    for (const h of r.horses) if (!h.scratched && h.odds) po[h.umaban] = h.odds;
+    pre = mk(oshiPicks(push, po, cut), po);
+  }
+  return {done, picks, pre};
 }
 function oshiInner(r) {
   const so = oshiOf(r);
-  if (!so || !so.picks.length) return "";
+  if (!so || (!so.picks.length && !(so.pre && so.pre.length))) return "";
+  // 発走前のオッズで選んだ買い目(確定オッズの人気と違うときだけ出す)
+  const sig = xs => (xs || []).map(x => x.c.join("-")).join(",");
+  const preLine = so.pre && sig(so.pre) !== sig(so.picks) ? `<div class="pk-n muted">発走前のオッズでは: ${so.pre.length ? so.pre.map(x =>
+    `馬連 ${x.c.join("-")}(1番人気 ${x.fav}・${x.x}番 ${x.od}倍 · ${x.ret ? "的中 " + yen(x.ret) : "外れ"})`).join(" / ") : "買い目なし"}</div>` : "";
+  if (!so.picks.length)
+    return `<div class="pk none"><div class="pk-h"><span>後押しの買い目<em>回収重視</em></span><span>確定オッズの人気では買い目なし</span></div>${preLine}</div>`;
   const rows = so.picks.map(x => {
     const st = so.done ? (x.ret ? `<span class="pk-r good">的中 ${yen(x.ret)}</span>` : `<span class="pk-r neg">外れ</span>`) : `<span class="pk-r muted">発走前</span>`;
     return `<div class="pk-b"><span class="ty">${x.type}</span><span class="cb num">${x.c.join("-")}</span>
@@ -899,7 +917,7 @@ function oshiInner(r) {
   }).join("");
   const hitAll = so.done && so.picks.some(x => x.ret), loseAll = so.done && !so.picks.some(x => x.ret);
   return `<div class="pk oshi ${hitAll ? "hit" : loseAll ? "lose" : ""}">
-    <div class="pk-h"><span>後押しの買い目<em class="vS">回収重視</em></span><span>${so.done ? "確定オッズの人気で" : "いまのオッズの人気で"}</span></div>${rows}</div>`;
+    <div class="pk-h"><span>後押しの買い目<em class="vS">回収重視</em></span><span>${so.done ? "確定オッズの人気で" : "いまのオッズの人気で"}</span></div>${rows}${preLine}</div>`;
 }
 
 // ---------------------------------------------------------------- 期待値ワイド(2026-11-21)
@@ -1488,6 +1506,8 @@ function renderMoney() {
   for (const r of SD) if (r[0] >= gFrom && r[0] <= to) gDay[r[0]] = {n: r[1], hit: r[2], ret: r[3]};
   const gs = Object.values(gDay).reduce((a, x) => [a[0] + x.n, a[1] + x.hit, a[2] + x.ret], [0, 0, 0]);
   const gLive = SD.filter(r => r[0] >= PUSH_FROM).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);
+  // 発走前に最後に取ったオッズで選んだ後押しの買い目(実際に買える分。history.json の oshi_pre。11/15 から)
+  const gPre = (h.oshi_pre || []).filter(r => r[0] >= from && r[0] <= to).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);
   const ew = (h.evw || []).filter(r => r[0] >= from && r[0] <= to).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);   // 期待値ワイド
   const ewx = (h.evw_out || []).filter(r => r[0] >= from && r[0] <= to).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);   // 後押しで外した組(参考)
   // 日ごと(2つの買い方を並べる。グラフ・表・カレンダー)
@@ -1542,13 +1562,15 @@ function renderMoney() {
     </div>
     <div class="daysum">
       <div class="hd">${fmtD(gFrom)} 〜 ${fmtD(to)} の成績(1点${h.unit}円)</div>
-      ${sumRow("後押しの買い目", "馬連 後押し上5% × 1番人気", gs[0], gs[1], gs[0] * 100, gs[2], "点")}
+      ${sumRow("後押しの買い目", "馬連 後押し上5% × 1番人気(確定オッズの人気)", gs[0], gs[1], gs[0] * 100, gs[2], "点")}
+      ${(h.oshi_pre || []).length ? sumRow("後押しの買い目(発走前のオッズ)", "同じ買い方を、発走前に最後に取ったオッズの人気で(11/15 から)", gPre[0], gPre[1], gPre[0] * 100, gPre[2], "点") : ""}
       ${sumRow("期待値ワイド", "ワイド 期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上・後押し込み " + EV_WIDE.push_ev.toFixed(1) + "以上", ew[0], ew[1], ew[0] * 100, ew[2], "点")}
       ${ewx[0] ? sumRow("(参考)後押しで外した組", "期待値ワイドのうち後押し込み " + EV_WIDE.push_ev.toFixed(1) + "未満", ewx[0], ewx[1], ewx[0] * 100, ewx[2], "点") : ""}
       ${sumRow("モデルの買い目", "3連複 ◎-○-▲", rs.length, hit, S, R)}
       <div class="ft"><b>期待値ワイド</b>: 発走前のオッズが残っている日(2026-11-14 から)だけ数える。グラフ・表には入れていない。
         <b>後押しの買い目(回収重視)</b>: 2026-11-14 までは、その年を除いて作った式で再現した成績(人気は確定オッズ)。
         11/15 からは実際の予想に入っている後押しで数える: ${gLive[0] ? `<b>${gLive[0]}点 · 的中 ${gLive[1]} · 回収率 ${pct(gLive[2], gLive[0] * 100)}</b>` : "まだありません"}。
+        「発走前のオッズ」は、1番人気と単勝20倍以下を発走前に最後に取ったオッズで決めた分(実際に買える買い目。1番人気が締切までに替わると買い目も替わる)。
         的中は 7% ほどで、外れが続く日の方が多い。モデルの買い目は2024年から(その日より前のレースだけで学んだモデルで再現)。</div>
     </div>
     ${pts2.length >= 2 ? `<div class="sec">累積収支</div>${cumChart(pts2)}<p class="legendnote">指でなぞると日ごとの数字が出ます。</p>` : ""}

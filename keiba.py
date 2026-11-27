@@ -1107,15 +1107,17 @@ def ev_wide_history(split=False):
 PUSH_FROM = "20261115"        # 予想に後押し(push・push2)が入り始めた日
 
 
-def oshi_history():
+def oshi_history(pre=False):
     """後押しの買い目(馬連: 後押しが上5%の馬 × 1番人気。L.oshi_picks)の日ごとの成績 [日付, 点数, 的中, 払戻(100円あたりの合計)]。
     PUSH_FROM より前の日は keiba/push_model.json の days(その年を除いて作った式で再現したもの。tools/train_push.py)、
-    PUSH_FROM からは予想に入っている後押し(push)で数える。どちらも人気と単勝20倍以下は確定オッズで決める"""
+    PUSH_FROM からは予想に入っている後押し(push)で数える。どちらも人気と単勝20倍以下は確定オッズで決める。
+    pre なら、人気と20倍以下を発走前に最後に取ったオッズ(日別ファイルの horses の odds。PC が取った分も入る)で決める
+    (実際に買える買い目の成績。2026-11-27〜。PUSH_FROM からの日だけ)"""
     import keiba_push as PU
     m = PU.load()
     if not m or "jra" not in CENTERS:
         return []
-    out = [r for r in m.get("days") or [] if r[0] < PUSH_FROM]
+    out = [] if pre else [r for r in m.get("days") or [] if r[0] < PUSH_FROM]
     cut = ((m.get("cuts") or {}).get("win_top") or {}).get(L.OSHI["q"])
     for f in sorted(glob.glob(OUT + "/days/*.json")):
         if os.path.basename(f)[:8] < PUSH_FROM:
@@ -1129,8 +1131,8 @@ def oshi_history():
             push = {h["umaban"]: h.get("push") for h in (rc.get("pred") or {}).get("horses") or []}
             gone = {h["umaban"] for h in rc.get("horses") or [] if h.get("scratched")}
             pay = (res.get("payout") or {}).get("馬連") or {}
-            # 人気は確定オッズで決める。確定オッズが全頭そろっていない(取り直し待ち)ときは、発走前のオッズで
-            od = res.get("odds") if not result_partial(rc) else {h["umaban"]: h.get("odds") for h in rc.get("horses") or [] if not h.get("scratched")}
+            # 人気は確定オッズで決める。確定オッズが全頭そろっていない(取り直し待ち)ときと pre のときは、発走前のオッズで
+            od = res.get("odds") if not (pre or result_partial(rc)) else {h["umaban"]: h.get("odds") for h in rc.get("horses") or [] if not h.get("scratched")}
             for pk in L.oshi_picks(push, od, cut):
                 if pk["u"] in gone or pk["fav"] in gone:
                     continue
@@ -1247,7 +1249,7 @@ def build_history():
         days.append(row)
     evw, evw_out = ev_wide_history(split=True)        # 期待値ワイド(買い目)と、後押しの式で外れた組(参考。2026-11-27〜)
     hist = {"updated": datetime.now(JST).isoformat(timespec="seconds"), "unit": L.UNIT,
-            "days": days, "races": races, "oshi": oshi_history(), "evw": evw, "evw_out": evw_out, "push": push_history()}
+            "days": days, "races": races, "oshi": oshi_history(), "oshi_pre": oshi_history(pre=True), "evw": evw, "evw_out": evw_out, "push": push_history()}
     save(OUT + "/history.json", hist)
     return hist
 
