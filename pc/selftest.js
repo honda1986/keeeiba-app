@@ -44,12 +44,14 @@ t("時刻(日本時間)", () => {
 // ---- 通知(pc/notify.js。2026-11-27) ----
 const N = require("./notify.js");
 t("後押しの買い目: 1番人気の後押しが弱いレースで、2頭とも3着内の式の上5%の馬 × 2番人気(その馬が2番人気なら3番人気)", () => {
-  const od = { 1: 2.0, 2: 4.0, 3: 6.0, 4: 12.0, 5: 25.0 };
+  const od = { 1: 2.5, 2: 4.0, 3: 6.0, 4: 12.0, 5: 25.0 };
   const p2 = { 1: 0.5, 2: 0.3, 4: 0.2, 5: 0.4 };
   assert.deepStrictEqual(N.oshi2Picks({ 1: -0.5 }, p2, od, -0.3, 0.15), [{ u: 2, mate: 3, fav: 1 }, { u: 4, mate: 2, fav: 1 }]);  // 5 は20倍超え
   assert.deepStrictEqual(N.oshi2Picks({ 1: 0.1 }, p2, od, -0.3, 0.15), []);                                  // 1番人気の後押しが弱くない
   assert.deepStrictEqual(N.oshi2Picks({}, p2, od, -0.3, 0.15), []);                                          // 1番人気の後押しが無い
   assert.deepStrictEqual(N.oshi2Picks({ 1: -0.5 }, { 4: 0.2 }, { 1: 2, 4: 12 }, -0.3, 0.15), []);             // 5頭いない
+  assert.deepStrictEqual(N.oshi2Picks({ 1: -0.5 }, p2, Object.assign({}, od, { 1: 2.0 }), -0.3, 0.15), []);   // 1番人気が2.0倍以下は買わない
+  assert.strictEqual(N.oshi2Picks({ 1: -0.5 }, p2, Object.assign({}, od, { 1: 2.1 }), -0.3, 0.15).length, 2);
 });
 t("期待値ワイド: 期待値0.95以上で、後押し込み1.0以上(後押しが無ければ絞らない)", () => {
   const tp = { "1-2": 0.8, "1-3": 0.5, "2-3": 0.45, "1-4": 0.3, "2-4": 0.25, "3-4": 0.2, "1-5": 0.15, "5-6": 0.1 };

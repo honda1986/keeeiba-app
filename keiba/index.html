@@ -670,8 +670,8 @@ function daySumInner() {
     ${hasPre ? line("後押しの買い目", "馬連とワイド(発走前のオッズの人気)", spp, "点") : ""}
     ${line("期待値ワイド", ep.some(x => x.past) ? "確定オッズで再現" : "期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上", ep, "点")}
     ${line("モデルの買い目", "3連複 ◎-○-▲", mp)}
-    <div class="ft">後押しの買い目は、1番人気の後押しが弱いレースで、後押し(2頭とも3着内の式)が上5%の馬と2番人気の馬連・ワイド。
-      過去5年の回収率は 馬連 ${((((state.push || {}).stats || {}).oshi2 || {}).uma || {}).roi || "-"}%・ワイド ${((((state.push || {}).stats || {}).oshi2 || {}).wide || {}).roi || "-"}%(年に約400頭)。
+    <div class="ft">後押しの買い目は、1番人気の後押しが弱いレース(1番人気が ${OSHI2.fav_min_odds}倍以下は除く)で、後押し(2頭とも3着内の式)が上5%の馬と2番人気の馬連・ワイド。
+      過去5年の回収率は 馬連 ${((((state.push || {}).stats || {}).oshi2 || {}).uma || {}).roi || "-"}%・ワイド ${((((state.push || {}).stats || {}).oshi2 || {}).wide || {}).roi || "-"}%(年に約300頭)。
       期待値ワイドは、期待値の表のワイドで ${EV_WIDE.min_ev.toFixed(2)}以上、後押し込みでも ${EV_WIDE.push_ev.toFixed(1)}以上の組(<b>発走の${PRE.fresh}分前から</b>のオッズで出す)。
       ${rs.some(r => r.center === "jra" && !r.result) ? `これからのレースは<b>いまのオッズ</b>で出します(オッズが動くと買い目も替わる)。` : ""}</div>`;
 }
@@ -858,12 +858,13 @@ function trioPairSums(to) {
 // 終わったレースは確定オッズ(と、発走前に最後に取ったオッズで選んだ分)、これからのレースはいまのオッズ。
 // 予想に後押しが入る前の日(2026-11-14 まで)のレースは、oshi_past.json の x2(その年を除いて作った式で選んだ馬)と確定オッズの人気で出す
 // (2026-11-15〜11-27 は「後押しが上5%の馬 × 1番人気 の馬連」だった)
-const OSHI2 = {x_q: "0.95", fav_q: "0.2", max_odds: 20};
+// 1番人気が fav_min_odds(2.0倍)以下のレースは買わない(2026-11-28。そこでは 馬連 94%・ワイド 108% で、ほかは 124%・111%)
+const OSHI2 = {x_q: "0.95", fav_q: "0.2", max_odds: 20, fav_min_odds: 2};
 function oshi2Picks(push, push2, odds, favCut, xCut) {
   const us = Object.keys(odds || {}).map(Number).filter(u => +odds[u] > 1);
   if (us.length < 5 || favCut == null || xCut == null) return [];
   const rank = [...us].sort((a, b) => +odds[a] - +odds[b] || a - b), fav = rank[0];
-  if (push[fav] == null || push[fav] > favCut) return [];
+  if (push[fav] == null || push[fav] > favCut || +odds[fav] <= OSHI2.fav_min_odds) return [];
   return us.sort((a, b) => a - b).filter(u => u !== fav && +odds[u] <= OSHI2.max_odds && push2[u] != null && push2[u] >= xCut)
     .map(u => ({u, mate: rank.filter(v => v !== u)[1], fav}));
 }
@@ -1571,7 +1572,7 @@ function renderMoney() {
     </div>
     <div class="daysum">
       <div class="hd">${fmtD(gFrom)} 〜 ${fmtD(to)} の成績(1点${h.unit}円)</div>
-      ${sumRow("後押しの買い目 馬連", "1番人気の後押しが弱いレースで、後押しの馬 × 2番人気(確定オッズの人気)", gU[0], gU[1], gU[0] * 100, gU[2], "点")}
+      ${sumRow("後押しの買い目 馬連", "1番人気の後押しが弱いレース(2.0倍以下は除く)で、後押しの馬 × 2番人気(確定オッズの人気)", gU[0], gU[1], gU[0] * 100, gU[2], "点")}
       ${sumRow("後押しの買い目 ワイド", "同じ馬・同じ相手のワイド", gW[0], gW[1], gW[0] * 100, gW[2], "点")}
       ${(h.oshi2_pre || []).length ? sumRow("後押しの買い目(発走前のオッズ)", "馬連とワイドを、発走前に最後に取ったオッズの人気で(11/15 から)", gPre[0], gPre[1], gPre[0] * 100, gPre[2], "点") : ""}
       ${sumRow("期待値ワイド", "ワイド 期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上・後押し込み " + EV_WIDE.push_ev.toFixed(1) + "以上", ew[0], ew[1], ew[0] * 100, ew[2], "点")}
@@ -2816,8 +2817,9 @@ function oshiRule() {
     <ul class="rules">
       <li><b>何か</b>1番人気の後押しが弱いレースで、後押し(2頭とも3着内の式)が上5%の馬と、<b>2番人気</b>の<b>馬連</b>と<b>ワイド</b>(1頭につき2点)。
         過去5年で ${o.n.toLocaleString()}頭・馬連 回収率 <b>${o.uma.roi.toFixed(0)}%</b>(的中 ${pct(o.uma.hit, 1)})・ワイド 回収率 <b>${o.wide.roi.toFixed(0)}%</b>(的中 ${pct(o.wide.hit, 1)})</li>
-      <li><b>条件</b>1番人気の後押し(1着の式)が、単勝20倍以下の馬の中で下20%(過去の成績が良く見えて買われすぎ)。
-        後押しの馬は、1番人気でない・単勝 ${OSHI2.max_odds}倍以下・後押し(2頭とも3着内の式)が上5%。後押しの馬が2番人気なら、相手は3番人気。年に約400頭</li>
+      <li><b>条件</b>1番人気の後押し(1着の式)が、単勝20倍以下の馬の中で下20%(過去の成績が良く見えて買われすぎ)で、1番人気が ${OSHI2.fav_min_odds}倍より上
+        (${OSHI2.fav_min_odds}倍以下は1番人気が 74% 3着内に来て、馬連 94%・ワイド 108% だったので買わない。2026-11-28〜)。
+        後押しの馬は、1番人気でない・単勝 ${OSHI2.max_odds}倍以下・後押し(2頭とも3着内の式)が上5%。後押しの馬が2番人気なら、相手は3番人気。年に約300頭</li>
       <li><b>なぜ</b>後押し(2頭とも3着内の式)が強い馬は、オッズの見込みより3着内に来る。1番人気が買われすぎのレースでは、相手は1番人気より2番人気の方が良い
         (相手を1番人気・3〜6番人気にすると 90〜95%。1番人気によらず全部のレースでも、2番人気と組むと 馬連 108%・ワイド 102%)</li>
       <li><b>当たりは少ない</b>的中は 馬連 5%・ワイド 14% ほど。年ごとに上下する(下の表)。約170の組み合わせから見つけた形なので、これからの記録で確かめる</li>

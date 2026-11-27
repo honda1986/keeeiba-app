@@ -319,14 +319,17 @@ OSHI = {"q": "0.95", "max_odds": 20.0}
 # 2022〜2026年(その年を除いて作った式・確定オッズ)で 約2,000頭(年に約400頭)・馬連 116%(126・99・126・133・95%)・
 # ワイド 110%(120・113・95・113・107%)(tools/experiments/oshi_weakfav.py)。1番人気の後押しによらず全部のレースで 馬連 108%・ワイド 102%、
 # 相手を1番人気・3〜6番人気にすると 90〜95% に下がる。約170のマスから見つけた形なので、記録で確かめていく。
+# 1番人気が fav_min_odds(2.0倍)以下のレースは買わない(2026-11-28。1番人気が 74% 3着内に来て、馬連 94%〈大きい3つを除くと 68%〉・ワイド 108%。
+#  2.0倍より上だけにすると 2点合計 113.5% → 117.7%。tools/experiments/oshi2_favodds.py)
 # (2026-11-15〜11-27 の「後押しが上5%の馬 × 1番人気 の馬連」は oshi_picks。5年 101.5%。前の形として残す)
-OSHI2 = {"x_q": "0.95", "fav_q": "0.2", "max_odds": 20.0}
+OSHI2 = {"x_q": "0.95", "fav_q": "0.2", "max_odds": 20.0, "fav_min_odds": 2.0}
 
 
 def oshi2_picks(push, push2, odds, fav_cut, x_cut):
     """後押しの買い目。push = 馬番 -> 後押し(1着の式)、push2 = 馬番 -> 後押し(2頭とも3着内の式)、odds = 馬番 -> 単勝オッズ、
     fav_cut = 1番人気の後押しが弱い境目(これ以下)、x_cut = 後押しが強い境目(これ以上)。
-    -> [{"u": 馬番, "mate": 相手(2番人気。u が2番人気なら3番人気), "fav": 1番人気}](馬番の順)。1番人気が弱くない・馬が5頭いない・境目が無いなら []"""
+    -> [{"u": 馬番, "mate": 相手(2番人気。u が2番人気なら3番人気), "fav": 1番人気}](馬番の順)。
+    1番人気が弱くない・1番人気が fav_min_odds 倍以下・馬が5頭いない・境目が無いなら []"""
     od = {int(u): float(o) for u, o in (odds or {}).items() if o and float(o) > 1.0}
     if len(od) < 5 or fav_cut is None or x_cut is None:
         return []
@@ -334,7 +337,7 @@ def oshi2_picks(push, push2, odds, fav_cut, x_cut):
     pw = {int(u): v for u, v in (push or {}).items() if v is not None}
     p2 = {int(u): v for u, v in (push2 or {}).items() if v is not None}
     fav = rank[0]
-    if fav not in pw or pw[fav] > fav_cut:
+    if fav not in pw or pw[fav] > fav_cut or od[fav] <= OSHI2["fav_min_odds"]:
         return []
     out = []
     for u in sorted(od):

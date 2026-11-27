@@ -412,8 +412,9 @@ class Parse(unittest.TestCase):
         self.assertEqual(L.oshi_picks({2: None}, odds, 0.2171), [])
         # アプリの数字(index.html の OSHI2・PRE)と同じ。消した買い目(割安ワイド・堅い買い目)がアプリに残っていないこと
         html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "index.html"), encoding="utf-8").read()
-        m = re.search(r'const OSHI2 = \{x_q: "([\d.]+)", fav_q: "([\d.]+)", max_odds: (\d+)\};', html)
-        self.assertEqual((m.group(1), m.group(2), float(m.group(3))), (L.OSHI2["x_q"], L.OSHI2["fav_q"], L.OSHI2["max_odds"]))
+        m = re.search(r'const OSHI2 = \{x_q: "([\d.]+)", fav_q: "([\d.]+)", max_odds: (\d+), fav_min_odds: ([\d.]+)\};', html)
+        self.assertEqual((m.group(1), m.group(2), float(m.group(3)), float(m.group(4))),
+                         (L.OSHI2["x_q"], L.OSHI2["fav_q"], L.OSHI2["max_odds"], L.OSHI2["fav_min_odds"]))
         m = re.search(r"const PRE = \{pt: ([\d.]+), alpha: ([\d.]+), fresh: ([\d.]+)\};", html)
         self.assertEqual([float(x) for x in m.groups()], [L.PRE[k] for k in ("pt", "alpha", "fresh")])
         self.assertNotIn("割安", html)
@@ -574,12 +575,13 @@ class Parse(unittest.TestCase):
         self.assertEqual((float(m.group(1)), float(m.group(2))), (L.PRE["pt"], L.PRE["alpha"]))
         m = re.search(r"const EV_WIDE = \{ min_ev: ([\d.]+), top: (\d+), push_ev: ([\d.]+) \};", js)
         self.assertEqual((float(m.group(1)), int(m.group(2)), float(m.group(3))), (L.EV_WIDE["min_ev"], L.EV_WIDE["top"], L.EV_WIDE["push_ev"]))
-        m = re.search(r"const OSHI2 = \{ x_q: \"([\d.]+)\", fav_q: \"([\d.]+)\", max_odds: ([\d.]+) \};", js)
-        self.assertEqual((m.group(1), m.group(2), float(m.group(3))), (L.OSHI2["x_q"], L.OSHI2["fav_q"], L.OSHI2["max_odds"]))
+        m = re.search(r"const OSHI2 = \{ x_q: \"([\d.]+)\", fav_q: \"([\d.]+)\", max_odds: ([\d.]+), fav_min_odds: ([\d.]+) \};", js)
+        self.assertEqual((m.group(1), m.group(2), float(m.group(3)), float(m.group(4))),
+                         (L.OSHI2["x_q"], L.OSHI2["fav_q"], L.OSHI2["max_odds"], L.OSHI2["fav_min_odds"]))
 
     def test_oshi2(self):
         # 後押しの買い目(2026-11-28〜): 1番人気の後押し(1着の式)が弱いレースで、2頭とも3着内の式の上5%の馬 × 2番人気(その馬が2番人気なら3番人気)
-        od = {1: 2.0, 2: 4.0, 3: 6.0, 4: 12.0, 5: 25.0}
+        od = {1: 2.5, 2: 4.0, 3: 6.0, 4: 12.0, 5: 25.0}
         p2 = {1: 0.5, 2: 0.3, 4: 0.2, 5: 0.4}
         pk = L.oshi2_picks({1: -0.5}, p2, od, -0.3, 0.15)
         self.assertEqual([(x["u"], x["mate"], x["fav"]) for x in pk], [(2, 3, 1), (4, 2, 1)])      # 5 は20倍超え
@@ -588,15 +590,17 @@ class Parse(unittest.TestCase):
         self.assertEqual(L.oshi2_picks({}, p2, od, -0.3, 0.15), [])                                # 1番人気の後押しが無い
         self.assertEqual(L.oshi2_picks({1: -0.5}, {4: 0.2}, {1: 2, 4: 12}, -0.3, 0.15), [])        # 5頭いない
         self.assertEqual(L.oshi2_picks({1: -0.5}, p2, od, None, 0.15), [])
+        self.assertEqual(L.oshi2_picks({1: -0.5}, p2, {**od, 1: 2.0}, -0.3, 0.15), [])       # 1番人気が2.0倍以下は買わない(2026-11-28)
+        self.assertEqual(len(L.oshi2_picks({1: -0.5}, p2, {**od, 1: 2.01}, -0.3, 0.15)), 2)
 
     def test_oshi2_history(self):
         # 後押しの買い目の日ごとの成績 [日付, 頭数, 馬連の的中, 払戻, ワイドの的中, 払戻]: PUSH_FROM より前は push_model.json の days2、
         # そこからは予想に入っている push・push2 と確定オッズ(pre なら発走前のオッズ)で数える
         import tempfile, keiba_push as PU
-        hs = [{"umaban": u, "odds": o} for u, o in ((1, 1.5), (2, 5.0), (3, 4.0), (4, 15.0), (5, 30.0), (6, 12.0))]
+        hs = [{"umaban": u, "odds": o} for u, o in ((1, 2.5), (2, 5.0), (3, 4.0), (4, 15.0), (5, 30.0), (6, 12.0))]
         ph = [{"umaban": 1, "push": -0.5, "push2": 0.0}, {"umaban": 2, "push": 0.0, "push2": 0.3}, {"umaban": 3, "push": 0.0, "push2": 0.0},
               {"umaban": 4, "push": 0.0, "push2": 0.2}, {"umaban": 5, "push": 0.0, "push2": 0.5}, {"umaban": 6}]
-        res = {"order": [2, 4, 9], "odds": {"1": 1.5, "2": 4.0, "3": 9.0, "4": 15.0, "5": 30.0, "6": 12.0},
+        res = {"order": [2, 4, 9], "odds": {"1": 2.5, "2": 4.0, "3": 9.0, "4": 15.0, "5": 30.0, "6": 12.0},
                "payout": {"馬連": {"2-4": 900}, "ワイド": {"2-4": 300, "3-4": 500}}}
         race = {"horses": hs, "result": res, "pred": {"verdict": "見送り", "horses": ph}}
         with tempfile.TemporaryDirectory() as tmp:

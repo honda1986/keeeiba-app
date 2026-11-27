@@ -27,7 +27,7 @@ const APP = "https://honda1986.github.io/keeeiba-app/keiba/";
 // 買い目の決め方の数字(keiba_logic.py と同じ。test_keiba.py が見比べる)
 const PRE = { pt: 0.75, alpha: 0.35 };
 const EV_WIDE = { min_ev: 0.95, top: 6, push_ev: 1.0 };
-const OSHI2 = { x_q: "0.95", fav_q: "0.2", max_odds: 20.0 };
+const OSHI2 = { x_q: "0.95", fav_q: "0.2", max_odds: 20.0, fav_min_odds: 2.0 };
 const KINDS = ["oshi", "evw", "model"];
 
 // ---- 買い目(アプリ・keiba_logic と同じ計算) ----
@@ -37,13 +37,13 @@ const winOdds = (odds, gone) => {
   for (const k of Object.keys(odds || {})) { const u = +k, v = odds[k]; const x = Array.isArray(v) ? v[0] : v; if (x > 1 && !(gone || []).includes(u)) o[u] = +x; }
   return o;
 };
-// 後押しの買い目: 1番人気の後押し(push)が favCut 以下のレースで、push2 が xCut 以上の馬(1番人気でない・20倍以下)× 2番人気
+// 後押しの買い目: 1番人気の後押し(push)が favCut 以下(1番人気が2.0倍以下は除く)のレースで、push2 が xCut 以上の馬(1番人気でない・20倍以下)× 2番人気
 // push・push2 = {馬番: 後押し}、od = {馬番: 単勝オッズ} -> [{u, mate(2番人気。u が2番人気なら3番人気), fav}]
 function oshi2Picks(push, push2, od, favCut, xCut) {
   const us = Object.keys(od).map(Number);
   if (us.length < 5 || favCut == null || xCut == null) return [];
   const rank = [...us].sort((a, b) => od[a] - od[b] || a - b), fav = rank[0];
-  if (push[fav] == null || push[fav] > favCut) return [];
+  if (push[fav] == null || push[fav] > favCut || od[fav] <= OSHI2.fav_min_odds) return [];     // 1番人気が2.0倍以下は買わない
   return us.sort((a, b) => a - b).filter((u) => u !== fav && od[u] <= OSHI2.max_odds && push2[u] != null && push2[u] >= xCut)
     .map((u) => ({ u, mate: rank.filter((v) => v !== u)[1], fav }));
 }
