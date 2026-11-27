@@ -13,6 +13,8 @@
 //     latest.json        … これからのレースと、発走から20分以内のレースの、いちばん新しいオッズ(アプリが読む)
 //     snap/YYYYMMDD.json … その日の全部のレースの、発走前の最後のオッズ(GitHub の更新が取り込んで記録に残す)
 //
+// ・取ったあとで、発走まで 3分(設定で変えられる)を切ったレースの買い目をスマホに通知する(pc/notify.js。ntfy。2026-11-27)
+//
 // 使い方: node pc/odds.js --out <フォルダ>       … 1回だけ見る(タスクスケジューラが1分おきに呼ぶ)
 //         node pc/odds.js --dry                  … 取って表示するだけ(書かない)
 //         node pc/odds.js --dry --win=-600,600   … 見る範囲を変える(動作確認用。発走まで何分)
@@ -21,6 +23,7 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
+const notify = require("./notify");
 
 // (KEIBA_DAYS_URL・KEIBA_ODDS_API は動作確認用。ふだんは設定しない)
 const PAGES = process.env.KEIBA_DAYS_URL || "https://honda1986.github.io/keeeiba-app/keiba/days/";
@@ -33,6 +36,7 @@ const KEEP_AFTER_MIN = 20;      // latest.json には、発走から20分たつ�
 const WAIT_MS = 400;            // 1リクエストごとの間隔(並べて取らない)
 const BUDGET_MS = 45 * 1000;    // 1回の持ち時間。超えたら残りは次の回へ
 const TRIO_PAIR_MIN = 0.003;    // keiba.py と同じ(これより小さい組は残さない)
+const PUSH_EVERY_MIN = 180;     // 後押しの式(push_model.json。通知の買い目に使う)を取り直す間隔
 
 // ---- 読み取り(keiba.py の parse_* と同じ形にする) ----
 const num = (v) => { const x = parseFloat(String(v == null ? "" : v).replace(/,/g, "")); return isFinite(x) ? x : 0; };
@@ -147,10 +151,31 @@ if (require.main === module) {
       return null;
     }
     const list = Object.values(j.races || {}).filter((r) => r.center === "jra" && r.venue && r.start && r.id)
-      .map((r) => { const p = r.pred || {}; return { id: r.id, venue: r.venue, rno: r.rno, start: r.start,
-        pair: ["A", "B"].includes(p.verdict) && p.honmei && p.taikou ? [p.honmei, p.taikou] : null }; });
+      .map((r) => { const p = r.pred || {}, hs = p.horses || [], push = {}, push2 = {}, names = {};
+        for (const h of hs) { if (h.push != null) push[h.umaban] = h.push; if (h.push2 != null) push2[h.umaban] = h.push2; }
+        for (const h of r.horses || []) if (h.name) names[h.umaban] = h.name;
+        return { id: r.id, venue: r.venue, rno: r.rno, start: r.start,
+          pair: ["A", "B"].includes(p.verdict) && p.honmei && p.taikou ? [p.honmei, p.taikou] : null,
+          // 通知の買い目に使う(pc/notify.js): 予想の ◎○・買い目・後押し、取消、馬名
+          pred: { verdict: p.verdict, honmei: p.honmei, taikou: p.taikou, bets: (p.bets || []).map((b) => ({ type: b.type, combos: b.combos })), push, push2 },
+          gone: (r.horses || []).filter((h) => h.scratched).map((h) => h.umaban), names }; });
     if (!DRY) writeJson(f, { at: Date.now(), list });
     return list;
+  }
+
+  // 後押しの式(境目・組の式の土台)。work/push_model.json に覚えておく
+  async function loadPush() {
+    const f = path.join(WORK, "push_model.json"), c = readJson(f, null);
+    if (c && (Date.now() - c.at) / 60000 < PUSH_EVERY_MIN) return c.m;
+    for (const base of [PAGES, RAW]) {
+      try {
+        const m = await getJson(base.replace(/days\/$/, "push_model.json") + "?t=" + Date.now());
+        const keep = { cuts: m.cuts, pair_base: m.pair_base };
+        if (!DRY) writeJson(f, { at: Date.now(), m: keep });
+        return keep;
+      } catch (e) { /* 次を試す */ }
+    }
+    return c ? c.m : null;
   }
 
   (async () => {
@@ -163,6 +188,7 @@ if (require.main === module) {
     const snap = readJson(snF, {});
     const due = dueRaces(list, day, now, last, WIN);
     let got = 0;
+    const fresh = [];
     for (const r of due) {
       if (Date.now() - t0 > BUDGET_MS) { console.log("持ち時間切れ。残りは次の回へ"); break; }
       try {
@@ -176,10 +202,18 @@ if (require.main === module) {
           s.trio = {};
           for (const k of Object.keys(trio)) { const us = k.split("-").map(Number); if (r.pair.every((u) => us.includes(u))) s.trio[k] = trio[k]; }
         }
-        snap[r.id] = s; got++;
+        snap[r.id] = s; got++; fresh.push(r.id);
         const m = Math.round((startMs(day, r.start) - Date.now()) / 60000);
         console.log(r.venue + r.rno + "R(発走まで" + m + "分): 単勝 " + Object.keys(win).length + "頭・ワイド " + Object.keys(wide).length + "組・3連複 " + Object.keys(trio).length + "組");
       } catch (e) { console.log(r.venue + r.rno + "R: 取れない(" + e.message + ")"); }
+    }
+    // 発走まで3分(設定)を切ったレースの買い目を通知する(送れなくても、オッズの記録は続ける)
+    if (fresh.length) {
+      try {
+        const pm = await loadPush();
+        await notify.notifyDue({ list, snap, fresh, day, now: Date.now(), work: DRY ? path.join(WORK, "dry") : WORK, pm,
+          send: DRY ? async (m) => console.log("(--dry なので送らない) " + m.title + "\n" + m.message) : null });
+      } catch (e) { console.log("通知の処理に失敗(オッズの記録は続ける): " + e.message); }
     }
     if (DRY) { console.log("見るレース " + due.length + " / 取れた " + got + "(--dry なので書かない)"); console.log("changed=0"); return; }
     writeJson(stF, { day, last });

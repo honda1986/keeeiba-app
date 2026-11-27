@@ -41,4 +41,51 @@ t("時刻(日本時間)", () => {
   assert.strictEqual(O.isoJst(Date.UTC(2026, 10, 14, 0, 5, 7)), "2026-11-14T09:05:07+09:00");
   assert.strictEqual(O.day8(Date.UTC(2026, 10, 13, 15, 0)), "20261114");
 });
-console.log(process.exitCode ? "自己テスト: 失敗あり" : "自己テスト: " + n + " 個とも通りました");
+// ---- 通知(pc/notify.js。2026-11-27) ----
+const N = require("./notify.js");
+t("後押しの買い目: 上5%の馬(1番人気でない・20倍以下)× 1番人気", () => {
+  const od = { 1: 2.0, 2: 5.0, 3: 12.0, 4: 25.0, 5: 40.0 };
+  assert.deepStrictEqual(N.oshiPicks({ 1: 0.5, 2: 0.3, 3: 0.1, 4: 0.4 }, od, 0.2), [{ u: 2, fav: 1 }]);   // 1 は1番人気、4 は20倍超え、3 は境目未満
+  assert.deepStrictEqual(N.oshiPicks({ 2: 0.3 }, { 1: 2.0, 2: 5.0 }, 0.2), []);                             // 5頭いない
+});
+t("期待値ワイド: 期待値0.95以上で、後押し込み1.0以上(後押しが無ければ絞らない)", () => {
+  const tp = { "1-2": 0.8, "1-3": 0.5, "2-3": 0.45, "1-4": 0.3, "2-4": 0.25, "3-4": 0.2, "1-5": 0.15, "5-6": 0.1 };
+  const wide = { "1-2": [1.2, 1.4], "1-3": [2.6, 3.0], "2-3": [3.0, 3.4], "1-4": [3.8, 4.6], "2-4": [6.0, 7.0], "3-4": [5.0, 6.0], "1-5": [9.0, 10.0], "5-6": [20.0, 25.0] };
+  assert.deepStrictEqual(N.evWidePicks(tp, wide, null, null, []).map((x) => x.key), ["1-3", "2-3", "2-4"]);     // test_keiba の test_ev_wide と同じ
+  assert.deepStrictEqual(N.evWidePicks(tp, wide, "5-6", null, []).map((x) => x.key), ["1-3", "2-3", "2-4", "5-6"]);
+  const eff = 2.6 + 0.35 * 0.4;
+  assert.deepStrictEqual(N.evWidePicks(tp, wide, null, { "1-3": 1 / eff - 0.01, "2-3": 0.5, "2-4": 0.3 }, []).map((x) => x.key), ["2-3", "2-4"]);
+  assert.deepStrictEqual(N.evWidePicks(tp, wide, null, null, [3]).map((x) => x.key), ["2-4"]);                  // 取消の馬の組は外す
+});
+t("通知の中身: 買い目が無ければ送らない。種類を絞れる", () => {
+  const race = { id: "202605050811", venue: "東京", rno: 11, start: "15:40", names: { 3: "ア", 7: "イ" } };
+  const pk = { od: { 3: 2.1, 7: 12.3 }, oshi: [{ u: 7, fav: 3 }], evw: [], model: [{ type: "3連複", combos: [[1, 4, 8]] }] };
+  const m = N.message(race, "20261129", 3, pk);
+  assert.strictEqual(m.title, "東京11R 15:40 発走3分前");
+  assert.ok(m.message.includes("後押し 馬連 3-7(7 イ 12.3倍 × 1番人気 3 ア 2.1倍)") && m.message.includes("モデル 3連複 1-4-8"));
+  assert.ok(m.click.endsWith("#d=20261129&r=202605050811"));
+  assert.strictEqual(N.message(race, "20261129", 3, { od: {}, oshi: [], evw: [], model: [] }), null);
+  assert.strictEqual(N.message(race, "20261129", 3, pk, ["evw"]), null);
+  assert.ok(!N.message(race, "20261129", 3, pk, ["oshi"]).message.includes("モデル"));
+});
+(async () => {
+  // 通知する時: 発走まで3分を切ったレースを1回だけ。この回でオッズを取ったレースだけ。送り先はにせもの
+  const os = require("os"), fs = require("fs"), path = require("path");
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "kbnotify-"));
+  const day = "20261129", now = O.startMs(day, "15:37");
+  const pred = { verdict: "A", honmei: 1, taikou: 2, bets: [{ type: "3連複", combos: [[1, 2, 3]] }], push: {}, push2: {} };
+  const list = [{ id: "r1", venue: "東京", rno: 11, start: "15:40", pred }, { id: "r2", venue: "東京", rno: 12, start: "15:50", pred },
+                { id: "r3", venue: "京都", rno: 11, start: "15:39", pred }];
+  const s = { odds: { 1: [2, 1], 2: [3, 2], 3: [5, 3], 4: [9, 4], 5: [20, 5] }, wide: {}, tp: {} };
+  const snap = { r1: s, r2: s, r3: s }, sent = [];
+  const go = (fresh, at) => N.notifyDue({ list, snap, fresh, day, now: at, work, pm: null, send: async (m) => sent.push(m.title),
+    cfg: { topic: "x", server: "", minutes: 3, kinds: ["oshi", "evw", "model"] } });
+  try {
+    await go(["r1", "r2"], now);                    // r1 は3分前 → 送る。r2 は13分前 → まだ。r3 はこの回で取っていない
+    assert.deepStrictEqual(sent, ["東京11R 15:40 発走3分前"]);
+    await go(["r1", "r2", "r3"], now + 60e3);       // r1 は送ったので送らない。r3(1分前)を送る
+    assert.deepStrictEqual(sent, ["東京11R 15:40 発走3分前", "京都11R 15:39 発走1分前"]);
+    n++; console.log("  ○ 通知する時: 発走まで3分を切ったレースを1回だけ(この回でオッズを取ったものだけ)");
+  } catch (e) { console.log("  × 通知する時: " + e.message); process.exitCode = 1; }
+  console.log(process.exitCode ? "自己テスト: 失敗あり" : "自己テスト: " + n + " 個とも通りました");
+})();

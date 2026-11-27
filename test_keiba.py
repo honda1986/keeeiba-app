@@ -567,6 +567,16 @@ class Parse(unittest.TestCase):
         self.assertEqual(rc["result"]["payout"], {"単勝": {"3": 500}})                        # 払戻が無ければ前のを残す
         self.assertFalse(K.take_result(rc, {"order": [1], "odds": {}, "payout": {}}))
 
+    def test_pc_notify_numbers(self):
+        # PC の通知(pc/notify.js)の買い目の決め方の数字が keiba_logic と同じ(2026-11-27)
+        js = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pc", "notify.js"), encoding="utf-8").read()
+        m = re.search(r"const PRE = \{ pt: ([\d.]+), alpha: ([\d.]+) \};", js)
+        self.assertEqual((float(m.group(1)), float(m.group(2))), (L.PRE["pt"], L.PRE["alpha"]))
+        m = re.search(r"const EV_WIDE = \{ min_ev: ([\d.]+), top: (\d+), push_ev: ([\d.]+) \};", js)
+        self.assertEqual((float(m.group(1)), int(m.group(2)), float(m.group(3))), (L.EV_WIDE["min_ev"], L.EV_WIDE["top"], L.EV_WIDE["push_ev"]))
+        m = re.search(r"const OSHI = \{ q: \"([\d.]+)\", max_odds: ([\d.]+) \};", js)
+        self.assertEqual((m.group(1), float(m.group(2))), (L.OSHI["q"], L.OSHI["max_odds"]))
+
     def test_pair_probs(self):
         # 後押しの式の組の確率(keiba_push.pair_probs): 土台(オッズ)+ 2頭の後押し。後押しが大きいほど高い。式が無ければ {}
         import math
