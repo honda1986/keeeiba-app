@@ -43,15 +43,13 @@ t("時刻(日本時間)", () => {
 });
 // ---- 通知(pc/notify.js。2026-11-27) ----
 const N = require("./notify.js");
-t("後押しの買い目: 上5%の馬(1番人気でない・20倍以下)× 1番人気", () => {
-  const od = { 1: 2.0, 2: 5.0, 3: 12.0, 4: 25.0, 5: 40.0 };
-  assert.deepStrictEqual(N.oshiPicks({ 1: 0.5, 2: 0.3, 3: 0.1, 4: 0.4 }, od, 0.2), [{ u: 2, fav: 1 }]);   // 1 は1番人気、4 は20倍超え、3 は境目未満
-  assert.deepStrictEqual(N.oshiPicks({ 2: 0.3 }, { 1: 2.0, 2: 5.0 }, 0.2), []);                             // 5頭いない
-});
-t("後押しワイド: 2頭とも3着内の式の上5%の馬(1番人気でない・20倍以下)× 2番人気(その馬が2番人気なら3番人気)", () => {
+t("後押しの買い目: 1番人気の後押しが弱いレースで、2頭とも3着内の式の上5%の馬 × 2番人気(その馬が2番人気なら3番人気)", () => {
   const od = { 1: 2.0, 2: 4.0, 3: 6.0, 4: 12.0, 5: 25.0 };
-  assert.deepStrictEqual(N.oshiwPicks({ 1: 0.5, 2: 0.3, 4: 0.2, 5: 0.4 }, od, 0.15), [{ u: 2, mate: 3 }, { u: 4, mate: 2 }]);
-  assert.deepStrictEqual(N.oshiwPicks({ 4: 0.2 }, { 1: 2, 4: 12 }, 0.15), []);
+  const p2 = { 1: 0.5, 2: 0.3, 4: 0.2, 5: 0.4 };
+  assert.deepStrictEqual(N.oshi2Picks({ 1: -0.5 }, p2, od, -0.3, 0.15), [{ u: 2, mate: 3, fav: 1 }, { u: 4, mate: 2, fav: 1 }]);  // 5 は20倍超え
+  assert.deepStrictEqual(N.oshi2Picks({ 1: 0.1 }, p2, od, -0.3, 0.15), []);                                  // 1番人気の後押しが弱くない
+  assert.deepStrictEqual(N.oshi2Picks({}, p2, od, -0.3, 0.15), []);                                          // 1番人気の後押しが無い
+  assert.deepStrictEqual(N.oshi2Picks({ 1: -0.5 }, { 4: 0.2 }, { 1: 2, 4: 12 }, -0.3, 0.15), []);             // 5頭いない
 });
 t("期待値ワイド: 期待値0.95以上で、後押し込み1.0以上(後押しが無ければ絞らない)", () => {
   const tp = { "1-2": 0.8, "1-3": 0.5, "2-3": 0.45, "1-4": 0.3, "2-4": 0.25, "3-4": 0.2, "1-5": 0.15, "5-6": 0.1 };
@@ -64,10 +62,10 @@ t("期待値ワイド: 期待値0.95以上で、後押し込み1.0以上(後押�
 });
 t("通知の中身: 買い目が無ければ送らない。種類を絞れる", () => {
   const race = { id: "202605050811", venue: "東京", rno: 11, start: "15:40", names: { 3: "ア", 7: "イ" } };
-  const pk = { od: { 3: 2.1, 7: 12.3 }, oshi: [{ u: 7, fav: 3 }], evw: [], model: [{ type: "3連複", combos: [[1, 4, 8]] }] };
+  const pk = { od: { 1: 1.8, 3: 2.1, 7: 12.3 }, oshi: [{ u: 7, mate: 3, fav: 1 }], evw: [], model: [{ type: "3連複", combos: [[1, 4, 8]] }] };
   const m = N.message(race, "20261129", 3, pk);
   assert.strictEqual(m.title, "東京11R 15:40 発走3分前");
-  assert.ok(m.message.includes("後押し 馬連 3-7(7 イ 12.3倍 × 1番人気 3 ア 2.1倍)") && m.message.includes("モデル 3連複 1-4-8"));
+  assert.ok(m.message.includes("後押し 馬連・ワイド 3-7(7 イ 12.3倍 × 3 ア 2.1倍。1番人気 1 の後押しが弱い)") && m.message.includes("モデル 3連複 1-4-8"));
   assert.ok(m.click.endsWith("#d=20261129&r=202605050811"));
   assert.strictEqual(N.message(race, "20261129", 3, { od: {}, oshi: [], evw: [], model: [] }), null);
   assert.strictEqual(N.message(race, "20261129", 3, pk, ["evw"]), null);

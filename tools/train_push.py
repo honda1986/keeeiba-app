@@ -242,26 +242,31 @@ def stats(D, w, q, log=print):
                    "yn": [int(oy[y][0]) for y in ys], "yh": [int(oy[y][1]) for y in ys], "yr": [round(oy[y][2] / max(oy[y][0], 1), 1) for y in ys]}
     out["_days"] = [days[k] for k in sorted(days)]
     out["_past"] = {"x": past_x, "m": {}}
-    # 後押しワイド(試し。2026-11-27): 後押し(2頭とも3着内の式)が上5%の馬 x × 2番人気 のワイド(L.oshiw_picks)。日ごとの成績と過去の馬も残す
+    # 後押しの買い目(2026-11-28〜。L.oshi2_picks): 1番人気の後押し(1着の式)が下20%のレースで、後押し(2頭とも3着内の式)が上5%の馬 x ×
+    # 2番人気 の 馬連 と ワイド。日ごとの成績 [日付, 頭数, 馬連の的中, 馬連の払戻, ワイドの的中, ワイドの払戻] と、過去の日の [馬, 相手](x2)も残す
     cuts["pair_top"] = {str(k): round(float(np.quantile(q[m], k)), 4) for k in (0.2, 0.9, 0.95)}
-    cut2 = cuts["pair_top"][L.OSHIW["q"]]
-    days2 = {}; oy2 = {y: [0, 0, 0.0] for y in ys}; past_w = {}
+    fcut, xcut = cuts["win_top"][L.OSHI2["fav_q"]], cuts["pair_top"][L.OSHI2["x_q"]]
+    days2 = {}; oy2 = {y: [0, 0, 0.0, 0, 0.0] for y in ys}; past2 = {}
     for g, (s0, n) in enumerate(zip(st, sizes)):
         us = h["u"][s0:s0 + n].astype(int); od = h["odds"][s0:s0 + n]
-        p2 = {int(u): float(v) for u, v in zip(us, q[s0:s0 + n])}
-        pay = (D["info"][D["rid"][g]]["result"].get("payout") or {}).get("ワイド") or {}
-        for pk in L.oshiw_picks(p2, {int(u): float(o) for u, o in zip(us, od)}, cut2):
-            v = pay.get("-".join(str(x) for x in sorted((pk["u"], pk["mate"]))), 0)
-            d = days2.setdefault(D["date"][g], [D["date"][g], 0, 0, 0])
-            d[1] += 1; d[2] += int(v > 0); d[3] += int(v)
-            t = oy2[D["year"][g]]; t[0] += 1; t[1] += v > 0; t[2] += v
+        pw = {int(u): float(v) for u, v in zip(us, w[s0:s0 + n])}; p2 = {int(u): float(v) for u, v in zip(us, q[s0:s0 + n])}
+        pay = D["info"][D["rid"][g]]["result"].get("payout") or {}
+        for pk in L.oshi2_picks(pw, p2, {int(u): float(o) for u, o in zip(us, od)}, fcut, xcut):
+            key = "-".join(str(x) for x in sorted((pk["u"], pk["mate"])))
+            vu, vw = (pay.get("馬連") or {}).get(key, 0), (pay.get("ワイド") or {}).get(key, 0)
+            d = days2.setdefault(D["date"][g], [D["date"][g], 0, 0, 0, 0, 0])
+            d[1] += 1; d[2] += int(vu > 0); d[3] += int(vu); d[4] += int(vw > 0); d[5] += int(vw)
+            t = oy2[D["year"][g]]; t[0] += 1; t[1] += vu > 0; t[2] += vu; t[3] += vw > 0; t[4] += vw
             if D["date"][g] < T.K.PUSH_FROM:
-                past_w.setdefault(D["rid"][g], []).append(pk["u"])
-    tn, th, tp_ = (sum(t[k] for t in oy2.values()) for k in (0, 1, 2))
-    out["oshiw"] = {"n": int(tn), "hit": round(th / max(tn, 1), 4), "roi": round(tp_ / max(tn, 1), 1),
-                    "yn": [int(oy2[y][0]) for y in ys], "yh": [int(oy2[y][1]) for y in ys], "yr": [round(oy2[y][2] / max(oy2[y][0], 1), 1) for y in ys]}
-    out["_days_w"] = [days2[k] for k in sorted(days2)]
-    out["_past"]["xw"] = past_w
+                past2.setdefault(D["rid"][g], []).append([pk["u"], pk["mate"]])      # 相手も残す(アプリが同じ組を出すように)
+    tn = sum(t[0] for t in oy2.values())
+    out["oshi2"] = {"n": int(tn), "yn": [int(oy2[y][0]) for y in ys]}
+    for kk, (ih, ip) in (("uma", (1, 2)), ("wide", (3, 4))):
+        th, tp_ = sum(t[ih] for t in oy2.values()), sum(t[ip] for t in oy2.values())
+        out["oshi2"][kk] = {"hit": round(th / max(tn, 1), 4), "roi": round(tp_ / max(tn, 1), 1),
+                            "yh": [int(oy2[y][ih]) for y in ys], "yr": [round(oy2[y][ip] / max(oy2[y][0], 1), 1) for y in ys]}
+    out["_days2"] = [days2[k] for k in sorted(days2)]
+    out["_past"]["x2"] = past2
     # モデルの買い目(記録に残っている予想。3連複◎-○-▲ は3頭、ワイド◎-○ は2頭の push2 の平均)。
     # アプリの収支と同じく HISTORY_FROM から(それより前の日の予想は、その日より前だけで学んだモデルのものではない)
     pos = {}; _date = dict(zip(D["rid"], D["date"]))
@@ -297,7 +302,9 @@ def stats(D, w, q, log=print):
         if k in out:
             log("  {}: {}".format(k, " / ".join("{}点 的中{:.1%} 回収率{:.1f}% {}".format(x["n"], x["hit"] or 0, x["roi"] or 0, x["yr"]) for x in out[k])))
     log("  後押しの買い目(馬連): {}点 的中{:.1%} 回収率{:.1f}% 年ごとの点数 {} 回収率 {}".format(out["oshi"]["n"], out["oshi"]["hit"], out["oshi"]["roi"], out["oshi"]["yn"], out["oshi"]["yr"]))
-    log("  後押しワイド(試し): {}点 的中{:.1%} 回収率{:.1f}% 年ごとの点数 {} 回収率 {}".format(out["oshiw"]["n"], out["oshiw"]["hit"], out["oshiw"]["roi"], out["oshiw"]["yn"], out["oshiw"]["yr"]))
+    o2 = out["oshi2"]
+    log("  後押しの買い目(1番人気が弱いレース・2番人気と): {}頭 年ごと {} / 馬連 的中{:.1%} 回収率{:.1f}% {} / ワイド 的中{:.1%} 回収率{:.1f}% {}".format(
+        o2["n"], o2["yn"], o2["uma"]["hit"], o2["uma"]["roi"], o2["uma"]["yr"], o2["wide"]["hit"], o2["wide"]["roi"], o2["wide"]["yr"]))
     log("  単勝(20倍以下): " + " / ".join("{} {}頭 的中{:.1%} 回収率{:.1f}% {}".format(k, v["n"], v["hit"], v["roi"], v["yr"]) for k, v in wt.items()))
     return cuts, out
 
@@ -381,14 +388,14 @@ def main():
     if "--chaos-only" in sys.argv:
         return
     cuts, st = stats(D, w, q)
-    days = st.pop("_days"); past = st.pop("_past"); days_w = st.pop("_days_w", [])
+    days = st.pop("_days"); past = st.pop("_past"); days2 = st.pop("_days2", [])
     out = {"updated": datetime.now(timezone(timedelta(hours=9))).isoformat(timespec="seconds"), "races": len(D["rid"]), "l2": L2,
-           "features": D["names"], "win": [round(float(v), 5) for v in bw], "pair": [round(float(v), 5) for v in bp], "cuts": cuts, "stats": st, "days": days, "days_w": days_w,
+           "features": D["names"], "win": [round(float(v), 5) for v in bw], "pair": [round(float(v), 5) for v in bp], "cuts": cuts, "stats": st, "days": days, "days2": days2,
            # 組の式の土台の重み(keiba_push.pair_probs・アプリの pushPairProbs が使う。2026-11-27)
            "pair_base": [round(float(v), 6) for v in D["pair_base"]],
            "pair_base_x": ["1", "logit(pt)", "logit(pt)^2", "logit(0.775/中)", "logit(0.775/中)^2", "zq の和", "log q の和"]}
     json.dump(out, open(PU.FILE, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
-    json.dump({"updated": out["updated"], "to": max(D["date"]), "x": past["x"], "m": past["m"], "w": past.get("w", {}), "xw": past.get("xw", {})},
+    json.dump({"updated": out["updated"], "to": max(D["date"]), "x": past["x"], "m": past["m"], "w": past.get("w", {}), "x2": past.get("x2", {})},
               open(PU.PAST_FILE, "w", encoding="utf-8"), separators=(",", ":"))
     print("保存:", PU.FILE, PU.PAST_FILE, "過去のレース {} / モデルの買い目 {} ({:.0f}分)".format(len(past["x"]), len(past["m"]), (time.time() - t0) / 60))
 

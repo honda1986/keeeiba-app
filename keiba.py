@@ -1108,41 +1108,45 @@ def ev_wide_history(split=False):
 PUSH_FROM = "20261115"        # 予想に後押し(push・push2)が入り始めた日
 
 
-def oshiw_history(pre=False):
-    """後押しワイド(試し。L.oshiw_picks: 後押し〈2頭とも3着内の式〉が上5%の馬 × 2番人気 のワイド)の日ごとの成績 [日付, 点数, 的中, 払戻]。
-    PUSH_FROM より前の日は push_model.json の days_w(その年を除いて作った式で再現)、PUSH_FROM からは予想に入っている push2 で数える。
+def oshi2_history(pre=False):
+    """後押しの買い目(2026-11-28〜。L.oshi2_picks: 1番人気の後押しが弱いレースで、後押し〈2頭とも3着内の式〉が上5%の馬 × 2番人気 の
+    馬連とワイド)の日ごとの成績 [日付, 頭数, 馬連の的中, 馬連の払戻, ワイドの的中, ワイドの払戻](点数は 頭数×2)。
+    PUSH_FROM より前の日は push_model.json の days2(その年を除いて作った式で再現)、PUSH_FROM からは予想に入っている push・push2 で数える。
     人気と20倍以下は確定オッズ(pre なら発走前に最後に取ったオッズ。PUSH_FROM からの日だけ)で決める"""
     import keiba_push as PU
     m = PU.load()
-    cut = ((m or {}).get("cuts") or {}).get("pair_top", {}).get(L.OSHIW["q"])
-    if not m or cut is None or "jra" not in CENTERS:
+    cuts = (m or {}).get("cuts") or {}
+    fcut, xcut = (cuts.get("win_top") or {}).get(L.OSHI2["fav_q"]), (cuts.get("pair_top") or {}).get(L.OSHI2["x_q"])
+    if not m or fcut is None or xcut is None or "jra" not in CENTERS:
         return []
-    out = [] if pre else [r for r in m.get("days_w") or [] if r[0] < PUSH_FROM]
+    out = [] if pre else [r for r in m.get("days2") or [] if r[0] < PUSH_FROM]
     for f in sorted(glob.glob(OUT + "/days/*.json")):
         if os.path.basename(f)[:8] < PUSH_FROM:
             continue
         day = load(f, None)
-        row = [(day or {}).get("date"), 0, 0, 0]
+        row = [(day or {}).get("date"), 0, 0, 0, 0, 0]
         for rid, rc in ((day or {}).get("races") or {}).items():
             res = rc.get("result") or {}
             if center_of(rid) != "jra" or not target(rid) or len(res.get("order") or []) < 3:
                 continue
-            p2 = {h["umaban"]: h.get("push2") for h in (rc.get("pred") or {}).get("horses") or []}
+            hs = (rc.get("pred") or {}).get("horses") or []
+            pw = {h["umaban"]: h.get("push") for h in hs}; p2 = {h["umaban"]: h.get("push2") for h in hs}
             gone = {h["umaban"] for h in rc.get("horses") or [] if h.get("scratched")}
-            pay = (res.get("payout") or {}).get("ワイド") or {}
+            pay = res.get("payout") or {}
             od = res.get("odds") if not (pre or result_partial(rc)) else {h["umaban"]: h.get("odds") for h in rc.get("horses") or [] if not h.get("scratched")}
-            for pk in L.oshiw_picks(p2, od, cut):
+            for pk in L.oshi2_picks(pw, p2, od, fcut, xcut):
                 if pk["u"] in gone or pk["mate"] in gone:
                     continue
-                v = pay.get("-".join(str(x) for x in sorted((pk["u"], pk["mate"]))), 0)
-                row[1] += 1; row[2] += v > 0; row[3] += v
+                key = "-".join(str(x) for x in sorted((pk["u"], pk["mate"])))
+                vu, vw = (pay.get("馬連") or {}).get(key, 0), (pay.get("ワイド") or {}).get(key, 0)
+                row[1] += 1; row[2] += vu > 0; row[3] += vu; row[4] += vw > 0; row[5] += vw
         if row[1]:
             out.append(row)
     return out
 
 
 def oshi_history(pre=False):
-    """後押しの買い目(馬連: 後押しが上5%の馬 × 1番人気。L.oshi_picks)の日ごとの成績 [日付, 点数, 的中, 払戻(100円あたりの合計)]。
+    """前の後押しの買い目(2026-11-15〜11-27。今は oshi2_history。history.json には入れない)(馬連: 後押しが上5%の馬 × 1番人気。L.oshi_picks)の日ごとの成績 [日付, 点数, 的中, 払戻(100円あたりの合計)]。
     PUSH_FROM より前の日は keiba/push_model.json の days(その年を除いて作った式で再現したもの。tools/train_push.py)、
     PUSH_FROM からは予想に入っている後押し(push)で数える。どちらも人気と単勝20倍以下は確定オッズで決める。
     pre なら、人気と20倍以下を発走前に最後に取ったオッズ(日別ファイルの horses の odds。PC が取った分も入る)で決める
@@ -1283,8 +1287,7 @@ def build_history():
         days.append(row)
     evw, evw_out = ev_wide_history(split=True)        # 期待値ワイド(買い目)と、後押しの式で外れた組(参考。2026-11-27〜)
     hist = {"updated": datetime.now(JST).isoformat(timespec="seconds"), "unit": L.UNIT,
-            "days": days, "races": races, "oshi": oshi_history(), "oshi_pre": oshi_history(pre=True),
-            "oshiw": oshiw_history(), "oshiw_pre": oshiw_history(pre=True), "evw": evw, "evw_out": evw_out, "push": push_history()}
+            "days": days, "races": races, "oshi2": oshi2_history(), "oshi2_pre": oshi2_history(pre=True), "evw": evw, "evw_out": evw_out, "push": push_history()}
     save(OUT + "/history.json", hist)
     return hist
 

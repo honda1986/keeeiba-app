@@ -313,32 +313,39 @@ def ev_wide_picks(tp, wide, hk=None, pp=None):
 OSHI = {"q": "0.95", "max_odds": 20.0}
 
 
-# 後押しワイド(試し。2026-11-27): 後押し(2頭とも3着内の式。keiba_push の push2)が上5%の馬 x と、2番人気(x が2番人気なら3番人気)のワイド。
-#  x … 1番人気でない・単勝 max_odds 倍以下・push2 が境目(push_model.json の cuts.pair_top[q])以上。
-# 2022〜2026年(その年を除いて作った式・確定オッズ)で 4,923点・回収率 102.4%(102・100・105・103・102%)。
-# 相手を 1・3〜6番人気にすると 90〜95%(tools/experiments/oshi_weakfav.py)。約170のマスから見つけたので、記録を取って確かめる段階
-OSHIW = {"q": "0.95", "max_odds": 20.0}
+# 後押しの買い目(2026-11-28〜): 1番人気の後押し(1着の式。push)が弱い(単勝20倍以下の馬の中で下20% = cuts.win_top[fav_q])レースで、
+#  後押し(2頭とも3着内の式。push2)が上5%(cuts.pair_top[x_q])の馬 x(1番人気でない・単勝 max_odds 倍以下)と、
+#  2番人気(x が2番人気なら3番人気)の 馬連 と ワイド(x 1頭につき2点)。
+# 2022〜2026年(その年を除いて作った式・確定オッズ)で 約2,000頭(年に約400頭)・馬連 116%(126・99・126・133・95%)・
+# ワイド 110%(120・113・95・113・107%)(tools/experiments/oshi_weakfav.py)。1番人気の後押しによらず全部のレースで 馬連 108%・ワイド 102%、
+# 相手を1番人気・3〜6番人気にすると 90〜95% に下がる。約170のマスから見つけた形なので、記録で確かめていく。
+# (2026-11-15〜11-27 の「後押しが上5%の馬 × 1番人気 の馬連」は oshi_picks。5年 101.5%。前の形として残す)
+OSHI2 = {"x_q": "0.95", "fav_q": "0.2", "max_odds": 20.0}
 
 
-def oshiw_picks(push2, odds, cut):
-    """後押しワイド。push2 = 馬番 -> 後押し(2頭とも3着内の式)、odds = 馬番 -> 単勝オッズ、cut = 境目。
-    -> [{"u": 馬番, "mate": 相手(2番人気。x が2番人気なら3番人気), "push": 後押し}](馬番の順)。馬が5頭いない・境目が無いなら []"""
+def oshi2_picks(push, push2, odds, fav_cut, x_cut):
+    """後押しの買い目。push = 馬番 -> 後押し(1着の式)、push2 = 馬番 -> 後押し(2頭とも3着内の式)、odds = 馬番 -> 単勝オッズ、
+    fav_cut = 1番人気の後押しが弱い境目(これ以下)、x_cut = 後押しが強い境目(これ以上)。
+    -> [{"u": 馬番, "mate": 相手(2番人気。u が2番人気なら3番人気), "fav": 1番人気}](馬番の順)。1番人気が弱くない・馬が5頭いない・境目が無いなら []"""
     od = {int(u): float(o) for u, o in (odds or {}).items() if o and float(o) > 1.0}
-    if len(od) < 5 or cut is None:
+    if len(od) < 5 or fav_cut is None or x_cut is None:
         return []
     rank = sorted(od, key=lambda u: (od[u], u))
-    pu = {int(u): v for u, v in (push2 or {}).items() if v is not None}
+    pw = {int(u): v for u, v in (push or {}).items() if v is not None}
+    p2 = {int(u): v for u, v in (push2 or {}).items() if v is not None}
+    fav = rank[0]
+    if fav not in pw or pw[fav] > fav_cut:
+        return []
     out = []
     for u in sorted(od):
-        if u == rank[0] or od[u] > OSHIW["max_odds"] or u not in pu or pu[u] < cut:
+        if u == fav or od[u] > OSHI2["max_odds"] or u not in p2 or p2[u] < x_cut:
             continue
-        others = [v for v in rank if v != u]
-        out.append({"u": u, "mate": others[1], "push": pu[u]})
+        out.append({"u": u, "mate": [v for v in rank if v != u][1], "fav": fav})
     return out
 
 
 def oshi_picks(push, odds, cut):
-    """後押しの買い目。push = 馬番 -> 後押し、odds = 馬番 -> 単勝オッズ、cut = 後押しの境目。
+    """前の後押しの買い目(2026-11-15〜11-27。後押し〈1着の式〉が上5%の馬 × 1番人気 の馬連。今は oshi2_picks)。push = 馬番 -> 後押し、odds = 馬番 -> 単勝オッズ、cut = 後押しの境目。
     -> [{"u": 馬番, "fav": 1番人気の馬番, "push": 後押し}](馬番の順)。馬が5頭いない・境目が無いなら []"""
     od = {int(u): float(o) for u, o in (odds or {}).items() if o and float(o) > 1.0}
     if len(od) < 5 or cut is None:
