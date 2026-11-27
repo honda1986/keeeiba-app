@@ -574,6 +574,8 @@ const KIND = {buy: "買い目あり", hit: "的中", lose: "外れ", skip: KOCHI
 function picksOf(r) {
   const out = [], p = r.pred, so = oshiOf(r);
   if (so) for (const x of so.picks) out.push({k: "oshi", stake: 100, done: so.done, ret: x.ret || 0, hit: so.done && x.ret > 0});
+  const ow = oshiwOf(r);
+  if (ow) for (const x of ow.picks) out.push({k: "oshiw", stake: 100, done: ow.done, ret: x.ret || 0, hit: ow.done && x.ret > 0});
   const ew = evWideOf(r);
   if (ew) for (const x of ew.picks) out.push({k: "evw", stake: 100, done: ew.done, ret: x.ret || 0, hit: ew.done && x.ret > 0, past: !!ew.past});
   if (p && r.horses && p.verdict !== "見送り") {
@@ -652,7 +654,8 @@ function daySumInner() {
   const rs = races().filter(centerOkR);
   if (KOCHI) return `<div class="hd">高知の最終レースは予想だけ(買う基準は付けていません)。全 ${rs.length} レース</div><div style="height:8px"></div>`;
   const mp = [], sp = [], ep = [];
-  for (const r of rs) for (const x of picksOf(r)) (x.k === "oshi" ? sp : x.k === "evw" ? ep : mp).push(x);
+  const wp = [];
+  for (const r of rs) for (const x of picksOf(r)) (x.k === "oshi" ? sp : x.k === "evw" ? ep : x.k === "oshiw" ? wp : mp).push(x);
   // 後押しの買い目を、発走前に最後に取ったオッズの人気で選んだ分(終わったレースで、予想に後押しが入っている日だけ)
   const spp = []; let hasPre = false;
   for (const r of rs) { const so = oshiOf(r); if (so && so.pre) { hasPre = true; for (const x of so.pre) spp.push({stake: 100, done: true, ret: x.ret || 0, hit: x.ret > 0}); } }
@@ -667,6 +670,7 @@ function daySumInner() {
   return `<div class="hd">この日の買い目(1点100円)</div>
     ${line("後押しの買い目", hasPre ? "回収重視(馬連)· 確定オッズの人気" : "回収重視(馬連)", sp, "点")}
     ${hasPre ? line("後押しの買い目", "発走前のオッズの人気", spp, "点") : ""}
+    ${line("後押しワイド(試し)", "後押しの馬 × 2番人気", wp, "点")}
     ${line("期待値ワイド", ep.some(x => x.past) ? "確定オッズで再現" : "期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上", ep, "点")}
     ${line("モデルの買い目", "3連複 ◎-○-▲", mp)}
     <div class="ft">後押しの買い目は、評価値の後押しが上5%の馬と1番人気の馬連。的中は少ない(7%)が、過去5年の回収率は ${((((state.push || {}).stats || {}).oshi || {}).roi || 102).toFixed(0)}%(年に約1,000点)。
@@ -920,6 +924,71 @@ function oshiInner(r) {
     <div class="pk-h"><span>後押しの買い目<em class="vS">回収重視</em></span><span>${so.done ? "確定オッズの人気で" : "いまのオッズの人気で"}</span></div>${rows}${preLine}</div>`;
 }
 
+// ---------------------------------------------------------------- 後押しワイド(試し。2026-11-27)
+// 後押し(2頭とも3着内の式。push2)が上5%の馬 x と、2番人気(x が2番人気なら3番人気)のワイド(keiba_logic.OSHIW・oshiw_picks と同じ)。
+//  x … 1番人気でない・単勝 20倍以下・push2 が境目(push_model.json の cuts.pair_top["0.95"])以上
+// 過去5年(その年を除いて作った式・確定オッズ)で 約4,900点・回収率 102〜103%(5年とも 100〜105%)。約170のマスから見つけたので「試し」。
+// 人気と20倍以下は、終わったレースは確定オッズ(と発走前に最後に取ったオッズの分)、これからのレースはいまのオッズ。
+// 予想に後押しが入る前の日は oshi_past.json の xw(その年を除いて作った式で選んだ馬)で出す
+const OSHIW = {q: "0.95", max_odds: 20};
+function oshiwPicks(push2, odds, cut) {
+  const us = Object.keys(odds || {}).map(Number).filter(u => +odds[u] > 1);
+  if (us.length < 5 || cut == null) return [];
+  const rank = [...us].sort((a, b) => +odds[a] - +odds[b] || a - b);
+  return us.sort((a, b) => a - b).filter(u => u !== rank[0] && +odds[u] <= OSHIW.max_odds && push2[u] != null && push2[u] >= cut)
+    .map(u => ({u, mate: rank.filter(v => v !== u)[1], push: push2[u]}));
+}
+function oshiwOf(r) {
+  const cut = (((state.push || {}).cuts || {}).pair_top || {})[OSHIW.q];
+  if (KOCHI || r.center !== "jra" || !r.horses || !r.pred || cut == null) return null;
+  const done = !!(r.result && (r.result.order || []).length >= 3);
+  const p2 = {};
+  for (const h of r.pred.horses || []) if (h.push2 != null) p2[h.umaban] = h.push2;
+  const gone = r.horses.filter(h => h.scratched).map(h => h.umaban);
+  const runners = r.horses.filter(h => !h.scratched).length, fo = (r.result || {}).odds || {};
+  const finOk = done && Object.values(fo).filter(v => v).length >= runners - 1;
+  const po = {};
+  for (const h of r.horses) if (!h.scratched && h.odds) po[h.umaban] = h.odds;
+  const odds = finOk ? fo : po;
+  const pay = ((r.result || {}).payout || {})["ワイド"] || {};
+  const mk = (xs, od) => {
+    const rank = Object.keys(od).map(Number).filter(u => +od[u] > 1).sort((a, b) => +od[a] - +od[b] || a - b);
+    return xs.filter(x => !gone.includes(x.u) && !gone.includes(x.mate)).map(x => {
+      const c = [x.u, x.mate].sort((a, b) => a - b), wo = (r.wide_odds || {})[c.join("-")];
+      return {type: "ワイド", c, x: x.u, mate: x.mate, mnk: rank.indexOf(x.mate) + 1, od: +od[x.u], mod: +od[x.mate], wo, ret: done ? (pay[c.join("-")] || 0) : null};
+    });
+  };
+  let raw;
+  if (done && !Object.keys(p2).length) {            // 後押しの入っていない過去のレース: 残してある馬と、確定オッズの人気
+    const past = ((state.oshiPast || {}).xw || {})[r.id] || [];
+    const us = Object.keys(odds).map(Number).filter(u => +odds[u] > 1), rank = us.sort((a, b) => +odds[a] - +odds[b] || a - b);
+    raw = rank.length >= 3 ? past.filter(u => odds[u]).map(u => ({u, mate: rank.filter(v => v !== u)[1]})) : [];
+  } else raw = oshiwPicks(p2, odds, cut);
+  const picks = mk(raw, odds);
+  // 終わったレースは、発走前に最後に取ったオッズで選んだ買い目も(keiba.oshiw_history(pre=True) と同じ)
+  const pre = done && Object.keys(p2).length ? mk(oshiwPicks(p2, po, cut), po) : null;
+  return {done, picks, pre};
+}
+function oshiwInner(r) {
+  const so = oshiwOf(r);
+  if (!so || (!so.picks.length && !(so.pre && so.pre.length))) return "";
+  const sig = xs => (xs || []).map(x => x.c.join("-")).join(",");
+  const preLine = so.pre && sig(so.pre) !== sig(so.picks) ? `<div class="pk-n muted">発走前のオッズでは: ${so.pre.length ? so.pre.map(x =>
+    `ワイド ${x.c.join("-")}(相手 ${x.mate}・${x.mnk}番人気 · ${x.ret ? "的中 " + yen(x.ret) : "外れ"})`).join(" / ") : "買い目なし"}</div>` : "";
+  if (!so.picks.length)
+    return `<div class="pk none"><div class="pk-h"><span>後押しワイド<em>試し</em></span><span>確定オッズの人気では買い目なし</span></div>${preLine}</div>`;
+  const rows = so.picks.map(x => {
+    const st = so.done ? (x.ret ? `<span class="pk-r good">的中 ${yen(x.ret)}</span>` : `<span class="pk-r neg">外れ</span>`) : `<span class="pk-r muted">発走前</span>`;
+    return `<div class="pk-b"><span class="ty">${x.type}</span><span class="cb num">${x.c.join("-")}</span>
+      <span class="od num">${x.wo ? (x.wo[0] === x.wo[1] ? x.wo[0] : x.wo[0] + "〜" + x.wo[1]) + "倍 · " : ""}${x.x}番 単勝 ${x.od}倍</span>${st}</div>
+      <div class="pk-n">${x.x} ${esc(hname(r, x.x))}(後押しが強い)・ ${x.mate} ${esc(hname(r, x.mate))}(${x.mnk}番人気 ${x.mod}倍)</div>${naviPick(r, [x.x])}
+      ${!so.done && buyBtn(r, x.type, x.c) ? `<div class="pk-a">${buyBtn(r, x.type, x.c)}</div>` : ""}`;
+  }).join("");
+  const hitAll = so.done && so.picks.some(x => x.ret), loseAll = so.done && !so.picks.some(x => x.ret);
+  return `<div class="pk oshi ${hitAll ? "hit" : loseAll ? "lose" : ""}">
+    <div class="pk-h"><span>後押しワイド<em class="vS">試し</em></span><span>${so.done ? "確定オッズの人気で" : "いまのオッズの人気で"} · 2番人気と</span></div>${rows}${preLine}</div>`;
+}
+
 // ---------------------------------------------------------------- 期待値ワイド(2026-11-21)
 // 期待値の表(evInner)のワイドで、期待値が EV_WIDE.min_ev 以上の組を買い目にする(keiba_logic.EV_WIDE・ev_wide_picks と同じ)。
 //  確率 = PRE.pt × 3連複から見た組の強さ、期待値 = 確率 × (下限 + PRE.alpha × 幅)。表に出る組 = 確率の高い順に top 組 + ◎-○。
@@ -1120,7 +1189,7 @@ function detailInner(r) {
 }
 function card(r) {
   return `<article class="rc" id="r-${esc(r.id)}">${rcHead(r)}${marks(r)}
-    <div class="oshiw">${oshiInner(r)}</div><div class="evww">${evWideInner(r)}</div>${modelPick(r, true)}
+    <div class="oshiw">${oshiInner(r)}</div><div class="oshiww">${oshiwInner(r)}</div><div class="evww">${evWideInner(r)}</div>${modelPick(r, true)}
     <details class="more"><summary>くわしく(理由・コース・全馬の評価)</summary>${detailInner(r)}</details></article>`;
 }
 
@@ -1245,7 +1314,7 @@ function skipRow(r) {
     <b>${esc(r.venue)} ${r.rno}R</b><span class="tm num">${esc(r.start || "")}</span>
     <span class="r">${esc(shortReason(r.pred.reason))}</span><span class="czs">${chaosTag(r, true)}</span>
     ${done ? `<span class="rs num">${res.order.slice(0, 3).join("-")}</span>` : ""}</summary>
-    <div class="rc-m" style="padding-top:2px">${meta(r)}</div>${marks(r)}<div class="evww">${evWideInner(r)}</div>${detailInner(r)}</details>`;
+    <div class="rc-m" style="padding-top:2px">${meta(r)}</div>${marks(r)}<div class="oshiww">${oshiwInner(r)}</div><div class="evww">${evWideInner(r)}</div>${detailInner(r)}</details>`;
 }
 
 const evCls = v => v >= 1 ? "ev up" : "ev";
@@ -1508,6 +1577,9 @@ function renderMoney() {
   const gLive = SD.filter(r => r[0] >= PUSH_FROM).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);
   // 発走前に最後に取ったオッズで選んだ後押しの買い目(実際に買える分。history.json の oshi_pre。11/15 から)
   const gPre = (h.oshi_pre || []).filter(r => r[0] >= from && r[0] <= to).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);
+  // 後押しワイド(試し。history.json の oshiw = 確定オッズの人気、oshiw_pre = 発走前のオッズの人気)。2026-11-14 までは再現
+  const sumOf = xs => (xs || []).filter(r => r[0] >= gFrom && r[0] <= to).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);
+  const gw = sumOf(h.oshiw), gwPre = sumOf(h.oshiw_pre);
   const ew = (h.evw || []).filter(r => r[0] >= from && r[0] <= to).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);   // 期待値ワイド
   const ewx = (h.evw_out || []).filter(r => r[0] >= from && r[0] <= to).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);   // 後押しで外した組(参考)
   // 日ごと(2つの買い方を並べる。グラフ・表・カレンダー)
@@ -1564,6 +1636,8 @@ function renderMoney() {
       <div class="hd">${fmtD(gFrom)} 〜 ${fmtD(to)} の成績(1点${h.unit}円)</div>
       ${sumRow("後押しの買い目", "馬連 後押し上5% × 1番人気(確定オッズの人気)", gs[0], gs[1], gs[0] * 100, gs[2], "点")}
       ${(h.oshi_pre || []).length ? sumRow("後押しの買い目(発走前のオッズ)", "同じ買い方を、発走前に最後に取ったオッズの人気で(11/15 から)", gPre[0], gPre[1], gPre[0] * 100, gPre[2], "点") : ""}
+      ${(h.oshiw || []).length ? sumRow("後押しワイド(試し)", "ワイド 後押し(2頭とも3着内の式)上5% × 2番人気(確定オッズの人気)", gw[0], gw[1], gw[0] * 100, gw[2], "点") : ""}
+      ${(h.oshiw_pre || []).length ? sumRow("後押しワイド(発走前のオッズ)", "同じ買い方を、発走前に最後に取ったオッズの人気で(11/15 から)", gwPre[0], gwPre[1], gwPre[0] * 100, gwPre[2], "点") : ""}
       ${sumRow("期待値ワイド", "ワイド 期待値 " + EV_WIDE.min_ev.toFixed(2) + "以上・後押し込み " + EV_WIDE.push_ev.toFixed(1) + "以上", ew[0], ew[1], ew[0] * 100, ew[2], "点")}
       ${ewx[0] ? sumRow("(参考)後押しで外した組", "期待値ワイドのうち後押し込み " + EV_WIDE.push_ev.toFixed(1) + "未満", ewx[0], ewx[1], ewx[0] * 100, ewx[2], "点") : ""}
       ${sumRow("モデルの買い目", "3連複 ◎-○-▲", rs.length, hit, S, R)}
@@ -1776,6 +1850,10 @@ function renderVote() {
     const so = oshiOf(r);
     if (so) for (const x of so.picks) if (!items.some(y => y.id === voteId(r.id, x.type, x.c)))
       items.push({r, type: x.type, c: x.c, unit: 100, verdict: "押", id: voteId(r.id, x.type, x.c)});
+    // 後押しワイド(試し)。同じ組がもうあれば1つにまとめる
+    const sw = oshiwOf(r);
+    if (sw) for (const x of sw.picks) if (!items.some(y => y.id === voteId(r.id, x.type, x.c)))
+      items.push({r, type: x.type, c: x.c, unit: 100, verdict: "ワ", id: voteId(r.id, x.type, x.c)});
     // 期待値ワイド。同じ組がもうあれば1つにまとめる
     const ew = evWideOf(r);
     if (ew) for (const x of ew.picks) if (!items.some(y => y.id === voteId(r.id, x.type, x.c)))
@@ -1821,7 +1899,7 @@ function renderVote() {
   const rows = items.map((x, n) => {
     const v = bought(x), done = closed(x);
     const tag = x.t ? `<span class="tag o">自分で</span>`
-      : x.verdict ? `<span class="badge ${x.verdict === "押" || x.verdict === "期" ? "B" : x.verdict}" style="display:inline-grid;min-width:22px;height:20px;font-size:12px;border-radius:6px;vertical-align:1px;padding:0 5px">${x.verdict}</span>` : "";
+      : x.verdict ? `<span class="badge ${x.verdict === "押" || x.verdict === "期" || x.verdict === "ワ" ? "B" : x.verdict}" style="display:inline-grid;min-width:22px;height:20px;font-size:12px;border-radius:6px;vertical-align:1px;padding:0 5px">${x.verdict}</span>` : "";
     const what = x.t ? `${esc(x.type)}${x.t.method !== "通常" ? " " + esc(x.t.method) : ""} <b>${esc(selText(x.t))}</b>
         ${x.cs.length > 1 ? `${x.cs.length}点×${x.unit}円` : x.unit + "円"}`
       : `${esc(x.type)} <b>${esc(comboText(x.type, x.c))}</b> ${x.unit}円`;
@@ -2144,6 +2222,8 @@ function updateOddsDom(r) {
   });
   const sw = box.querySelector(".oshiw");
   if (sw) sw.innerHTML = oshiInner(r);
+  const sww = box.querySelector(".oshiww");
+  if (sww) sww.innerHTML = oshiwInner(r);
   const ewb = box.querySelector(".evww");
   if (ewb) ewb.innerHTML = evWideInner(r);
   const bs = box.querySelectorAll(".bet .bo");
@@ -2151,8 +2231,9 @@ function updateOddsDom(r) {
   drawNextBuy();
 }
 // 後押しの買い目の並び(オッズを取り直して1番人気などが変わったら、一覧を作り直す)
-const pickSig = () => allRaces().map(r => { const so = oshiOf(r), ew = evWideOf(r);
+const pickSig = () => allRaces().map(r => { const so = oshiOf(r), ew = evWideOf(r), sw = oshiwOf(r);
   return (so && so.picks.length ? r.id + ":" + so.picks.map(x => x.type + x.c.join("-")).join("+") : "")
+    + (sw && sw.picks.length ? "/" + r.id + ":" + sw.picks.map(x => x.c.join("-")).join("+") : "")
     + (ew && ew.picks.length ? "|" + r.id + ":" + ew.picks.map(x => x.key).join("+") : ""); }).join(",");
 async function refreshOdds(manual) {
   if (!canLive() || oddsState.busy || !state.day) return;
@@ -2342,6 +2423,8 @@ function drawNavi(r) {
   if (l) l.outerHTML = naviLine(r);
   const sw = box.querySelector(".oshiw");           // 後押しの買い目の箱にも追切評価を出す
   if (sw) sw.innerHTML = oshiInner(r);
+  const sww = box.querySelector(".oshiww");
+  if (sww) sww.innerHTML = oshiwInner(r);
 }
 // 中央の日を開いたとき、場ごとに1ページずつ取る
 async function autoNavi() {
@@ -2819,10 +2902,36 @@ function oshiRule() {
     <p class="muted" style="font-size:11px;margin:4px 0 0">その年を除いて作った式で、その年を確かめたもの(${ys.length ? ys[ys.length - 1] : ""}年は途中まで)</p>`;
 }
 
+// 後押しワイド(試し)の説明
+function oshiwRule() {
+  const m = state.push, o = m && m.stats && m.stats.oshiw;
+  if (!o) return "";
+  const ys = m.stats.years || [];
+  const live = ((state.hist || {}).oshiw || []).filter(r => r[0] >= "20261115").reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);
+  const livePre = ((state.hist || {}).oshiw_pre || []).reduce((a, r) => [a[0] + r[1], a[1] + r[2], a[2] + r[3]], [0, 0, 0]);
+  const rows = ys.map((y, i) => `<tr><td>${y}</td><td>${o.yn[i].toLocaleString()}</td><td>${o.yh[i]}回(${pct(o.yh[i], o.yn[i])})</td>
+    <td><b class="${o.yr[i] >= 100 ? "good" : ""}">${o.yr[i].toFixed(1)}%</b></td></tr>`).join("");
+  return `<div class="sec">後押しワイド(試し)</div>
+    <ul class="rules">
+      <li><b>何か</b>後押し(2頭とも3着内の式)が上5%の馬と、<b>2番人気</b>のワイド(後押しの馬が2番人気なら3番人気と)。
+        過去5年で ${o.n.toLocaleString()}点・的中 ${pct(o.hit, 1)}・回収率 <b>${o.roi.toFixed(1)}%</b>。5年ともほぼ 100〜105%</li>
+      <li><b>条件</b>後押しの馬は、1番人気でない・単勝 ${OSHIW.max_odds}倍以下・後押し(2頭とも3着内の式)が上5%。年に約1,000点</li>
+      <li><b>試し</b>相手を1番人気・3〜6番人気にすると 90〜95% で、2番人気だけが良かった。いろいろな組み合わせ(約170)から見つけた形なので、
+        偶然かもしれない。これからの記録で確かめる(試しの間は、カレンダーの合計には入れない)</li>
+      <li><b>人気はオッズで決まる</b>下の成績は確定オッズの人気。これからのレースは、いまのオッズの人気で出す。
+        記録は「確定オッズの人気」と「発走前に最後に取ったオッズの人気」の2つ</li>
+      <li><b>これからの記録</b>2026-11-15 から、実際の予想に入っている後押しで: 確定オッズの人気 ${live[0] ? `<b>${live[0]}点 · 的中 ${live[1]} · 回収率 ${pct(live[2], live[0] * 100)}</b>` : "まだありません"} /
+        発走前のオッズの人気 ${livePre[0] ? `<b>${livePre[0]}点 · 的中 ${livePre[1]} · 回収率 ${pct(livePre[2], livePre[0] * 100)}</b>` : "まだありません"}</li>
+    </ul>
+    <table class="tbl nw"><thead><tr><th>年</th><th>点数</th><th>的中</th><th>回収率</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="muted" style="font-size:11px;margin:4px 0 0">その年を除いて作った式で、その年を確かめたもの(${ys.length ? ys[ys.length - 1] : ""}年は途中まで)</p>`;
+}
+
 function renderRule() {
   if (KOCHI) { renderRuleKochi(); return; }
   $("#v-rule").innerHTML = `
     ${oshiRule()}
+    ${oshiwRule()}
     ${evWideRule()}
     ${pushRule()}
     <div class="sec">モデルの買い目の流れ</div>

@@ -9,11 +9,12 @@
 //     後押しの買い目 … 後押しが上5%の馬(1番人気でない・単勝20倍以下)× 1番人気 の馬連(keiba_logic.oshi_picks・アプリの oshiPicks)
 //     期待値ワイド   … 確率の高い6組と ◎-○ のうち、期待値0.95以上・後押し込み1.0以上の組(keiba_logic.ev_wide_picks・アプリの evWideOf)
 //     モデルの買い目 … 予想の買い目(3連複◎-○-▲ など。オッズでは変わらない)
+//     後押しワイド(試し)… 後押し(2頭とも3着内の式)が上5%の馬 × 2番人気 のワイド(keiba_logic.oshiw_picks・アプリの oshiwPicks)
 //   買い目が1つも無いレースは送らない
 // ・通知に入れるのは 場・R・発走・買い目・オッズ・期待値だけ(お金・ログイン情報は入れない)。送れなくてもオッズの記録は止めない
 //
 // 設定: C:\keiba\notify.json(リポジトリの外){"ntfy_topic": "…", "ntfy_server": "https://ntfy.sh", "minutes": 3, "kinds": ["oshi", "evw", "model"]}
-//   kinds … 通知する買い目の種類(oshi 後押しの買い目 / evw 期待値ワイド / model モデルの買い目)。全部だと1開催日に20通くらい
+//   kinds … 通知する買い目の種類(oshi 後押しの買い目 / evw 期待値ワイド / model モデルの買い目 / oshiw 後押しワイド)。全部だと1開催日に20通くらい
 //   pc\set_notify.bat(= node pc\notify.js --setup)で作る。トピック名が空なら何もしない
 // 試す: node pc\notify.js --test   … 1通送る
 // ============================================================
@@ -27,6 +28,8 @@ const APP = "https://honda1986.github.io/keeeiba-app/keiba/";
 const PRE = { pt: 0.75, alpha: 0.35 };
 const EV_WIDE = { min_ev: 0.95, top: 6, push_ev: 1.0 };
 const OSHI = { q: "0.95", max_odds: 20.0 };
+const OSHIW = { q: "0.95", max_odds: 20.0 };
+const KINDS = ["oshi", "evw", "model", "oshiw"];
 
 // ---- 買い目(アプリ・keiba_logic と同じ計算) ----
 // 単勝: odds = {馬番: [オッズ, 人気]}(pc/odds.js の parseWin の形)-> {馬番: オッズ}。取消は除く
@@ -41,6 +44,14 @@ function oshiPicks(push, od, cut) {
   if (us.length < 5 || cut == null) return [];
   const fav = us.reduce((a, b) => (od[b] < od[a] || (od[b] === od[a] && b < a)) ? b : a);
   return us.sort((a, b) => a - b).filter((u) => u !== fav && od[u] <= OSHI.max_odds && push[u] != null && push[u] >= cut).map((u) => ({ u, fav }));
+}
+// 後押しワイド: push2 = {馬番: 後押し(2頭とも3着内の式)} -> [{u, mate(2番人気。u が2番人気なら3番人気)}]
+function oshiwPicks(push2, od, cut) {
+  const us = Object.keys(od).map(Number);
+  if (us.length < 5 || cut == null) return [];
+  const rank = [...us].sort((a, b) => od[a] - od[b] || a - b);
+  return us.sort((a, b) => a - b).filter((u) => u !== rank[0] && od[u] <= OSHIW.max_odds && push2[u] != null && push2[u] >= cut)
+    .map((u) => ({ u, mate: rank.filter((v) => v !== u)[1] }));
 }
 // keiba_push.zs と同じ(平均0・ばらつき1。±3で切る)
 function zs(vals) {
@@ -95,19 +106,26 @@ function racePicks(race, s, pm) {
   const pp = pairProbs(od, s.tp, s.wide, pr.push2 || {}, (pm || {}).pair_base);
   const evw = evWidePicks(s.tp, s.wide, hk, pp, gone);
   const model = ["A", "B"].includes(pr.verdict) ? (pr.bets || []) : [];
-  return { od, oshi, evw, model };
+  const cut2 = ((((pm || {}).cuts || {}).pair_top) || {})[OSHIW.q];
+  const oshiw = oshiwPicks(pr.push2 || {}, od, cut2).filter((x) => !gone.includes(x.u) && !gone.includes(x.mate));
+  return { od, oshi, evw, model, oshiw };
 }
 // 通知の中身。買い目が無ければ null
 function message(race, day, minutes, pk, kinds) {
-  const ks = kinds || ["oshi", "evw", "model"];
-  pk = { od: pk.od, oshi: ks.includes("oshi") ? pk.oshi : [], evw: ks.includes("evw") ? pk.evw : [], model: ks.includes("model") ? pk.model : [] };
-  if (!pk.oshi.length && !pk.evw.length && !pk.model.length) return null;
+  const ks = kinds || KINDS;
+  pk = { od: pk.od, oshi: ks.includes("oshi") ? pk.oshi : [], evw: ks.includes("evw") ? pk.evw : [], model: ks.includes("model") ? pk.model : [],
+         oshiw: ks.includes("oshiw") ? (pk.oshiw || []) : [] };
+  if (!pk.oshi.length && !pk.evw.length && !pk.model.length && !pk.oshiw.length) return null;
   const nm = (u) => (race.names || {})[u] ? " " + race.names[u] : "";
   const f1 = (x) => (x >= 100 ? Math.round(x) : x.toFixed(1));
   const lines = [];
   for (const x of pk.oshi) {
     const c = [x.u, x.fav].sort((a, b) => a - b).join("-");
     lines.push("後押し 馬連 " + c + "(" + x.u + nm(x.u) + " " + f1(pk.od[x.u]) + "倍 × 1番人気 " + x.fav + nm(x.fav) + " " + f1(pk.od[x.fav]) + "倍)");
+  }
+  for (const x of pk.oshiw) {
+    const c = [x.u, x.mate].sort((a, b) => a - b).join("-");
+    lines.push("後押しワイド(試し) " + c + "(" + x.u + nm(x.u) + " " + f1(pk.od[x.u]) + "倍 × " + x.mate + nm(x.mate) + " " + f1(pk.od[x.mate]) + "倍)");
   }
   for (const x of pk.evw)
     lines.push("期待値ワイド " + x.key + "(" + (x.odds[0] === x.odds[1] ? x.odds[0] : x.odds[0] + "〜" + x.odds[1]) + "倍 期待値" + x.ev.toFixed(2) +
@@ -125,9 +143,9 @@ function message(race, day, minutes, pk, kinds) {
 const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { return d; } };
 function config() {
   const c = readJson(CONF, {}) || {};
-  const ks = (Array.isArray(c.kinds) ? c.kinds : ["oshi", "evw", "model"]).filter((k) => ["oshi", "evw", "model"].includes(k));
+  const ks = (Array.isArray(c.kinds) ? c.kinds : KINDS).filter((k) => KINDS.includes(k));
   return { topic: String(c.ntfy_topic || "").trim(), server: String(c.ntfy_server || "https://ntfy.sh").replace(/\/+$/, ""),
-           minutes: +c.minutes > 0 ? +c.minutes : 3, kinds: ks.length ? ks : ["oshi", "evw", "model"] };
+           minutes: +c.minutes > 0 ? +c.minutes : 3, kinds: ks.length ? ks : KINDS };
 }
 async function post(cfg, msg) {
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
@@ -158,7 +176,7 @@ async function notifyDue({ list, snap, fresh, day, now, work, pm, send, cfg: cfg
 }
 const startMsOf = (day, hhmm) => Date.UTC(+day.slice(0, 4), +day.slice(4, 6) - 1, +day.slice(6, 8), +hhmm.slice(0, 2) - 9, +hhmm.slice(3, 5));
 
-module.exports = { oshiPicks, pairProbs, evWidePicks, racePicks, message, notifyDue, zs, PRE, EV_WIDE, OSHI };
+module.exports = { oshiPicks, oshiwPicks, pairProbs, evWidePicks, racePicks, message, notifyDue, zs, PRE, EV_WIDE, OSHI, OSHIW };
 
 // ---- 設定・試し(node pc\notify.js --setup / --test) ----
 if (require.main === module) {
@@ -175,10 +193,10 @@ if (require.main === module) {
       if (t === "+") t = rnd;
       if (t && !/^[A-Za-z0-9_-]{6,64}$/.test(t)) { console.log("使えない名前です(半角の英数字・_・- で6〜64文字)"); rl.close(); return; }
       const mi = (await ask("発走の何分前に知らせるか(空で " + cur.minutes + "。締切は発走2分前): ")).trim();
-      console.log("知らせる買い目: 1 後押しの買い目 / 2 期待値ワイド / 3 モデルの買い目(全部だと1開催日に20通くらい)");
-      const kn = (await ask("番号を続けて(例 12。空で今のまま: " + cur.kinds.map((k) => ({ oshi: 1, evw: 2, model: 3 })[k]).join("") + "): ")).trim();
+      console.log("知らせる買い目: 1 後押しの買い目 / 2 期待値ワイド / 3 モデルの買い目 / 4 後押しワイド(試し)(全部だと1開催日に20通くらい)");
+      const kn = (await ask("番号を続けて(例 124。空で今のまま: " + cur.kinds.map((k) => ({ oshi: 1, evw: 2, model: 3, oshiw: 4 })[k]).join("") + "): ")).trim();
       rl.close();
-      const kinds = kn ? [["1", "oshi"], ["2", "evw"], ["3", "model"]].filter(([d]) => kn.includes(d)).map(([, k]) => k) : cur.kinds;
+      const kinds = kn ? [["1", "oshi"], ["2", "evw"], ["3", "model"], ["4", "oshiw"]].filter(([d]) => kn.includes(d)).map(([, k]) => k) : cur.kinds;
       const c = Object.assign(readJson(CONF, {}) || {}, { ntfy_topic: t || cur.topic, ntfy_server: cur.server,
         minutes: mi ? Math.max(1, Math.min(30, +mi || 3)) : cur.minutes, kinds: kinds.length ? kinds : cur.kinds });
       fs.writeFileSync(CONF, JSON.stringify(c, null, 1));

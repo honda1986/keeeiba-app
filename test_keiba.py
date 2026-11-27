@@ -576,6 +576,19 @@ class Parse(unittest.TestCase):
         self.assertEqual((float(m.group(1)), int(m.group(2)), float(m.group(3))), (L.EV_WIDE["min_ev"], L.EV_WIDE["top"], L.EV_WIDE["push_ev"]))
         m = re.search(r"const OSHI = \{ q: \"([\d.]+)\", max_odds: ([\d.]+) \};", js)
         self.assertEqual((m.group(1), float(m.group(2))), (L.OSHI["q"], L.OSHI["max_odds"]))
+        m = re.search(r"const OSHIW = \{ q: \"([\d.]+)\", max_odds: ([\d.]+) \};", js)
+        self.assertEqual((m.group(1), float(m.group(2))), (L.OSHIW["q"], L.OSHIW["max_odds"]))
+
+    def test_oshiw(self):
+        # 後押しワイド(試し): 2頭とも3着内の式の上5%の馬(1番人気でない・20倍以下)× 2番人気(その馬が2番人気なら3番人気)
+        od = {1: 2.0, 2: 4.0, 3: 6.0, 4: 12.0, 5: 25.0}
+        pk = L.oshiw_picks({1: 0.5, 2: 0.3, 4: 0.2, 5: 0.4}, od, 0.15)
+        self.assertEqual([(x["u"], x["mate"]) for x in pk], [(2, 3), (4, 2)])            # 1 は1番人気、5 は20倍超え
+        self.assertEqual(L.oshiw_picks({4: 0.2}, {1: 2, 4: 12}, 0.15), [])                 # 5頭いない
+        self.assertEqual(L.oshiw_picks({4: 0.2}, od, None), [])
+        html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "keiba", "index.html"), encoding="utf-8").read()
+        m = re.search(r"const OSHIW = \{q: \"([\d.]+)\", max_odds: (\d+)\};", html)
+        self.assertEqual((m.group(1), float(m.group(2))), (L.OSHIW["q"], L.OSHIW["max_odds"]))
 
     def test_pair_probs(self):
         # 後押しの式の組の確率(keiba_push.pair_probs): 土台(オッズ)+ 2頭の後押し。後押しが大きいほど高い。式が無ければ {}
