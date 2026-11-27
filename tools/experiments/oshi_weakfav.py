@@ -37,7 +37,15 @@ for g, (s0, n) in enumerate(zip(st, sizes)):
         if sw < cut["w"][0.9] and sq < cut["q"][0.9]:
             continue
         mate2 = f2 if u != f2 else f3
-        X.append(dict(y=D["year"][g], sw=sw, sq=sq, fw=w[jf], fq=q[jf], od=o[j],
+        # k番人気と組む(x が k番人気なら1つ下)。3番人気以下も(2026-11-27)
+        rk_us = [us[i] for i in rk]
+        mates = {}
+        for k in range(1, 7):
+            others = [v for v in rk_us if v != u]
+            if k - 1 < len(others):
+                mates[k] = others[k - 1]
+        pw = {k: ((pay.get("ワイド") or {}).get(srt(u, m), 0), (pay.get("馬連") or {}).get(srt(u, m), 0)) for k, m in mates.items()}
+        X.append(dict(pw=pw, y=D["year"][g], sw=sw, sq=sq, fw=w[jf], fq=q[jf], od=o[j],
                       tan=o[j] * 100 if order and order[0] == u else 0, fuku=(pay.get("複勝") or {}).get(str(u), 0),
                       ur1=(pay.get("馬連") or {}).get(srt(u, f1), 0), wd1=(pay.get("ワイド") or {}).get(srt(u, f1), 0),
                       ur2=(pay.get("馬連") or {}).get(srt(u, mate2), 0), wd2=(pay.get("ワイド") or {}).get(srt(u, mate2), 0),
@@ -69,4 +77,31 @@ for buy, bk in (("1着の式", "sw"), ("2頭とも3着内の式", "sq")):
             for lab, k in (("下20%", 0.2), ("下1/3", 1 / 3)):
                 table("1番人気の後押し({})が{}".format(fnm, lab), [x for x in strong if x[fk] <= cut[fc][k]])
             table("1番人気の後押し({})が下1/3でない".format(fnm), [x for x in strong if x[fk] > cut[fc][1 / 3]])
+# 相手を k番人気にしたら(1〜6番人気)。3〜5番人気をまとめて3点も
+print("\n\n==================== 相手を何番人気にするか(x が その人気なら1つ下)====================")
+
+
+def mate_table(title, sel):
+    if len(sel) < 100:
+        print("\n■ {}: {}頭(少ない)".format(title, len(sel))); return
+    print("\n■ {}: {}頭  [ ] は 2022〜2026年".format(title, len(sel)))
+    y = np.array([x["y"] for x in sel])
+    for kind, i in (("ワイド", 0), ("馬連", 1)):
+        for k in range(1, 7):
+            r = np.array([x["pw"].get(k, (0, 0))[i] for x in sel], float); top = np.sort(r)[-3:].sum()
+            print("  {} x-{}番人気   的中 {:5.1%} 回収率 {:6.1f}%(大きい3つを除くと {:5.1f}%) [{}]".format(
+                kind, k, np.mean(r > 0), r.mean(), (r.sum() - top) / len(r),
+                " ".join("{:3.0f}".format(r[y == yy].mean()) if (y == yy).any() else "  -" for yy in YS)))
+        r = np.array([sum(x["pw"].get(k, (0, 0))[i] for k in (3, 4, 5)) / 3 for x in sel], float); top = np.sort(r)[-3:].sum()
+        print("  {} x-3〜5番人気(3点) 的中 {:5.1%} 回収率 {:6.1f}%(大きい3つを除くと {:5.1f}%) [{}]".format(
+            kind, np.mean(r > 0), r.mean(), (r.sum() - top) / len(r),
+            " ".join("{:3.0f}".format(r[y == yy].mean()) if (y == yy).any() else "  -" for yy in YS)))
+
+
+for buy, bk, ck in (("2頭とも3着内の式", "sq", "q"), ("1着の式", "sw", "w")):
+    strong = [x for x in X if x[bk] >= cut[ck][0.95]]
+    print("\n---- 後押しが強い馬 = {}の上5% ----".format(buy))
+    mate_table("全部", strong)
+    mate_table("1番人気の後押し(1着の式)が下20%", [x for x in strong if x["fw"] <= cut["w"][0.2]])
+    mate_table("1番人気の後押し(2頭とも3着内の式)が下20%", [x for x in strong if x["fq"] <= cut["q"][0.2]])
 print("\nかかった時間 {:.0f}分".format((time.time() - t0) / 60))
